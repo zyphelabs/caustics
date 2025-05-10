@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "caustics",
+    "caustics-macros"
+]
+resolver = "2" 
