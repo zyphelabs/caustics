@@ -87,11 +87,11 @@ mod query_builder_tests {
             .unwrap();
         assert!(user.is_none());
 
-        /*// Find first
+        // Find first
         let user = client
             .user()
             .find_first(vec![
-                user::name::equals("John".into()),
+                user::name::equals("John"),
                 user::age::gt(18),
             ])
             .await
@@ -106,7 +106,7 @@ mod query_builder_tests {
             ])
             .await
             .unwrap();
-        assert!(users.is_empty());*/
+        assert!(users.is_empty());
     }
 }
 

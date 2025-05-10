@@ -1,13 +1,123 @@
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, format_ident};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use heck::ToPascalCase;
 use std::collections::HashSet;
+use proc_macro::TokenStream as ProcMacroTokenStream;
+use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, Ident, Path, PathSegment, GenericArgument, AngleBracketedGenericArguments};
+use sea_orm::{Condition, QueryBuilder};
+use sea_orm::Error;
 
 // Store entity names for client generation
 lazy_static! {
     static ref ENTITIES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+}
+
+#[proc_macro_derive(Caustics)]
+pub fn caustics_derive(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let name = &ast.ident;
+    let name_str = name.to_string();
+    
+    // Register the entity name
+    ENTITIES.lock().insert(name_str.clone());
+
+    let expanded = quote! {
+        impl #name {
+            pub fn id(&self) -> i32 {
+                self.id
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+fn generate_entity_client(entity_name: &str) -> proc_macro2::TokenStream {
+    let entity_ident = format_ident!("{}", entity_name);
+    let entity_client = format_ident!("{}Client", entity_name);
+    
+    quote! {
+        pub struct #entity_client {
+            db: DatabaseConnection,
+        }
+
+        impl #entity_client {
+            pub fn new(db: DatabaseConnection) -> Self {
+                Self { db }
+            }
+
+            pub async fn find_unique(&self, condition: Condition) -> Result<Option<#entity_ident::Model>, Error> {
+                let query = QueryBuilder::new()
+                    .select_from(#entity_ident::Entity)
+                    .where_condition(condition)
+                    .limit(1)
+                    .build();
+                
+                let result = self.db.query_one(&query).await?;
+                Ok(result.map(|row| #entity_ident::Model::from_row(row)))
+            }
+
+            pub async fn find_first(&self, conditions: Vec<Condition>) -> Result<Option<#entity_ident::Model>, Error> {
+                let query = QueryBuilder::new()
+                    .select_from(#entity_ident::Entity)
+                    .where_conditions(conditions)
+                    .limit(1)
+                    .build();
+                
+                let result = self.db.query_one(&query).await?;
+                Ok(result.map(|row| #entity_ident::Model::from_row(row)))
+            }
+
+            pub async fn find_many(&self, conditions: Vec<Condition>) -> Result<Vec<#entity_ident::Model>, Error> {
+                let query = QueryBuilder::new()
+                    .select_from(#entity_ident::Entity)
+                    .where_conditions(conditions)
+                    .build();
+                
+                let results = self.db.query_all(&query).await?;
+                Ok(results.into_iter().map(|row| #entity_ident::Model::from_row(row)).collect())
+            }
+        }
+    }
+}
+
+fn generate_client_impl() -> proc_macro2::TokenStream {
+    let entity_methods: Vec<_> = ENTITIES.lock().iter().map(|entity_name| {
+        let method_name = format_ident!("{}", entity_name.to_lowercase());
+        let entity_client = format_ident!("{}Client", entity_name);
+        
+        quote! {
+            pub fn #method_name(&self) -> #entity_client {
+                #entity_client::new(self.db.clone())
+            }
+        }
+    }).collect();
+
+    quote! {
+        pub struct CausticsClient {
+            db: DatabaseConnection,
+        }
+
+        impl CausticsClient {
+            pub fn new(db: DatabaseConnection) -> Self {
+                Self { db }
+            }
+
+            pub fn db(&self) -> &DatabaseConnection {
+                &self.db
+            }
+
+            #(#entity_methods)*
+        }
+    }
+}
+
+#[proc_macro]
+pub fn generate_client(_input: TokenStream) -> TokenStream {
+    let expanded = generate_client_impl();
+    TokenStream::from(expanded)
 }
 
 pub fn generate_caustics_impl(input: TokenStream) -> TokenStream {
