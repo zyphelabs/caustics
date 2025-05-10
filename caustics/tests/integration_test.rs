@@ -1,3 +1,5 @@
+include!(concat!(env!("OUT_DIR"), "/caustics_client_test.rs"));
+
 pub mod user {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
@@ -110,118 +112,6 @@ mod query_builder_tests {
     }
 }
 
-/*
-mod condition_tests {
-    use super::*;
-
-    #[test]
-    fn test_comparison_operators() {
-        // Equals
-        let condition = Condition::equals("age", 18, FieldType::Integer);
-        assert_eq!(condition.operator, "=");
-        assert_eq!(condition.value.to_string(), "18");
-
-        // Not equals
-        let condition = Condition::not_equals("age", 18, FieldType::Integer);
-        assert_eq!(condition.operator, "!=");
-        assert_eq!(condition.value.to_string(), "18");
-
-        // Greater than
-        let condition = Condition::greater_than("age", 18, FieldType::Integer);
-        assert_eq!(condition.operator, ">");
-        assert_eq!(condition.value.to_string(), "18");
-
-        // Less than
-        let condition = Condition::less_than("age", 18, FieldType::Integer);
-        assert_eq!(condition.operator, "<");
-        assert_eq!(condition.value.to_string(), "18");
-    }
-
-    #[test]
-    fn test_string_operators() {
-        // Contains
-        let condition = Condition::contains("name", "John", FieldType::String);
-        assert_eq!(condition.operator, "LIKE");
-        assert_eq!(condition.value.to_string(), "'%John%'");
-
-        // Starts with
-        let condition = Condition::starts_with("name", "John", FieldType::String);
-        assert_eq!(condition.operator, "LIKE");
-        assert_eq!(condition.value.to_string(), "'John%'");
-
-        // Ends with
-        let condition = Condition::ends_with("name", "Doe", FieldType::String);
-        assert_eq!(condition.operator, "LIKE");
-        assert_eq!(condition.value.to_string(), "'%Doe'");
-    }
-
-    #[test]
-    fn test_null_operators() {
-        // Is null
-        let condition = Condition::is_null("deleted_at");
-        assert_eq!(condition.operator, "IS NULL");
-        assert_eq!(condition.value.to_string(), "NULL");
-
-        // Is not null
-        let condition = Condition::is_not_null("deleted_at");
-        assert_eq!(condition.operator, "IS NOT NULL");
-        assert_eq!(condition.value.to_string(), "NULL");
-    }
-
-    #[test]
-    fn test_logical_operators() {
-        let condition1 = Condition::equals("age", 18, FieldType::Integer);
-        let condition2 = Condition::equals("name", "John", FieldType::String);
-
-        // AND
-        let and_condition = Condition::and(vec![condition1.clone(), condition2.clone()]);
-        assert_eq!(and_condition.operator, "AND");
-        assert!(and_condition.value.to_string().contains("age = 18"));
-        assert!(and_condition.value.to_string().contains("name = 'John'"));
-
-        // OR
-        let or_condition = Condition::or(vec![condition1.clone(), condition2.clone()]);
-        assert_eq!(or_condition.operator, "OR");
-        assert!(or_condition.value.to_string().contains("age = 18"));
-        assert!(or_condition.value.to_string().contains("name = 'John'"));
-
-        // NOT
-        let not_condition = Condition::not(condition1.clone());
-        assert_eq!(not_condition.operator, "NOT");
-        assert!(not_condition.value.to_string().contains("age = 18"));
-    }
-
-    #[test]
-    fn test_relation_operators() {
-        let condition = Condition::equals("title", "Hello", FieldType::String);
-
-        // SOME
-        let some_condition = Condition::some(vec![condition.clone()]);
-        assert_eq!(some_condition.operator, "SOME");
-        assert!(some_condition.value.to_string().contains("title = 'Hello'"));
-
-        // EVERY
-        let every_condition = Condition::every(vec![condition.clone()]);
-        assert_eq!(every_condition.operator, "EVERY");
-        assert!(every_condition.value.to_string().contains("title = 'Hello'"));
-
-        // NONE
-        let none_condition = Condition::none(vec![condition.clone()]);
-        assert_eq!(none_condition.operator, "NONE");
-        assert!(none_condition.value.to_string().contains("title = 'Hello'"));
-    }
-
-    #[test]
-    fn test_json_operators() {
-        let path = vec!["address".to_string(), "city".to_string()];
-        let condition = Condition::json_path(path, "New York", FieldType::String);
-        assert_eq!(condition.operator, "=");
-        assert_eq!(condition.field, "address->>'city'");
-        assert_eq!(condition.value.to_string(), "'New York'");
-    }
-}
-*/
-/*
 mod query_builder_tests {
     use super::*;
     use crate::helpers::*;
@@ -264,7 +154,7 @@ mod query_builder_tests {
 
         teardown_test_db(&db).await;
     }
-
+/*
     #[tokio::test]
     async fn test_update_operations() {
         let db = setup_test_db().await;
@@ -574,8 +464,5 @@ mod query_builder_tests {
         assert_eq!(deleted_count, 1);
 
         teardown_test_db(&db).await;
-    }
+    }*/
 }
-*/ 
-
-include!(concat!(env!("OUT_DIR"), "/caustics_client_test.rs"));

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::collections::HashSet;
 use heck::ToPascalCase;
 use chrono::{DateTime, FixedOffset};
+use uuid::Uuid;
 
 lazy_static::lazy_static! {
     static ref ENTITIES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
@@ -37,7 +38,10 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
             pub mod #field_name {
                 use super::{Entity, Model, ActiveModel};
                 use sea_orm::{Condition, ColumnTrait, EntityTrait};
-                use chrono::{DateTime, FixedOffset};
+                use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                use uuid::Uuid;
+                // For binary types
+                use std::vec::Vec;
                 pub fn equals<T: Into<#field_type>>(value: T) -> Condition {
                     Condition::all().add(<Entity as EntityTrait>::Column::#column_variant.eq(value.into()))
                 }
