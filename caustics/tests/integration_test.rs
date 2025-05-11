@@ -12,9 +12,11 @@ pub mod user {
         pub id: i32,
         pub email: String,
         pub name: String,
-        pub age: i32,
+        #[sea_orm(nullable)]
+        pub age: Option<i32>,
         pub created_at: DateTime<FixedOffset>,
         pub updated_at: DateTime<FixedOffset>,
+        #[sea_orm(nullable)]
         pub deleted_at: Option<DateTime<FixedOffset>>,
     }
 
@@ -34,14 +36,14 @@ pub mod post {
     use sea_orm::entity::prelude::*;
     use chrono::{DateTime, FixedOffset};
     
-    #[derive(Caustics)]
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "posts")]
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i32,
         pub title: String,
-        pub content: String,
+        #[sea_orm(nullable)]
+        pub content: Option<String>,
         #[sea_orm(created_at)]
         pub created_at: DateTime<FixedOffset>,
         #[sea_orm(updated_at)]
@@ -54,11 +56,48 @@ pub mod post {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-#[path = "helpers.rs"] mod helpers;
+pub mod helpers {
+    use sea_orm::{Database, DatabaseConnection, Schema};
+
+    use super::{post, user};
+
+    pub async fn setup_test_db() -> DatabaseConnection {
+        use sea_orm::ConnectionTrait;
+    
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        
+        // Create schema
+        let schema = Schema::new(db.get_database_backend());
+        
+        // Create users table
+        let mut user_table =schema
+        .create_table_from_entity(user::Entity);
+        let create_users = user_table
+            .if_not_exists();
+        let create_users_sql = db.get_database_backend().build(create_users);
+        db.execute(create_users_sql)
+            .await
+            .unwrap();
+    
+        // Create posts table
+        let mut post_table = schema
+            .create_table_from_entity(post::Entity);
+        let create_posts = post_table
+            .if_not_exists();
+        let create_posts_sql = db.get_database_backend().build(create_posts);
+        db.execute(create_posts_sql)
+            .await
+            .unwrap();
+    
+        db
+    }
+    
+}
 
 mod client_tests {
+    use super::helpers::setup_test_db;
+
     use super::*;
-    use crate::helpers::*;
 
     #[tokio::test]
     async fn test_caustics_client() {
@@ -74,10 +113,11 @@ mod client_tests {
 mod query_builder_tests {
     use std::str::FromStr;
 
-    use chrono::DateTime;
+    use chrono::{DateTime, FixedOffset};
+
+    use super::helpers::setup_test_db;
 
     use super::*;
-    use crate::helpers::*;
 
     #[tokio::test]
     async fn test_find_operations() {
@@ -88,6 +128,7 @@ mod query_builder_tests {
         let user = client
             .user()
             .find_unique(user::id::equals(1))
+            .exec()
             .await
             .unwrap();
         assert!(user.is_none());
@@ -99,6 +140,7 @@ mod query_builder_tests {
                 user::name::equals("John"),
                 user::age::gt(18),
             ])
+            .exec()
             .await
             .unwrap();
         assert!(user.is_none());
@@ -109,13 +151,11 @@ mod query_builder_tests {
             .find_many(vec![
                 user::age::gt(18),
             ])
+            .exec()
             .await
             .unwrap();
         assert!(users.is_empty());
     }
-
-    use super::*;
-    use crate::helpers::*;
 
     #[tokio::test]
     async fn test_create_operations() {
@@ -123,38 +163,47 @@ mod query_builder_tests {
         let client = CausticsClient::new(db.clone());
 
         // Create user
-        let user = client
+        let _ = client
             .user()
             .create(
-                user::name::set("John"),
                 user::email::set("john@example.com"),
-                user::age::set(25),
-                user::created_at::set(DateTime::from_str("2021-01-01T00:00:00Z").unwrap()),
-                user::updated_at::set(DateTime::from_str("2021-01-01T00:00:00Z").unwrap()),
-                user::deleted_at::set(None),
-                vec![],
+                user::name::set("John"),
+                user::created_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
+                user::updated_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
+                vec![
+                    user::age::set(Some(25)),
+                    user::deleted_at::set(None),
+                ],
             )
+            .exec()
             .await
             .unwrap();
+
+        let user = client.user().find_first(vec![user::email::equals("john@example.com")]).exec().await.unwrap().unwrap();
         assert_eq!(user.name, "John");
         assert_eq!(user.email, "john@example.com");
-        assert_eq!(user.age, 25);
+        assert_eq!(user.age, Some(25));
 
         // Create post
         let post = client
             .post()
             .create(
                 post::title::set("Hello World"),
-                post::content::set("This is my first post"),
+                post::created_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
+                post::updated_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
                 post::user_id::set(user.id),
-                vec![],
+                vec![
+                    post::content::set(Some("This is my first post".to_string())),
+                ],
             )
+            .exec()
             .await
             .unwrap();
-        assert_eq!(post.title, "Hello World");
-        assert_eq!(post.content, "This is my first post");
-        assert_eq!(post.user_id, user.id);
 
+        let post = client.post().find_first(vec![post::id::equals(post.id)]).exec().await.unwrap().unwrap();
+        assert_eq!(post.title, "Hello World");
+        assert_eq!(post.content, Some("This is my first post".to_string()));
+        assert_eq!(post.user_id, user.id);
     }
 /*
     #[tokio::test]

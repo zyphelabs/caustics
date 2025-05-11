@@ -137,8 +137,8 @@ let posts = client
 let user = client
     .user()
     .create(
-        user::name::set("John"),
-        user::email::set("john@example.com"),
+            user::name::set("John"),
+            user::email::set("john@example.com"),
         vec![
             user::age::set(25),
         ],
@@ -149,9 +149,9 @@ let user = client
 let post = client
     .post()
     .create(
-        post::title::set("Hello World"),
-        post::content::set("This is my first post"),
-        post::user_id::set(1),
+            post::title::set("Hello World"),
+            post::content::set("This is my first post"),
+            post::user_id::set(1),
         vec![],
     )
     .await?;
