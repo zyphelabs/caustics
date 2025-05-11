@@ -28,7 +28,7 @@ pub mod user {
 
     impl sea_orm::ActiveModelBehavior for ActiveModel {}
 }
-/* 
+
 pub mod post {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
@@ -53,7 +53,6 @@ pub mod post {
     pub enum Relation {}
     impl ActiveModelBehavior for ActiveModel {}
 }
-*/
 
 #[path = "helpers.rs"] mod helpers;
 
@@ -73,6 +72,10 @@ mod client_tests {
 }
 
 mod query_builder_tests {
+    use std::str::FromStr;
+
+    use chrono::DateTime;
+
     use super::*;
     use crate::helpers::*;
 
@@ -110,9 +113,7 @@ mod query_builder_tests {
             .unwrap();
         assert!(users.is_empty());
     }
-}
 
-mod query_builder_tests {
     use super::*;
     use crate::helpers::*;
 
@@ -127,9 +128,11 @@ mod query_builder_tests {
             .create(
                 user::name::set("John"),
                 user::email::set("john@example.com"),
-                vec![
-                    user::age::set(25),
-                ],
+                user::age::set(25),
+                user::created_at::set(DateTime::from_str("2021-01-01T00:00:00Z").unwrap()),
+                user::updated_at::set(DateTime::from_str("2021-01-01T00:00:00Z").unwrap()),
+                user::deleted_at::set(None),
+                vec![],
             )
             .await
             .unwrap();
@@ -152,7 +155,6 @@ mod query_builder_tests {
         assert_eq!(post.content, "This is my first post");
         assert_eq!(post.user_id, user.id);
 
-        teardown_test_db(&db).await;
     }
 /*
     #[tokio::test]

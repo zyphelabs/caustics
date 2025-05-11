@@ -29,19 +29,102 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
         _ => panic!("Expected a struct"),
     };
 
-    // Generate field operator modules
+    // Filter out primary key fields for set operations
+    let primary_key_fields: Vec<_> = fields
+        .iter()
+        .filter(|field| {
+            field.attrs.iter().any(|attr| {
+                if let syn::Meta::List(meta) = &attr.meta {
+                    (meta.path.is_ident("sea_orm") && meta.tokens.to_string().contains("primary_key")) ||
+                    meta.path.is_ident("primary_key")
+                } else {
+                    false
+                }
+            })
+        })
+        .collect();
+
+    // Generate function arguments for required fields (excluding primary keys)
+    let required_args = fields
+        .iter()
+        .filter(|field| !primary_key_fields.contains(field))
+        .enumerate()
+        .map(|(i, field)| {
+            let _name = field.ident.as_ref().unwrap();
+            let arg_name = format_ident!("arg{}", i);
+            let ty = &field.ty;
+            quote! { #arg_name: SetValue }
+        });
+
+    // Generate field names for required fields (excluding primary keys)
+    let required_names = fields
+        .iter()
+        .filter(|field| !primary_key_fields.contains(field))
+        .enumerate()
+        .map(|(i, field)| {
+            let name = field.ident.as_ref().unwrap();
+            let arg_name = format_ident!("arg{}", i);
+            quote! { 
+                #name: match #arg_name {
+                    SetValue::#name(value) => value,
+                    _ => panic!("Invalid SetValue variant for field {}", stringify!(#name))
+                }
+            }
+        });
+
+    // Generate field variants for SetValue enum (excluding primary keys)
+    let field_variants = fields
+        .iter()
+        .filter(|field| !primary_key_fields.contains(field))
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let ty = &field.ty;
+            quote! {
+                #name(sea_orm::ActiveValue<#ty>)
+            }
+        });
+
+    let match_arms = fields
+        .iter()
+        .filter(|field| !primary_key_fields.contains(field))
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            quote! {
+                SetValue::#name(value) => {
+                    model.#name = value.clone();
+                }
+            }
+        });
+
+    // Generate field operator modules (including primary keys for query operations)
     let field_ops = fields.iter().map(|field| {
         let field_name = &field.ident;
         let field_type = &field.ty;
         let column_variant = format_ident!("{}", field_name.as_ref().unwrap().to_string().to_pascal_case());
+        let is_primary_key = primary_key_fields.iter().any(|pk_field| {
+            pk_field.ident.as_ref().unwrap() == field_name.as_ref().unwrap()
+        });
+        
+        let set_fn = if !is_primary_key {
+            quote! {
+                pub fn set<T: Into<#field_type>>(value: T) -> SetValue {
+                    SetValue::#field_name(sea_orm::ActiveValue::Set(value.into()))
+                }
+            }
+        } else {
+            quote! {}
+        };
+        
         quote! {
             pub mod #field_name {
-                use super::{Entity, Model, ActiveModel};
-                use sea_orm::{Condition, ColumnTrait, EntityTrait};
+                use super::{Entity, Model, ActiveModel, SetValue};
+                use sea_orm::{Condition, ColumnTrait, EntityTrait, ActiveValue};
                 use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
                 use uuid::Uuid;
-                // For binary types
                 use std::vec::Vec;
+
+                #set_fn
+
                 pub fn equals<T: Into<#field_type>>(value: T) -> Condition {
                     Condition::all().add(<Entity as EntityTrait>::Column::#column_variant.eq(value.into()))
                 }
@@ -71,10 +154,23 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
     });
 
     let expanded = quote! {
-        use sea_orm::{DatabaseConnection, Condition, EntityTrait};
+        use sea_orm::{DatabaseConnection, Condition, EntityTrait, ActiveValue};
 
         pub struct EntityClient {
             db: DatabaseConnection,
+        }
+
+        // Enum to handle different Set types
+        pub enum SetValue {
+            #(#field_variants),*
+        }
+
+        impl SetValue {
+            fn merge_into(&self, model: &mut ActiveModel) {
+                match self {
+                    #(#match_arms),*
+                }
+            }
         }
 
         impl EntityClient {
@@ -101,65 +197,29 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
                 }
                 query.all(&self.db).await
             }
+            pub async fn create(&self, #(#required_args,)* optional: Vec<SetValue>) -> Result<Model, sea_orm::DbErr> {
+                let mut model = ActiveModel {
+                    #(#required_names,)*
+                    ..Default::default()
+                };
+                for opt in optional {
+                    opt.merge_into(&mut model);
+                }
+                model.insert(&self.db).await
+            }
         }
+
+        // Field operator modules
         #(#field_ops)*
     };
 
     TokenStream::from(expanded)
 }
 
-fn generate_entity_client(entity_name: &str) -> proc_macro2::TokenStream {
-    let entity_ident = format_ident!("{}", entity_name);
-    let entity_client = format_ident!("{}Client", entity_name);
-    
-    quote! {
-        pub struct #entity_client {
-            db: sea_orm::DatabaseConnection,
-        }
-
-        impl #entity_client {
-            pub fn new(db: sea_orm::DatabaseConnection) -> Self {
-                Self { db }
-            }
-
-            pub async fn find_unique(&self, condition: sea_orm::Condition) -> Result<Option<#entity_ident::Model>, sea_orm::DbErr> {
-                let query = sea_orm::QuerySelect::query(
-                    &mut sea_orm::Query::select()
-                        .from(#entity_ident::Entity)
-                        .cond_where(condition)
-                        .limit(1)
-                );
-                
-                let result = self.db.query_one(&query).await?;
-                Ok(result.map(|row| #entity_ident::Model::from_row(row)))
-            }
-
-            pub async fn find_first(&self, conditions: Vec<sea_orm::Condition>) -> Result<Option<#entity_ident::Model>, sea_orm::DbErr> {
-                let mut query = sea_orm::Query::select()
-                    .from(#entity_ident::Entity)
-                    .limit(1);
-                
-                for condition in conditions {
-                    query = query.cond_where(condition);
-                }
-                
-                let result = self.db.query_one(&query).await?;
-                Ok(result.map(|row| #entity_ident::Model::from_row(row)))
-            }
-
-            pub async fn find_many(&self, conditions: Vec<sea_orm::Condition>) -> Result<Vec<#entity_ident::Model>, sea_orm::DbErr> {
-                let mut query = sea_orm::Query::select()
-                    .from(#entity_ident::Entity);
-                
-                for condition in conditions {
-                    query = query.cond_where(condition);
-                }
-                
-                let results = self.db.query_all(&query).await?;
-                Ok(results.into_iter().map(|row| #entity_ident::Model::from_row(row)).collect())
-            }
-        }
-    }
+#[proc_macro]
+pub fn generate_client(_input: TokenStream) -> TokenStream {
+    let expanded = generate_client_impl();
+    TokenStream::from(expanded)
 }
 
 fn generate_client_impl() -> proc_macro2::TokenStream {
@@ -197,8 +257,24 @@ fn generate_client_impl() -> proc_macro2::TokenStream {
     }
 }
 
-#[proc_macro]
-pub fn generate_client(_input: TokenStream) -> TokenStream {
-    let expanded = generate_client_impl();
-    TokenStream::from(expanded)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn test_expanded_macro() {
+        let input = quote! {
+            #[derive(Caustics)]
+            struct User {
+                email: String,
+                name: String,
+                age: i32,
+                active: bool,
+            }
+        };
+
+        let expanded = caustics_derive(input.into());
+        println!("Expanded macro:\n{}", expanded);
+    }
 }
