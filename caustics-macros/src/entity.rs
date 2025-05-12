@@ -236,6 +236,21 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             }
         }
 
+        pub struct DeleteQueryBuilder {
+            condition: Condition,
+            db: DatabaseConnection,
+        }
+
+        impl DeleteQueryBuilder {
+            pub async fn exec(self) -> Result<(), sea_orm::DbErr> {
+                Entity::delete_many()
+                    .filter(self.condition)
+                    .exec(&self.db)
+                    .await?;
+                Ok(())
+            }
+        }
+
         impl EntityClient {
             pub fn new(db: DatabaseConnection) -> Self {
                 Self { db }
@@ -290,6 +305,13 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                 UpdateQueryBuilder {
                     condition,
                     changes,
+                    db: self.db.clone(),
+                }
+            }
+
+            pub fn delete(&self, condition: Condition) -> DeleteQueryBuilder {
+                DeleteQueryBuilder {
+                    condition,
                     db: self.db.clone(),
                 }
             }

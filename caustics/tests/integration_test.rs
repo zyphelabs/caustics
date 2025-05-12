@@ -296,7 +296,7 @@ mod query_builder_tests {
         assert_eq!(users[0].age, Some(23));
         assert_eq!(users[1].age, Some(22));
     }
-    /*
+
     #[tokio::test]
     async fn test_delete_operations() {
         let db = setup_test_db().await;
@@ -306,19 +306,23 @@ mod query_builder_tests {
         let user = client
             .user()
             .create(
-                user::name::set("John"),
-                user::email::set("john@example.com"),
+                "John".to_string(),
+                "john@example.com".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 vec![
                     user::age::set(25),
                 ],
             )
+            .exec()
             .await
             .unwrap();
 
         // Delete user
         client
             .user()
-            .delete(user.id)
+            .delete(user::id::equals(user.id))
+            .exec()
             .await
             .unwrap();
 
@@ -326,13 +330,13 @@ mod query_builder_tests {
         let deleted_user = client
             .user()
             .find_unique(user::id::equals(user.id))
+            .exec()
             .await
             .unwrap();
         assert!(deleted_user.is_none());
-
-        teardown_test_db(&db).await;
     }
-
+    /*
+    
     #[tokio::test]
     async fn test_upsert_operations() {
         let db = setup_test_db().await;
