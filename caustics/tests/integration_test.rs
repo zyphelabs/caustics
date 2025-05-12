@@ -1,5 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/caustics_client_test.rs"));
 
+use std::sync::Arc;
+
 pub mod user {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
@@ -335,7 +337,6 @@ mod query_builder_tests {
             .unwrap();
         assert!(deleted_user.is_none());
     }
-    /*
     
     #[tokio::test]
     async fn test_upsert_operations() {
@@ -347,71 +348,142 @@ mod query_builder_tests {
             .user()
             .upsert(
                 user::email::equals("john@example.com"),
-                user::name::set("John"),
-                user::age::set(25),
-                vec![],
+                user::Create {
+                    name: "John".to_string(),
+                    email: "john@example.com".to_string(),
+                    created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    _params: vec![],
+                },
+                vec![
+                    user::name::set("John"),
+                    user::age::set(25),
+                ],
             )
+            .exec()
             .await
             .unwrap();
         assert_eq!(user.name, "John");
-        assert_eq!(user.age, 25);
+        assert_eq!(user.age, Some(25));
 
         // Update existing user
         let updated_user = client
             .user()
             .upsert(
                 user::email::equals("john@example.com"),
-                user::name::set("John Doe"),
-                user::age::set(26),
-                vec![],
+                user::Create {
+                    name: "John".to_string(),
+                    email: "john@example.com".to_string(),
+                    created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    _params: vec![],
+                },
+                vec![
+                    user::name::set("John Doe"),
+                    user::age::set(26),
+                ],
             )
+            .exec()
             .await
             .unwrap();
         assert_eq!(updated_user.name, "John Doe");
-        assert_eq!(updated_user.age, 26);
-
-        teardown_test_db(&db).await;
+        assert_eq!(updated_user.age, Some(26));
     }
 
     #[tokio::test]
-    async fn test_transaction() {
+    async fn test_transaction_commit() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
         let result = client
-            ._transaction(|tx| async move {
+            ._transaction()
+            .run(|tx| Box::pin(async move {
                 // Create user
                 let user = tx
                     .user()
                     .create(
-                        user::name::set("John"),
-                        user::email::set("john@example.com"),
+                        "john@example.com".to_string(),
+                        "John".to_string(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                         vec![],
                     )
+                    .exec()
                     .await?;
 
                 // Create post
                 let post = tx
                     .post()
                     .create(
-                        post::title::set("Hello World"),
-                        post::content::set("This is my first post"),
-                        post::user_id::set(user.id),
-                        vec![],
+                        "Hello World".to_string(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        user.id,
+                        vec![
+                            post::content::set("This is my first post".to_string()),
+                        ],
                     )
+                    .exec()
                     .await?;
 
                 Ok((user, post))
-            })
+            }))
             .await
-            .unwrap();
+            .expect("Transaction failed");
 
         assert_eq!(result.0.name, "John");
         assert_eq!(result.1.title, "Hello World");
 
-        teardown_test_db(&db).await;
+        // Verify data is persisted
+        let found_user = client
+            .user()
+            .find_first(vec![user::email::equals("john@example.com")])
+            .exec()
+            .await
+            .expect("Failed to query user")
+            .expect("User not found");
+        assert_eq!(found_user.name, "John");
     }
 
+    #[tokio::test]
+    async fn test_transaction_rollback() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        let result: Result<(), QueryError> = client
+            ._transaction()
+            .run(|tx| Box::pin(async move {
+                // Create user
+                let _user = tx
+                    .user()
+                    .create(
+                        "rollback@example.com".to_string(),
+                        "Rollback".to_string(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        vec![],
+                    )
+                    .exec()
+                    .await?;
+
+                // Intentionally return an error to trigger rollback
+                Err(QueryError::Custom("Intentional rollback".into()))
+            }))
+            .await;
+
+        assert!(result.is_err());
+
+        // Verify data is NOT persisted
+        let found_user = client
+            .user()
+            .find_first(vec![user::email::equals("rollback@example.com")])
+            .exec()
+            .await
+            .expect("Failed to query user");
+        assert!(found_user.is_none());
+    }
+
+    /*
     #[tokio::test]
     async fn test_relations() {
         let db = setup_test_db().await;
@@ -541,4 +613,5 @@ mod query_builder_tests {
         teardown_test_db(&db).await;
     }
 */
+
 }

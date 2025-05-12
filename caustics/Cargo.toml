@@ -24,5 +24,6 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
 [build-dependencies]
 quote = "1.0.40"
 regex = "1.11.1"
+sea-orm = "0.12"
 syn = "2.0.101"
 walkdir = "2.5.0"

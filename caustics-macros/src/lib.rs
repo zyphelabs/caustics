@@ -6,7 +6,6 @@ use syn::{parse_macro_input, DeriveInput};
 use std::sync::Mutex;
 use std::collections::HashSet;
 
-mod client;
 mod entity;
 mod common;
 
@@ -22,9 +21,4 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
     ENTITIES.lock().unwrap().insert(name_str.clone());
 
     TokenStream::from(entity::generate_entity(ast))
-}
-
-#[proc_macro]
-pub fn generate_client(_input: TokenStream) -> TokenStream {
-    TokenStream::from(client::generate_client())
 }

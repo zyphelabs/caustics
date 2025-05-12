@@ -37,22 +37,43 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         })
         .collect();
 
-    let required_args = required_fields
+    // Generate struct fields for required fields (with pub)
+    let required_struct_fields = required_fields
         .iter()
         .map(|field| {
             let ty = &field.ty;
-            let arg_name = field.ident.as_ref().unwrap();
-            quote! { #arg_name: #ty }
-        });
+            let name = field.ident.as_ref().unwrap();
+            quote! { pub #name: #ty }
+        })
+        .collect::<Vec<_>>();
 
-    let required_names = required_fields
+    // Generate function arguments for required fields (no pub)
+    let required_fn_args = required_fields
+        .iter()
+        .map(|field| {
+            let ty = &field.ty;
+            let name = field.ident.as_ref().unwrap();
+            quote! { #name: #ty }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate initializers for required fields (no pub)
+    let required_inits = required_fields
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().unwrap();
-            quote! { 
-                model.#name = sea_orm::ActiveValue::Set(#name)
-            }
-        });
+            quote! { #name }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate assignments for required fields (self.#name)
+    let required_assigns = required_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            quote! { model.#name = sea_orm::ActiveValue::Set(self.#name); }
+        })
+        .collect::<Vec<_>>();
 
     let match_arms = fields
         .iter()
@@ -65,7 +86,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                     model.#name = value.clone();
                 }
             }
-        });
+        })
+        .collect::<Vec<_>>();
 
     // Generate field variants for SetValue enum (excluding primary keys)
     let field_variants = fields
@@ -78,7 +100,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             quote! {
                 #pascal_name(sea_orm::ActiveValue<#ty>)
             }
-        });
+        })
+        .collect::<Vec<_>>();
 
     // Generate field operator modules (including primary keys for query operations)
     let field_ops = fields.iter().map(|field| {
@@ -143,201 +166,269 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         }
     });
 
-    let expanded = quote! {
-        use sea_orm::{
-            DatabaseConnection, 
-            Condition, 
-            EntityTrait, 
-            ActiveValue, 
-            QuerySelect, 
-            QueryOrder,
-            QueryTrait,
-            Select,
-            ColumnTrait,
-            IntoSimpleExpr,
-            IntoActiveModel,
-        };
-        use std::marker::PhantomData;
-        use super::SortOrder;
+    let expanded = {
+        let required_struct_fields = required_struct_fields.clone();
+        let required_fn_args = required_fn_args.clone();
+        let required_inits = required_inits.clone();
+        let required_assigns = required_assigns.clone();
+        quote! {
+            use sea_orm::{
+                DatabaseConnection, 
+                Condition, 
+                EntityTrait, 
+                ActiveValue, 
+                QuerySelect, 
+                QueryOrder,
+                QueryTrait,
+                Select,
+                ColumnTrait,
+                IntoSimpleExpr,
+                IntoActiveModel,
+                ConnectionTrait,
+            };
+            use std::marker::PhantomData;
+            use super::SortOrder;
 
-        pub struct EntityClient {
-            db: DatabaseConnection,
-        }
-
-        pub enum SetValue {
-            #(#field_variants,)*
-        }
-
-        impl SetValue {
-            fn merge_into(&self, model: &mut ActiveModel) {
-                match self {
-                    #(#match_arms,)*
-                }
-            }
-        }
-
-        pub struct UniqueQueryBuilder {
-            query: sea_orm::Select<Entity>,
-            db: DatabaseConnection,
-        }
-        pub struct FirstQueryBuilder {
-            query: sea_orm::Select<Entity>,
-            db: DatabaseConnection,
-        }
-        pub struct ManyQueryBuilder {
-            query: sea_orm::Select<Entity>,
-            db: DatabaseConnection,
-        }
-
-        impl UniqueQueryBuilder {
-            pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
-                self.query.one(&self.db).await
-            }
-        }
-        impl FirstQueryBuilder {
-            pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
-                self.query.one(&self.db).await
-            }
-        }
-        impl ManyQueryBuilder {
-            pub fn take(mut self, limit: u64) -> Self {
-                self.query = self.query.limit(limit);
-                self
-            }
-            pub fn skip(mut self, offset: u64) -> Self {
-                self.query = self.query.offset(offset);
-                self
-            }
-            pub fn order_by<C>(mut self, col_and_order: (C, SortOrder)) -> Self 
-            where 
-                C: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr
-            {
-                let (col, sort_order) = col_and_order;
-                let order = match sort_order {
-                    SortOrder::Asc => sea_orm::Order::Asc,
-                    SortOrder::Desc => sea_orm::Order::Desc,
-                };
-                self.query = self.query.order_by(col, order);
-                self
-            }
-            pub async fn exec(self) -> Result<Vec<Model>, sea_orm::DbErr> {
-                self.query.all(&self.db).await
-            }
-        }
-
-        pub struct CreateQueryBuilder {
-            model: ActiveModel,
-            db: DatabaseConnection,
-        }
-
-        impl CreateQueryBuilder {
-            pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
-                self.model.insert(&self.db).await
-            }
-        }
-
-        pub struct DeleteQueryBuilder {
-            condition: Condition,
-            db: DatabaseConnection,
-        }
-
-        impl DeleteQueryBuilder {
-            pub async fn exec(self) -> Result<(), sea_orm::DbErr> {
-                Entity::delete_many()
-                    .filter(self.condition)
-                    .exec(&self.db)
-                    .await?;
-                Ok(())
-            }
-        }
-
-        impl EntityClient {
-            pub fn new(db: DatabaseConnection) -> Self {
-                Self { db }
+            pub struct EntityClient<'a, C: ConnectionTrait> {
+                conn: &'a C
             }
 
-            pub fn db(&self) -> &DatabaseConnection {
-                &self.db
+            pub enum SetValue {
+                #(#field_variants,)*
             }
 
-            pub fn find_unique(&self, condition: Condition) -> UniqueQueryBuilder {
-                UniqueQueryBuilder {
-                    query: <Entity as EntityTrait>::find().filter(condition),
-                    db: self.db.clone(),
-                }
-            }
-
-            pub fn find_first(&self, conditions: Vec<Condition>) -> FirstQueryBuilder {
-                let mut query = <Entity as EntityTrait>::find();
-                for cond in conditions {
-                    query = query.filter(cond);
-                }
-                FirstQueryBuilder {
-                    query,
-                    db: self.db.clone(),
-                }
-            }
-
-            pub fn find_many(&self, conditions: Vec<Condition>) -> ManyQueryBuilder {
-                let mut query = <Entity as EntityTrait>::find();
-                for cond in conditions {
-                    query = query.filter(cond);
-                }
-                ManyQueryBuilder {
-                    query,
-                    db: self.db.clone(),
-                }
-            }
-
-            pub fn create(&self, #(#required_args,)* optional: Vec<SetValue>) -> CreateQueryBuilder {
-                let mut model = ActiveModel::new();
-                #(#required_names;)*
-                for opt in optional {
-                    opt.merge_into(&mut model);
-                }
-                CreateQueryBuilder {
-                    model,
-                    db: self.db.clone(),
-                }
-            }
-
-            pub fn update(&self, condition: Condition, changes: Vec<SetValue>) -> UpdateQueryBuilder {
-                UpdateQueryBuilder {
-                    condition,
-                    changes,
-                    db: self.db.clone(),
-                }
-            }
-
-            pub fn delete(&self, condition: Condition) -> DeleteQueryBuilder {
-                DeleteQueryBuilder {
-                    condition,
-                    db: self.db.clone(),
-                }
-            }
-        }
-
-        pub struct UpdateQueryBuilder {
-            condition: Condition,
-            changes: Vec<SetValue>,
-            db: DatabaseConnection,
-        }
-
-        impl UpdateQueryBuilder {
-            pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
-                let mut entity = <Entity as EntityTrait>::find().filter(self.condition).one(&self.db).await?;
-                if let Some(mut model) = entity.map(|m| m.into_active_model()) {
-                    for change in self.changes {
-                        change.merge_into(&mut model);
+            impl SetValue {
+                fn merge_into(&self, model: &mut ActiveModel) {
+                    match self {
+                        #(#match_arms,)*
                     }
-                    model.update(&self.db).await
-                } else {
-                    Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
                 }
             }
-        }
 
-        #(#field_ops)*
+            pub struct Create {
+                #(#required_struct_fields,)*
+                pub _params: Vec<SetValue>,
+            }
+
+            impl Create {
+                pub fn new(#(#required_fn_args,)* _params: Vec<SetValue>) -> Self {
+                    Self {
+                        #(#required_inits,)*
+                        _params,
+                    }
+                }
+
+                fn into_active_model(self) -> ActiveModel {
+                    let mut model = ActiveModel::new();
+                    #(#required_assigns)*
+                    for opt in self._params {
+                        opt.merge_into(&mut model);
+                    }
+                    model
+                }
+            }
+
+            pub struct UniqueQueryBuilder<'a, C: ConnectionTrait> {
+                query: sea_orm::Select<Entity>,
+                conn: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> UniqueQueryBuilder<'a, C> {
+                pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
+                    self.query.one(self.conn).await
+                }
+            }
+
+            pub struct FirstQueryBuilder<'a, C: ConnectionTrait> {
+                query: sea_orm::Select<Entity>,
+                db: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> FirstQueryBuilder<'a, C> {
+                pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
+                    self.query.one(self.db).await
+                }
+            }
+
+            pub struct ManyQueryBuilder<'a, C: ConnectionTrait> {
+                query: sea_orm::Select<Entity>,
+                db: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> ManyQueryBuilder<'a, C> {
+                pub fn take(mut self, limit: u64) -> Self {
+                    self.query = self.query.limit(limit);
+                    self
+                }
+                pub fn skip(mut self, offset: u64) -> Self {
+                    self.query = self.query.offset(offset);
+                    self
+                }
+                pub fn order_by<Col>(mut self, col_and_order: (Col, SortOrder)) -> Self 
+                where 
+                    Col: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr
+                {
+                    let (col, sort_order) = col_and_order;
+                    let order = match sort_order {
+                        SortOrder::Asc => sea_orm::Order::Asc,
+                        SortOrder::Desc => sea_orm::Order::Desc,
+                    };
+                    self.query = self.query.order_by(col, order);
+                    self
+                }
+                pub async fn exec(self) -> Result<Vec<Model>, sea_orm::DbErr> {
+                    self.query.all(self.db).await
+                }
+            }
+
+            pub struct CreateQueryBuilder<'a, C: ConnectionTrait> {
+                model: ActiveModel,
+                db: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> CreateQueryBuilder<'a, C> {
+                pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
+                    self.model.insert(self.db).await
+                }
+            }
+
+            pub struct DeleteQueryBuilder<'a, C: ConnectionTrait> {
+                condition: Condition,
+                db: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> DeleteQueryBuilder<'a, C> {
+                pub async fn exec(self) -> Result<(), sea_orm::DbErr> {
+                    Entity::delete_many()
+                        .filter(self.condition)
+                        .exec(self.db)
+                        .await?;
+                    Ok(())
+                }
+            }
+
+            pub struct UpsertQueryBuilder<'a, C: ConnectionTrait> {
+                condition: Condition,
+                create: Create,
+                update: Vec<SetValue>,
+                db: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> UpsertQueryBuilder<'a, C> {
+                pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
+                    let existing = Entity::find()
+                        .filter(self.condition.clone())
+                        .one(self.db)
+                        .await?;
+
+                    match existing {
+                        Some(model) => {
+                            let mut active_model = model.into_active_model();
+                            for change in self.update {
+                                change.merge_into(&mut active_model);
+                            }
+                            active_model.update(self.db).await
+                        }
+                        None => {
+                            let mut active_model = self.create.into_active_model();
+                            for change in self.update {
+                                change.merge_into(&mut active_model);
+                            }
+                            active_model.insert(self.db).await
+                        }
+                    }
+                }
+            }
+
+            pub struct UpdateQueryBuilder<'a, C: ConnectionTrait> {
+                condition: Condition,
+                changes: Vec<SetValue>,
+                db: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> UpdateQueryBuilder<'a, C> {
+                pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
+                    let mut entity = <Entity as EntityTrait>::find().filter(self.condition).one(self.db).await?;
+                    if let Some(mut model) = entity.map(|m| m.into_active_model()) {
+                        for change in self.changes {
+                            change.merge_into(&mut model);
+                        }
+                        model.update(self.db).await
+                    } else {
+                        Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
+                    }
+                }
+            }
+
+            impl<'a, C: ConnectionTrait> EntityClient<'a, C> {
+                pub fn new(conn: &'a C) -> Self {
+                    Self { conn }
+                }
+
+                pub fn find_unique(&self, condition: Condition) -> UniqueQueryBuilder<'a, C> {
+                    UniqueQueryBuilder {
+                        query: <Entity as EntityTrait>::find().filter(condition),
+                        conn: self.conn,
+                    }
+                }
+
+                pub fn find_first(&self, conditions: Vec<Condition>) -> FirstQueryBuilder<'a, C> {
+                    let mut query = <Entity as EntityTrait>::find();
+                    for cond in conditions {
+                        query = query.filter(cond);
+                    }
+                    FirstQueryBuilder {
+                        query,
+                        db: self.conn,
+                    }
+                }
+
+                pub fn find_many(&self, conditions: Vec<Condition>) -> ManyQueryBuilder<'a, C> {
+                    let mut query = <Entity as EntityTrait>::find();
+                    for cond in conditions {
+                        query = query.filter(cond);
+                    }
+                    ManyQueryBuilder {
+                        query,
+                        db: self.conn,
+                    }
+                }
+
+                pub fn create(&self, #(#required_fn_args,)* _params: Vec<SetValue>) -> CreateQueryBuilder<'a, C> {
+                    let create = Create::new(#(#required_inits,)* _params);
+                    CreateQueryBuilder {
+                        model: create.into_active_model(),
+                        db: self.conn,
+                    }
+                }
+
+                pub fn update(&self, condition: Condition, changes: Vec<SetValue>) -> UpdateQueryBuilder<'a, C> {
+                    UpdateQueryBuilder {
+                        condition,
+                        changes,
+                        db: self.conn,
+                    }
+                }
+
+                pub fn delete(&self, condition: Condition) -> DeleteQueryBuilder<'a, C> {
+                    DeleteQueryBuilder {
+                        condition,
+                        db: self.conn,
+                    }
+                }
+
+                pub fn upsert(&self, condition: Condition, create: Create, update: Vec<SetValue>) -> UpsertQueryBuilder<'a, C> {
+                    UpsertQueryBuilder {
+                        condition,
+                        create,
+                        update,
+                        db: self.conn,
+                    }
+                }
+            }
+
+            #(#field_ops)*
+        }
     };
     TokenStream::from(expanded)
 } 
