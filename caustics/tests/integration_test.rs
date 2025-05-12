@@ -163,7 +163,7 @@ mod query_builder_tests {
         let client = CausticsClient::new(db.clone());
 
         // Create user
-        let _ = client
+        let user = client
             .user()
             .create(
                 "john@example.com".to_string(),
@@ -179,10 +179,16 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        let user = client.user().find_first(vec![user::email::equals("john@example.com")]).exec().await.unwrap().unwrap();
-        assert_eq!(user.name, "John");
-        assert_eq!(user.email, "john@example.com");
-        assert_eq!(user.age, Some(25));
+        let found_user = client
+            .user()
+            .find_first(vec![user::email::equals("john@example.com")])
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found_user.name, "John");
+        assert_eq!(found_user.email, "john@example.com");
+        assert_eq!(found_user.age, Some(25));
 
         // Create post
         let post = client
@@ -200,12 +206,18 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        let post = client.post().find_first(vec![post::id::equals(post.id)]).exec().await.unwrap().unwrap();
-        assert_eq!(post.title, "Hello World");
-        assert_eq!(post.content, Some("This is my first post".to_string()));
-        assert_eq!(post.user_id, user.id);
+        let found_post = client
+            .post()
+            .find_first(vec![post::id::equals(post.id)])
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found_post.title, "Hello World");
+        assert_eq!(found_post.content, Some("This is my first post".to_string()));
+        assert_eq!(found_post.user_id, user.id);
     }
-/*
+
     #[tokio::test]
     async fn test_update_operations() {
         let db = setup_test_db().await;
@@ -215,12 +227,16 @@ mod query_builder_tests {
         let user = client
             .user()
             .create(
-                user::name::set("John"),
-                user::email::set("john@example.com"),
+                "john@example.com".to_string(),
+                "John".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 vec![
-                    user::age::set(25),
+                    user::age::set(Some(25)),
+                    user::deleted_at::set(None),
                 ],
             )
+            .exec()
             .await
             .unwrap();
 
@@ -229,17 +245,58 @@ mod query_builder_tests {
             .user()
             .update(
                 user::id::equals(user.id),
-                user::name::set("John Doe"),
-                user::age::set(26),
+                vec![
+                    user::name::set("John Doe"),
+                    user::age::set(Some(26)),
+                ],
             )
+            .exec()
             .await
             .unwrap();
         assert_eq!(updated_user.name, "John Doe");
-        assert_eq!(updated_user.age, 26);
-
-        teardown_test_db(&db).await;
+        assert_eq!(updated_user.age, Some(26));
     }
 
+    #[tokio::test]
+    async fn test_pagination_and_sorting() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create users
+        for i in 0..5 {
+            client
+                .user()
+                .create(
+                    format!("user{}@example.com", i),
+                    format!("User {}", i),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    vec![
+                        user::age::set(Some(20 + i)),
+                        user::deleted_at::set(None),
+                    ],
+                )
+                .exec()
+                .await
+                .unwrap();
+        }
+
+        // Test pagination and sorting
+        let users = client
+            .user()
+            .find_many(vec![])
+            .take(2)
+            .skip(1)
+            .order_by(user::age::order(SortOrder::Desc))
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].age, Some(23));
+        assert_eq!(users[1].age, Some(22));
+    }
+    /*
     #[tokio::test]
     async fn test_delete_operations() {
         let db = setup_test_db().await;
@@ -350,47 +407,7 @@ mod query_builder_tests {
 
         teardown_test_db(&db).await;
     }
-*/
-    #[tokio::test]
-    async fn test_pagination_and_sorting() {
-        let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
 
-        // Create users
-        for i in 0..5 {
-            client
-                .user()
-                .create(
-                    format!("user{}@example.com", i),
-                    format!("User {}", i),
-                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    vec![
-                        user::age::set(Some(20 + i)),
-                        user::deleted_at::set(None),
-                    ],
-                )
-                .exec()
-                .await
-                .unwrap();
-        }
-
-        // Test pagination and sorting
-        let users = client
-            .user()
-            .find_many(vec![])
-            .take(2)
-            .skip(1)
-            .order_by(user::age::order(SortOrder::Desc))
-            .exec()
-            .await
-            .unwrap();
-
-        assert_eq!(users.len(), 2);
-        assert_eq!(users[0].age, Some(23));
-        assert_eq!(users[1].age, Some(22));
-    }
-/*
     #[tokio::test]
     async fn test_relations() {
         let db = setup_test_db().await;
@@ -518,5 +535,6 @@ mod query_builder_tests {
         assert_eq!(deleted_count, 1);
 
         teardown_test_db(&db).await;
-    }*/
+    }
+*/
 }

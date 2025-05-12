@@ -155,6 +155,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             Select,
             ColumnTrait,
             IntoSimpleExpr,
+            IntoActiveModel,
         };
         use std::marker::PhantomData;
         use super::SortOrder;
@@ -282,6 +283,34 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                 CreateQueryBuilder {
                     model,
                     db: self.db.clone(),
+                }
+            }
+
+            pub fn update(&self, condition: Condition, changes: Vec<SetValue>) -> UpdateQueryBuilder {
+                UpdateQueryBuilder {
+                    condition,
+                    changes,
+                    db: self.db.clone(),
+                }
+            }
+        }
+
+        pub struct UpdateQueryBuilder {
+            condition: Condition,
+            changes: Vec<SetValue>,
+            db: DatabaseConnection,
+        }
+
+        impl UpdateQueryBuilder {
+            pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
+                let mut entity = <Entity as EntityTrait>::find().filter(self.condition).one(&self.db).await?;
+                if let Some(mut model) = entity.map(|m| m.into_active_model()) {
+                    for change in self.changes {
+                        change.merge_into(&mut model);
+                    }
+                    model.update(&self.db).await
+                } else {
+                    Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
                 }
             }
         }
