@@ -24,7 +24,6 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
     for entry in WalkDir::new(dir) {
         let entry = entry.unwrap();
         if entry.path().extension().map_or(false, |ext| ext == "rs") {
-            println!("cargo:warning=Scanning file: {:?}", entry.path());
             let content = fs::read_to_string(entry.path()).unwrap();
             let file = parse_file(&content).unwrap();
 
@@ -40,7 +39,6 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
         }
     }
 
-    println!("cargo:warning=Found entities: {:?}", entities);
     let client_code = generate_client_code(&entities);
     fs::write(out_path, client_code).unwrap();
 }
@@ -59,7 +57,6 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
         for entry in WalkDir::new(dir) {
             let entry = entry.unwrap();
             if entry.path().extension().map_or(false, |ext| ext == "rs") {
-                println!("cargo:warning=Scanning file: {:?}", entry.path());
                 let content = fs::read_to_string(entry.path()).unwrap();
                 let file = parse_file(&content).unwrap();
 
@@ -83,7 +80,6 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
         }
     }
 
-    println!("cargo:warning=Found entities: {:?}", entities);
     let client_code = generate_client_code(&entities);
     fs::write(out_path, client_code).unwrap();
 }
@@ -139,6 +135,13 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
     let client_code = quote! {
         use sea_orm::DatabaseConnection;
         use std::sync::Arc;
+
+        #[derive(Copy, Clone, Debug)]
+        #[allow(dead_code)]
+        pub enum SortOrder {
+            Asc,
+            Desc,
+        }
 
         pub struct CausticsClient {
             db: Arc<DatabaseConnection>,

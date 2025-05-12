@@ -61,20 +61,18 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
 
     let required_args = required_fields
         .iter()
-        .enumerate()
-        .map(|(i, field)| {
+        .map(|field| {
             let ty = &field.ty;
-            let arg_name = format_ident!("arg{}", i);
+            let arg_name = field.ident.as_ref().unwrap();
             quote! { #arg_name: RequiredSetValue<#ty> }
         });
 
     let required_names = required_fields
         .iter()
-        .enumerate()
-        .map(|(i, field)| {
+        .map(|field| {
             let name = field.ident.as_ref().unwrap();
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-            let arg_name = format_ident!("arg{}", i);
+            let arg_name = name;
             let required_fields_str = required_fields
                 .iter()
                 .map(|f| f.ident.as_ref().unwrap().to_string())
@@ -145,7 +143,11 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
         } else {
             quote! {}
         };
-        
+        let order_fn = quote! {
+            pub fn order(order: SortOrder) -> (<Entity as EntityTrait>::Column, SortOrder) {
+                (<Entity as EntityTrait>::Column::#pascal_name, order)
+            }
+        };
         quote! {
             pub mod #field_name {
                 use super::{Entity, Model, ActiveModel, SetValue, RequiredSetValue};
@@ -153,8 +155,10 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
                 use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
                 use uuid::Uuid;
                 use std::vec::Vec;
+                use super::SortOrder;
 
                 #set_fn
+                #order_fn
 
                 pub fn equals<T: Into<#field_type>>(value: T) -> Condition {
                     Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value.into()))
@@ -198,6 +202,7 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
             IntoSimpleExpr,
         };
         use std::marker::PhantomData;
+        use super::SortOrder;
 
         pub struct EntityClient {
             db: DatabaseConnection,
@@ -228,6 +233,19 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
 
             pub fn skip(mut self, offset: u64) -> Self {
                 self.query = self.query.offset(offset);
+                self
+            }
+
+            pub fn order_by<C>(mut self, col_and_order: (C, SortOrder)) -> Self 
+            where 
+                C: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr
+            {
+                let (col, sort_order) = col_and_order;
+                let order = match sort_order {
+                    SortOrder::Asc => sea_orm::Order::Asc,
+                    SortOrder::Desc => sea_orm::Order::Desc,
+                };
+                self.query = self.query.order_by(col, order);
                 self
             }
 
@@ -294,6 +312,18 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
             }
             pub fn skip(mut self, offset: u64) -> Self {
                 self.query = self.query.offset(offset);
+                self
+            }
+            pub fn order_by<C>(mut self, col_and_order: (C, SortOrder)) -> Self 
+            where 
+                C: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr
+            {
+                let (col, sort_order) = col_and_order;
+                let order = match sort_order {
+                    SortOrder::Asc => sea_orm::Order::Asc,
+                    SortOrder::Desc => sea_orm::Order::Desc,
+                };
+                self.query = self.query.order_by(col, order);
                 self
             }
             pub async fn exec(self) -> Result<Vec<Model>, sea_orm::DbErr> {
@@ -365,45 +395,4 @@ pub fn caustics_derive(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
-}
-
-#[proc_macro]
-pub fn generate_client(_input: TokenStream) -> TokenStream {
-    let expanded = generate_client_impl();
-    TokenStream::from(expanded)
-}
-
-fn generate_client_impl() -> proc_macro2::TokenStream {
-    let entity_names: Vec<String> = ENTITIES.lock().unwrap().iter().cloned().collect();
-    let entity_methods: Vec<_> = entity_names.iter().map(|entity_name| {
-        let method_name = format_ident!("{}", entity_name.to_lowercase());
-        let entity_client = format_ident!("{}Client", entity_name);
-        
-        quote! {
-            pub fn #method_name(&self) -> #entity_client {
-                #entity_client::new(self.db.clone())
-            }
-        }
-    }).collect();
-
-    quote! {
-        use sea_orm::DatabaseConnection;
-        use std::sync::Arc;
-
-        pub struct CausticsClient {
-            db: Arc<DatabaseConnection>,
-        }
-
-        impl CausticsClient {
-            pub fn new(db: DatabaseConnection) -> Self {
-                Self { db: Arc::new(db) }
-            }
-
-            pub fn db(&self) -> &DatabaseConnection {
-                &self.db
-            }
-
-            #(#entity_methods)*
-        }
-    }
 }
