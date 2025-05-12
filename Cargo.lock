@@ -343,7 +343,6 @@ dependencies = [
  "heck 0.5.0",
  "lazy_static",
  "once_cell",
- "parking_lot",
  "proc-macro2",
  "quote",
  "rust_decimal",
