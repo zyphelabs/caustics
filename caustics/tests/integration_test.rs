@@ -166,10 +166,10 @@ mod query_builder_tests {
         let _ = client
             .user()
             .create(
-                user::email::set("john@example.com"),
-                user::name::set("John"),
-                user::created_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
-                user::updated_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
+                "john@example.com".to_string(),
+                "John".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 vec![
                     user::age::set(Some(25)),
                     user::deleted_at::set(None),
@@ -188,10 +188,10 @@ mod query_builder_tests {
         let post = client
             .post()
             .create(
-                post::title::set("Hello World"),
-                post::created_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
-                post::updated_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
-                post::user_id::set(user.id),
+                "Hello World".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user.id,
                 vec![
                     post::content::set(Some("This is my first post".to_string())),
                 ],
@@ -361,10 +361,10 @@ mod query_builder_tests {
             client
                 .user()
                 .create(
-                    user::email::set(format!("user{}@example.com", i)),
-                    user::name::set(format!("User {}", i)),
-                    user::created_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
-                    user::updated_at::set(DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap()),
+                    format!("user{}@example.com", i),
+                    format!("User {}", i),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     vec![
                         user::age::set(Some(20 + i)),
                         user::deleted_at::set(None),

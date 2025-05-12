@@ -42,29 +42,15 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         .map(|field| {
             let ty = &field.ty;
             let arg_name = field.ident.as_ref().unwrap();
-            quote! { #arg_name: RequiredSetValue<#ty> }
+            quote! { #arg_name: #ty }
         });
 
     let required_names = required_fields
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().unwrap();
-            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-            let arg_name = name;
-            let required_fields_str = required_fields
-                .iter()
-                .map(|f| f.ident.as_ref().unwrap().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
             quote! { 
-                #name: match #arg_name.0 {
-                    SetValue::#pascal_name(value) => value,
-                    other => panic!("Expected SetValue::{} but got {:?}. Make sure required fields are passed in the correct order: {}", 
-                        stringify!(#pascal_name), 
-                        other,
-                        #required_fields_str
-                    )
-                }
+                model.#name = sea_orm::ActiveValue::Set(#name)
             }
         });
 
@@ -102,20 +88,11 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         let is_primary_key = primary_key_fields.iter().any(|pk_field| {
             pk_field.ident.as_ref().unwrap() == field_name.as_ref().unwrap()
         });
-        let is_required = !is_primary_key && !is_option(field_type);
         
         let set_fn = if !is_primary_key {
-            if is_required {
-                quote! {
-                    pub fn set<T: Into<#field_type>>(value: T) -> RequiredSetValue<#field_type> {
-                        RequiredSetValue(SetValue::#pascal_name(sea_orm::ActiveValue::Set(value.into())), std::marker::PhantomData)
-                    }
-                }
-            } else {
-                quote! {
-                    pub fn set<T: Into<#field_type>>(value: T) -> SetValue {
-                        SetValue::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
-                    }
+            quote! {
+                pub fn set<T: Into<#field_type>>(value: T) -> SetValue {
+                    SetValue::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
                 }
             }
         } else {
@@ -128,7 +105,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         };
         quote! {
             pub mod #field_name {
-                use super::{Entity, Model, ActiveModel, SetValue, RequiredSetValue};
+                use super::{Entity, Model, ActiveModel, SetValue};
                 use sea_orm::{Condition, ColumnTrait, EntityTrait, ActiveValue};
                 use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
                 use uuid::Uuid;
@@ -186,76 +163,14 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             db: DatabaseConnection,
         }
 
-        // Type-safe wrapper for required field values
-        pub struct RequiredSetValue<T>(SetValue, std::marker::PhantomData<T>);
-
-        // Query builder for non-final operations
-        pub struct QueryBuilder {
-            query: Select<Entity>,
-            db: DatabaseConnection,
-            query_type: QueryType,
-        }
-
-        #[derive(Clone, Copy)]
-        pub enum QueryType {
-            Unique,
-            First,
-            Many,
-        }
-
-        impl QueryBuilder {
-            pub fn take(mut self, limit: u64) -> Self {
-                self.query = self.query.limit(limit);
-                self
-            }
-
-            pub fn skip(mut self, offset: u64) -> Self {
-                self.query = self.query.offset(offset);
-                self
-            }
-
-            pub fn order_by<C>(mut self, col_and_order: (C, SortOrder)) -> Self 
-            where 
-                C: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr
-            {
-                let (col, sort_order) = col_and_order;
-                let order = match sort_order {
-                    SortOrder::Asc => sea_orm::Order::Asc,
-                    SortOrder::Desc => sea_orm::Order::Desc,
-                };
-                self.query = self.query.order_by(col, order);
-                self
-            }
-
-            pub async fn exec(self) -> Result<QueryResult, sea_orm::DbErr> {
-                match self.query_type {
-                    QueryType::Unique | QueryType::First => {
-                        let result = self.query.one(&self.db).await?;
-                        Ok(QueryResult::Single(result))
-                    }
-                    QueryType::Many => {
-                        let result = self.query.all(&self.db).await?;
-                        Ok(QueryResult::Many(result))
-                    }
-                }
-            }
-        }
-
-        pub enum QueryResult {
-            Single(Option<Model>),
-            Many(Vec<Model>),
-        }
-
-        // Enum to handle different Set types
-        #[derive(Debug)]
         pub enum SetValue {
-            #(#field_variants),*
+            #(#field_variants,)*
         }
 
         impl SetValue {
             fn merge_into(&self, model: &mut ActiveModel) {
                 match self {
-                    #(#match_arms),*
+                    #(#match_arms,)*
                 }
             }
         }
@@ -324,15 +239,18 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             pub fn new(db: DatabaseConnection) -> Self {
                 Self { db }
             }
+
             pub fn db(&self) -> &DatabaseConnection {
                 &self.db
             }
+
             pub fn find_unique(&self, condition: Condition) -> UniqueQueryBuilder {
                 UniqueQueryBuilder {
                     query: <Entity as EntityTrait>::find().filter(condition),
                     db: self.db.clone(),
                 }
             }
+
             pub fn find_first(&self, conditions: Vec<Condition>) -> FirstQueryBuilder {
                 let mut query = <Entity as EntityTrait>::find();
                 for cond in conditions {
@@ -343,6 +261,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                     db: self.db.clone(),
                 }
             }
+
             pub fn find_many(&self, conditions: Vec<Condition>) -> ManyQueryBuilder {
                 let mut query = <Entity as EntityTrait>::find();
                 for cond in conditions {
@@ -353,11 +272,10 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                     db: self.db.clone(),
                 }
             }
+
             pub fn create(&self, #(#required_args,)* optional: Vec<SetValue>) -> CreateQueryBuilder {
-                let mut model = ActiveModel {
-                    #(#required_names,)*
-                    ..Default::default()
-                };
+                let mut model = ActiveModel::new();
+                #(#required_names;)*
                 for opt in optional {
                     opt.merge_into(&mut model);
                 }
@@ -368,9 +286,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             }
         }
 
-        // Field operator modules
         #(#field_ops)*
     };
-
     TokenStream::from(expanded)
 } 
