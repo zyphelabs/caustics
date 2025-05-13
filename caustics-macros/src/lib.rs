@@ -1,4 +1,6 @@
 #![crate_type = "proc-macro"]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};

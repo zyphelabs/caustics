@@ -4,6 +4,19 @@ use syn::{DeriveInput, Data, Fields};
 use heck::ToPascalCase;
 use crate::common::is_option;
 
+#[derive(Debug)]
+pub struct Relation {
+    pub name: String,
+    pub related_entity: String,
+}
+
+#[derive(Debug)]
+pub struct Field {
+    pub name: String,
+    pub ty: String,
+    pub is_optional: bool,
+}
+
 pub fn generate_entity(ast: DeriveInput) -> TokenStream {
     // Extract fields
     let fields = match &ast.data {
@@ -14,6 +27,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         _ => panic!("Expected a struct"),
     };
 
+    // Remove attribute-based relation extraction
+    let relations = Vec::new();
     // Filter out primary key fields for set operations
     let primary_key_fields: Vec<_> = fields
         .iter()
@@ -166,6 +181,9 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         }
     });
 
+    // Generate relation submodules
+    let relation_submodules = generate_relation_submodules(&relations);
+
     let expanded = {
         let required_struct_fields = required_struct_fields.clone();
         let required_fn_args = required_fn_args.clone();
@@ -237,6 +255,11 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                 pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
                     self.query.one(self.conn).await
                 }
+
+                pub fn with<T>(self, _relation: T) -> Self {
+                    // Stub implementation for now
+                    todo!("Implement .with() to fetch related rows matching the filter")
+                }
             }
 
             pub struct FirstQueryBuilder<'a, C: ConnectionTrait> {
@@ -247,6 +270,11 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             impl<'a, C: ConnectionTrait> FirstQueryBuilder<'a, C> {
                 pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
                     self.query.one(self.db).await
+                }
+
+                pub fn with<T>(self, _relation: T) -> Self {
+                    // Stub implementation for now
+                    todo!("Implement .with() to fetch related rows matching the filter")
                 }
             }
 
@@ -278,6 +306,11 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                 }
                 pub async fn exec(self) -> Result<Vec<Model>, sea_orm::DbErr> {
                     self.query.all(self.db).await
+                }
+
+                pub fn with<T>(self, _relation: T) -> Self {
+                    // Stub implementation for now
+                    todo!("Implement .with() to fetch related rows matching the filter")
                 }
             }
 
@@ -428,7 +461,192 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             }
 
             #(#field_ops)*
+
+            // Include the generated relation submodules
+            #relation_submodules
         }
     };
     TokenStream::from(expanded)
+}
+
+// Add this function to generate relation submodules with fetch operators
+pub fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
+    let submodules: Vec<_> = relations.iter().map(|relation| {
+        let relation_name = format_ident!("{}", relation.name.to_lowercase());
+        let related_entity = format_ident!("{}", relation.related_entity);
+        quote! {
+            pub mod #relation_name {
+                use super::super::#related_entity;
+                pub fn fetch(conditions: Vec<#related_entity::Condition>) -> FetchRelation<#related_entity::Entity, #related_entity::Condition> {
+                    FetchRelation::new(conditions)
+                }
+            }
+        }
+    }).collect();
+
+    quote! {
+        #(#submodules)*
+    }
+}
+
+// In your generate_entity_code function, add a call to generate_relation_submodules
+pub fn generate_entity_code(entity_name: &str, fields: &[Field], relations: &[Relation]) -> TokenStream {
+    let entity_name_lower = format_ident!("{}", entity_name.to_lowercase());
+    
+    let field_ops = generate_field_ops(fields);
+    let set_value_methods = generate_set_value_methods(fields);
+    let query_builders = generate_query_builders(entity_name, fields);
+    let relation_submodules = generate_relation_submodules(relations);
+    
+    // Generate the entity code
+    let expanded = quote! {
+        pub mod #entity_name_lower {
+            use super::*;
+            use sea_orm::{EntityTrait, ConnectionTrait, QueryTrait, QueryFilter, QuerySelect, QueryOrder, QueryLimit, QueryOffset};
+            use std::future::Future;
+
+            #field_ops
+
+            #set_value_methods
+
+            #query_builders
+
+            #relation_submodules
+
+            pub struct EntityClient<'a, C: ConnectionTrait> {
+                db: &'a C,
+            }
+
+            impl<'a, C: ConnectionTrait> EntityClient<'a, C> {
+                pub fn new(db: &'a C) -> Self {
+                    Self { db }
+                }
+            }
+        }
+    };
+
+    expanded
+}
+
+pub fn generate_field_ops(fields: &[Field]) -> TokenStream {
+    let field_ops: Vec<_> = fields.iter().map(|field| {
+        let field_name = format_ident!("{}", field.name);
+        quote! {
+            pub mod #field_name {
+                use super::*;
+                pub fn equals(value: #field_name::Type) -> Condition {
+                    Condition::equals(value)
+                }
+                pub fn not_equals(value: #field_name::Type) -> Condition {
+                    Condition::not_equals(value)
+                }
+                pub fn gt(value: #field_name::Type) -> Condition {
+                    Condition::gt(value)
+                }
+                pub fn gte(value: #field_name::Type) -> Condition {
+                    Condition::gte(value)
+                }
+                pub fn lt(value: #field_name::Type) -> Condition {
+                    Condition::lt(value)
+                }
+                pub fn lte(value: #field_name::Type) -> Condition {
+                    Condition::lte(value)
+                }
+                pub fn contains(value: String) -> Condition {
+                    Condition::contains(value)
+                }
+                pub fn starts_with(value: String) -> Condition {
+                    Condition::starts_with(value)
+                }
+                pub fn ends_with(value: String) -> Condition {
+                    Condition::ends_with(value)
+                }
+                pub fn set(value: #field_name::Type) -> SetValue {
+                    SetValue::new(value)
+                }
+            }
+        }
+    }).collect();
+
+    quote! {
+        #(#field_ops)*
+    }
+}
+
+pub fn generate_set_value_methods(fields: &[Field]) -> TokenStream {
+    let field_variants: Vec<_> = fields.iter().map(|field| {
+        let field_name = format_ident!("{}", field.name);
+        let ty = &field.ty;
+        quote! {
+            #field_name(sea_orm::ActiveValue<#ty>)
+        }
+    }).collect();
+
+    let match_arms: Vec<_> = fields.iter().map(|field| {
+        let field_name = format_ident!("{}", field.name);
+        quote! {
+            SetValue::#field_name(value) => {
+                model.#field_name = value.clone();
+            }
+        }
+    }).collect();
+
+    quote! {
+        pub enum SetValue {
+            #(#field_variants,)*
+        }
+
+        impl SetValue {
+            fn merge_into(&self, model: &mut ActiveModel) {
+                match self {
+                    #(#match_arms,)*
+                }
+            }
+        }
+    }
+}
+
+pub fn generate_query_builders(entity_name: &str, fields: &[Field]) -> TokenStream {
+
+    quote! {
+        pub struct FindQuery {
+            entity_name: &'static str,
+        }
+
+        impl FindQuery {
+            pub fn new(entity_name: &'static str) -> Self {
+                Self { entity_name }
+            }
+        }
+
+        pub struct CreateQuery {
+            entity_name: &'static str,
+        }
+
+        impl CreateQuery {
+            pub fn new(entity_name: &'static str) -> Self {
+                Self { entity_name }
+            }
+        }
+
+        pub struct UpdateQuery {
+            entity_name: &'static str,
+        }
+
+        impl UpdateQuery {
+            pub fn new(entity_name: &'static str) -> Self {
+                Self { entity_name }
+            }
+        }
+
+        pub struct DeleteQuery {
+            entity_name: &'static str,
+        }
+
+        impl DeleteQuery {
+            pub fn new(entity_name: &'static str) -> Self {
+                Self { entity_name }
+            }
+        }
+    }
 } 
