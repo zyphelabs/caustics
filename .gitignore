@@ -1,3 +1,3 @@
 .vscode/
 target/
-example/generated
+example/src/generated/db.rs

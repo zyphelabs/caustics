@@ -6,4 +6,4 @@ pub fn is_option(ty: &syn::Type) -> bool {
         }
     }
     false
-} 
+}

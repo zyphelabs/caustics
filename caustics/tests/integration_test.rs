@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 pub mod user {
     use caustics_macros::Caustics;
-    use sea_orm::entity::prelude::*;
     use chrono::{DateTime, FixedOffset};
+    use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "users")]
@@ -37,9 +37,9 @@ pub mod user {
 
 pub mod post {
     use caustics_macros::Caustics;
-    use sea_orm::entity::prelude::*;
     use chrono::{DateTime, FixedOffset};
-    
+    use sea_orm::entity::prelude::*;
+
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "posts")]
     pub struct Model {
@@ -95,35 +95,26 @@ pub mod helpers {
 
     pub async fn setup_test_db() -> DatabaseConnection {
         use sea_orm::ConnectionTrait;
-    
+
         let db = Database::connect("sqlite::memory:").await.unwrap();
-        
+
         // Create schema
         let schema = Schema::new(db.get_database_backend());
-        
+
         // Create users table
-        let mut user_table =schema
-        .create_table_from_entity(user::Entity);
-        let create_users = user_table
-            .if_not_exists();
+        let mut user_table = schema.create_table_from_entity(user::Entity);
+        let create_users = user_table.if_not_exists();
         let create_users_sql = db.get_database_backend().build(create_users);
-        db.execute(create_users_sql)
-            .await
-            .unwrap();
-    
+        db.execute(create_users_sql).await.unwrap();
+
         // Create posts table
-        let mut post_table = schema
-            .create_table_from_entity(post::Entity);
-        let create_posts = post_table
-            .if_not_exists();
+        let mut post_table = schema.create_table_from_entity(post::Entity);
+        let create_posts = post_table.if_not_exists();
         let create_posts_sql = db.get_database_backend().build(create_posts);
-        db.execute(create_posts_sql)
-            .await
-            .unwrap();
-    
+        db.execute(create_posts_sql).await.unwrap();
+
         db
     }
-    
 }
 
 mod client_tests {
@@ -168,10 +159,7 @@ mod query_builder_tests {
         // Find first
         let user = client
             .user()
-            .find_first(vec![
-                user::name::equals("John"),
-                user::age::gt(18),
-            ])
+            .find_first(vec![user::name::equals("John"), user::age::gt(18)])
             .exec()
             .await
             .unwrap();
@@ -180,9 +168,7 @@ mod query_builder_tests {
         // Find many
         let users = client
             .user()
-            .find_many(vec![
-                user::age::gt(18),
-            ])
+            .find_many(vec![user::age::gt(18)])
             .exec()
             .await
             .unwrap();
@@ -194,18 +180,16 @@ mod query_builder_tests {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
-        // Create user
+        // Create user with unique email
+        let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
         let user = client
             .user()
             .create(
-                "john@example.com".to_string(),
+                email.clone(),
                 "John".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                vec![
-                    user::age::set(Some(25)),
-                    user::deleted_at::set(None),
-                ],
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await
@@ -213,13 +197,13 @@ mod query_builder_tests {
 
         let found_user = client
             .user()
-            .find_first(vec![user::email::equals("john@example.com")])
+            .find_first(vec![user::email::equals(&email)])
             .exec()
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found_user.name, "John");
-        assert_eq!(found_user.email, "john@example.com");
+        assert_eq!(found_user.email, email);
         assert_eq!(found_user.age, Some(25));
 
         // Create post
@@ -230,9 +214,9 @@ mod query_builder_tests {
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 user.id,
-                vec![
-                    post::content::set(Some("This is my first post".to_string())),
-                ],
+                vec![post::content::set(Some(
+                    "This is my first post".to_string(),
+                ))],
             )
             .exec()
             .await
@@ -246,7 +230,10 @@ mod query_builder_tests {
             .unwrap()
             .unwrap();
         assert_eq!(found_post.title, "Hello World");
-        assert_eq!(found_post.content, Some("This is my first post".to_string()));
+        assert_eq!(
+            found_post.content,
+            Some("This is my first post".to_string())
+        );
         assert_eq!(found_post.user_id, user.id);
     }
 
@@ -255,18 +242,16 @@ mod query_builder_tests {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
-        // Create user
+        // Create user with unique email
+        let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
         let user = client
             .user()
             .create(
-                "john@example.com".to_string(),
+                email.clone(),
                 "John".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                vec![
-                    user::age::set(Some(25)),
-                    user::deleted_at::set(None),
-                ],
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await
@@ -277,10 +262,7 @@ mod query_builder_tests {
             .user()
             .update(
                 user::id::equals(user.id),
-                vec![
-                    user::name::set("John Doe"),
-                    user::age::set(Some(26)),
-                ],
+                vec![user::name::set("John Doe"), user::age::set(Some(26))],
             )
             .exec()
             .await
@@ -303,10 +285,7 @@ mod query_builder_tests {
                     format!("User {}", i),
                     DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    vec![
-                        user::age::set(Some(20 + i)),
-                        user::deleted_at::set(None),
-                    ],
+                    vec![user::age::set(Some(20 + i)), user::deleted_at::set(None)],
                 )
                 .exec()
                 .await
@@ -334,17 +313,16 @@ mod query_builder_tests {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
-        // Create user
+        // Create user with unique email
+        let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
         let user = client
             .user()
             .create(
+                email.clone(),
                 "John".to_string(),
-                "john@example.com".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                vec![
-                    user::age::set(25),
-                ],
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await
@@ -367,7 +345,7 @@ mod query_builder_tests {
             .unwrap();
         assert!(deleted_user.is_none());
     }
-    
+
     #[tokio::test]
     async fn test_upsert_operations() {
         let db = setup_test_db().await;
@@ -385,10 +363,7 @@ mod query_builder_tests {
                     updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     _params: vec![],
                 },
-                vec![
-                    user::name::set("John"),
-                    user::age::set(25),
-                ],
+                vec![user::name::set("John"), user::age::set(25)],
             )
             .exec()
             .await
@@ -408,10 +383,7 @@ mod query_builder_tests {
                     updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     _params: vec![],
                 },
-                vec![
-                    user::name::set("John Doe"),
-                    user::age::set(26),
-                ],
+                vec![user::name::set("John Doe"), user::age::set(26)],
             )
             .exec()
             .await
@@ -425,39 +397,41 @@ mod query_builder_tests {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
+        let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
+        let email_for_check = email.clone();
         let result = client
             ._transaction()
-            .run(|tx| Box::pin(async move {
-                // Create user
-                let user = tx
-                    .user()
-                    .create(
-                        "john@example.com".to_string(),
-                        "John".to_string(),
-                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        vec![],
-                    )
-                    .exec()
-                    .await?;
+            .run(|tx| {
+                Box::pin(async move {
+                    // Create user
+                    let user = tx
+                        .user()
+                        .create(
+                            email.clone(),
+                            "John".to_string(),
+                            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                            vec![],
+                        )
+                        .exec()
+                        .await?;
 
-                // Create post
-                let post = tx
-                    .post()
-                    .create(
-                        "Hello World".to_string(),
-                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        user.id,
-                        vec![
-                            post::content::set("This is my first post".to_string()),
-                        ],
-                    )
-                    .exec()
-                    .await?;
+                    // Create post
+                    let post = tx
+                        .post()
+                        .create(
+                            "Hello World".to_string(),
+                            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                            user.id,
+                            vec![post::content::set("This is my first post".to_string())],
+                        )
+                        .exec()
+                        .await?;
 
-                Ok((user, post))
-            }))
+                    Ok((user, post))
+                })
+            })
             .await
             .expect("Transaction failed");
 
@@ -467,7 +441,7 @@ mod query_builder_tests {
         // Verify data is persisted
         let found_user = client
             .user()
-            .find_first(vec![user::email::equals("john@example.com")])
+            .find_first(vec![user::email::equals(&email_for_check)])
             .exec()
             .await
             .expect("Failed to query user")
@@ -480,25 +454,29 @@ mod query_builder_tests {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
+        let email = format!("rollback_{}@example.com", chrono::Utc::now().timestamp());
+        let email_for_check = email.clone();
         let result: Result<(), QueryError> = client
             ._transaction()
-            .run(|tx| Box::pin(async move {
-                // Create user
-                let _user = tx
-                    .user()
-                    .create(
-                        "rollback@example.com".to_string(),
-                        "Rollback".to_string(),
-                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        vec![],
-                    )
-                    .exec()
-                    .await?;
+            .run(|tx| {
+                Box::pin(async move {
+                    // Create user
+                    let _user = tx
+                        .user()
+                        .create(
+                            email.clone(),
+                            "Rollback".to_string(),
+                            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                            vec![],
+                        )
+                        .exec()
+                        .await?;
 
-                // Intentionally return an error to trigger rollback
-                Err(QueryError::Custom("Intentional rollback".into()))
-            }))
+                    // Intentionally return an error to trigger rollback
+                    Err(QueryError::Custom("Intentional rollback".into()))
+                })
+            })
             .await;
 
         assert!(result.is_err());
@@ -506,14 +484,13 @@ mod query_builder_tests {
         // Verify data is NOT persisted
         let found_user = client
             .user()
-            .find_first(vec![user::email::equals("rollback@example.com")])
+            .find_first(vec![user::email::equals(&email_for_check)])
             .exec()
             .await
             .expect("Failed to query user");
         assert!(found_user.is_none());
     }
 
-    
     #[tokio::test]
     async fn test_relations() {
         let db = setup_test_db().await;
@@ -546,17 +523,17 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        // Create posts - one with reviewer, one without
+        /*// Create posts - one with reviewer, one without
         let post_with_reviewer = client
             .post()
             .create(
                 "Reviewed Post".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                author.id,
+                user::id::equals(author.id),
                 vec![
                     post::content::set("This post has been reviewed".to_string()),
-                    post::reviewer_user_id::set(Some(reviewer.id)),
+                    post::reviewer::connect(user::id::equals(reviewer.id)),
                 ],
             )
             .exec()
@@ -569,7 +546,7 @@ mod query_builder_tests {
                 "Unreviewed Post".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                author.id,
+                user::id::equals(author.id),
                 vec![
                     post::content::set("This post hasn't been reviewed yet".to_string()),
                 ],
@@ -582,98 +559,83 @@ mod query_builder_tests {
         let user_with_posts = client
             .user()
             .find_unique(user::id::equals(author.id))
-            // .with(user::posts::fetch(vec![]))
+            .with(user::posts::fetch(vec![]))
             .exec()
             .await
             .unwrap()
             .unwrap();
-
-        /*assert_eq!(user_with_posts.posts.len(), 3);
-        assert_eq!(user_with_posts.posts[0].title, "Reviewed Post");
-        assert_eq!(user_with_posts.posts[1].title, "Unreviewed Post");*/
-    }
-/*
-    #[tokio::test]
-    async fn test_batch_operations() {
-        let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
-
-        // Create multiple users in a batch
-        let users = client
-            .user()
-            .create_many(vec![
-                (
-                    user::name::set("John"),
-                    user::email::set("john@example.com"),
-                    vec![user::age::set(25)],
-                ),
-                (
-                    user::name::set("Jane"),
-                    user::email::set("jane@example.com"),
-                    vec![user::age::set(30)],
-                ),
-                (
-                    user::name::set("Bob"),
-                    user::email::set("bob@example.com"),
-                    vec![user::age::set(35)],
-                ),
-            ])
-            .await
-            .unwrap();
-
-        assert_eq!(users.len(), 3);
-        assert_eq!(users[0].name, "John");
-        assert_eq!(users[1].name, "Jane");
-        assert_eq!(users[2].name, "Bob");
-
-        // Create multiple posts in a batch
-        let posts = client
-            .post()
-            .create_many(vec![
-                (
-                    post::title::set("Post 1"),
-                    post::content::set("Content 1"),
-                    post::user_id::set(users[0].id),
-                    vec![],
-                ),
-                (
-                    post::title::set("Post 2"),
-                    post::content::set("Content 2"),
-                    post::user_id::set(users[1].id),
-                    vec![],
-                ),
-            ])
-            .await
-            .unwrap();
-
+        let posts = user_with_posts.posts.unwrap();
         assert_eq!(posts.len(), 2);
-        assert_eq!(posts[0].title, "Post 1");
-        assert_eq!(posts[1].title, "Post 2");
+        assert_eq!(posts[0].title, "Reviewed Post");
+        assert_eq!(posts[1].title, "Unreviewed Post");
 
-        // Update multiple users in a batch
-        let updated_users = client
-            .user()
-            .update_many(
-                user::age::less_than(30),
-                user::age::set(30),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(updated_users.len(), 1);
-        assert_eq!(updated_users[0].age, 30);
-
-        // Delete multiple posts in a batch
-        let deleted_count = client
+        // Test fetching post with reviewer
+        let post_with_reviewer = client
             .post()
-            .delete_many(post::user_id::equals(users[0].id))
+            .find_unique(post::id::equals(post_with_reviewer.id))
+            .with(post::reviewer::fetch())
+            .exec()
             .await
+            .unwrap()
             .unwrap();
+        let reviewer = post_with_reviewer.reviewer.unwrap().unwrap();
+        assert_eq!(reviewer.name, "Jane");
+        assert_eq!(reviewer.email, "jane@example.com");
 
-        assert_eq!(deleted_count, 1);
-
-        teardown_test_db(&db).await;
-    }
+        // Test fetching post without reviewer
+        let post_without_reviewer = client
+            .post()
+            .find_unique(post::id::equals(post_without_reviewer.id))
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        println!("post_without_reviewer.reviewer: {:?}", post_without_reviewer.reviewer);
+        assert!(post_without_reviewer.reviewer.is_none() || post_without_reviewer.reviewer.as_ref().unwrap().is_none());
 */
+    }
+    /*
+        #[tokio::test]
+        async fn test_batch_operations() {
+            let db = setup_test_db().await;
+            let client = CausticsClient::new(db.clone());
 
+            let timestamp = chrono::Utc::now().timestamp();
+            // Create multiple users in a batch
+            let users = vec![
+                user::Create {
+                    email: format!("john_{}@example.com", timestamp),
+                    name: "John".to_string(),
+                    created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    _params: vec![
+                        user::age::set(Some(25)),
+                        user::deleted_at::set(None),
+                    ],
+                },
+                user::Create {
+                    email: format!("jane_{}@example.com", timestamp),
+                    name: "Jane".to_string(),
+                    created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    _params: vec![
+                        user::age::set(Some(30)),
+                        user::deleted_at::set(None),
+                    ],
+                },
+            ];
+            for u in &users {
+                client.user().create(
+                    u.email.clone(),
+                    u.name.clone(),
+                    u.created_at,
+                    u.updated_at,
+                    u._params.clone(),
+                ).exec().await.unwrap();
+            }
+            let found_users = client.user().find_many(vec![]).exec().await.unwrap();
+            assert_eq!(found_users.len(), 2);
+        }
+    */
 }

@@ -5,11 +5,11 @@
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
-use std::sync::Mutex;
 use std::collections::HashSet;
+use std::sync::Mutex;
 
-mod entity;
 mod common;
+mod entity;
 
 lazy_static::lazy_static! {
     static ref ENTITIES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());

@@ -1,8 +1,8 @@
-use proc_macro2::TokenStream;
-use quote::{quote, format_ident, ToTokens};
-use syn::{DeriveInput, Data, Fields};
-use heck::ToPascalCase;
 use crate::common::is_option;
+use heck::ToPascalCase;
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote, ToTokens};
+use syn::{Data, DeriveInput, Fields};
 
 #[derive(Debug, Clone)]
 pub struct Field {
@@ -55,8 +55,9 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         .filter(|field| {
             field.attrs.iter().any(|attr| {
                 if let syn::Meta::List(meta) = &attr.meta {
-                    (meta.path.is_ident("sea_orm") && meta.tokens.to_string().contains("primary_key")) ||
-                    meta.path.is_ident("primary_key")
+                    (meta.path.is_ident("sea_orm")
+                        && meta.tokens.to_string().contains("primary_key"))
+                        || meta.path.is_ident("primary_key")
                 } else {
                     false
                 }
@@ -67,9 +68,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
     // Only non-nullable, non-primary-key fields are required
     let required_fields: Vec<_> = fields
         .iter()
-        .filter(|field| {
-            !primary_key_fields.contains(field) && !is_option(&field.ty)
-        })
+        .filter(|field| !primary_key_fields.contains(field) && !is_option(&field.ty))
         .collect();
 
     // Generate struct fields for required fields (with pub)
@@ -146,7 +145,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         let is_primary_key = primary_key_fields.iter().any(|pk_field| {
             pk_field.ident.as_ref().unwrap() == field_name.as_ref().unwrap()
         });
-        
+
         let set_fn = if !is_primary_key {
             quote! {
                 pub fn set<T: Into<#field_type>>(value: T) -> SetValue {
@@ -211,11 +210,11 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         let required_assigns = required_assigns.clone();
         quote! {
             use sea_orm::{
-                DatabaseConnection, 
-                Condition, 
-                EntityTrait, 
-                ActiveValue, 
-                QuerySelect, 
+                DatabaseConnection,
+                Condition,
+                EntityTrait,
+                ActiveValue,
+                QuerySelect,
                 QueryOrder,
                 QueryTrait,
                 Select,
@@ -312,8 +311,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                     self.query = self.query.offset(offset);
                     self
                 }
-                pub fn order_by<Col>(mut self, col_and_order: (Col, SortOrder)) -> Self 
-                where 
+                pub fn order_by<Col>(mut self, col_and_order: (Col, SortOrder)) -> Self
+                where
                     Col: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr
                 {
                     let (col, sort_order) = col_and_order;
@@ -491,11 +490,13 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
 
 fn extract_relations(ast: &DeriveInput) -> Vec<Relation> {
     let mut relations = Vec::new();
-    
+
     for attr in &ast.attrs {
         if let syn::Meta::List(meta) = &attr.meta {
             if meta.path.is_ident("relation") {
-                if let Ok(nested) = meta.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated) {
+                if let Ok(nested) = meta.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                ) {
                     let mut name = None;
                     let mut target = None;
                     let mut kind = None;
@@ -504,15 +505,27 @@ fn extract_relations(ast: &DeriveInput) -> Vec<Relation> {
                         match meta {
                             syn::Meta::NameValue(nv) => {
                                 if nv.path.is_ident("name") {
-                                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                    if let syn::Expr::Lit(syn::ExprLit {
+                                        lit: syn::Lit::Str(lit),
+                                        ..
+                                    }) = &nv.value
+                                    {
                                         name = Some(lit.value());
                                     }
                                 } else if nv.path.is_ident("target") {
-                                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                    if let syn::Expr::Lit(syn::ExprLit {
+                                        lit: syn::Lit::Str(lit),
+                                        ..
+                                    }) = &nv.value
+                                    {
                                         target = Some(lit.value());
                                     }
                                 } else if nv.path.is_ident("kind") {
-                                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                    if let syn::Expr::Lit(syn::ExprLit {
+                                        lit: syn::Lit::Str(lit),
+                                        ..
+                                    }) = &nv.value
+                                    {
                                         kind = Some(match lit.value().as_str() {
                                             "has_many" => RelationKind::HasMany,
                                             "belongs_to" => RelationKind::BelongsTo,
@@ -567,14 +580,18 @@ fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
     }
 }
 
-pub fn generate_entity_code(entity_name: &str, fields: &[Field], relations: &[Relation]) -> TokenStream {
+pub fn generate_entity_code(
+    entity_name: &str,
+    fields: &[Field],
+    relations: &[Relation],
+) -> TokenStream {
     let entity_name_lower = format_ident!("{}", entity_name.to_lowercase());
-    
+
     let field_ops = generate_field_ops(fields);
     let set_value_methods = generate_set_value_methods(fields);
     let query_builders = generate_query_builders(entity_name, fields);
     let relation_submodules = generate_relation_submodules(relations);
-    
+
     // Generate the entity code
     let expanded = quote! {
         pub mod #entity_name_lower {
@@ -606,44 +623,47 @@ pub fn generate_entity_code(entity_name: &str, fields: &[Field], relations: &[Re
 }
 
 pub fn generate_field_ops(fields: &[Field]) -> TokenStream {
-    let field_ops: Vec<_> = fields.iter().map(|field| {
-        let field_name = format_ident!("{}", field.name);
-        quote! {
-            pub mod #field_name {
-                use super::*;
-                pub fn equals(value: #field_name::Type) -> Condition {
-                    Condition::equals(value)
-                }
-                pub fn not_equals(value: #field_name::Type) -> Condition {
-                    Condition::not_equals(value)
-                }
-                pub fn gt(value: #field_name::Type) -> Condition {
-                    Condition::gt(value)
-                }
-                pub fn gte(value: #field_name::Type) -> Condition {
-                    Condition::gte(value)
-                }
-                pub fn lt(value: #field_name::Type) -> Condition {
-                    Condition::lt(value)
-                }
-                pub fn lte(value: #field_name::Type) -> Condition {
-                    Condition::lte(value)
-                }
-                pub fn contains(value: String) -> Condition {
-                    Condition::contains(value)
-                }
-                pub fn starts_with(value: String) -> Condition {
-                    Condition::starts_with(value)
-                }
-                pub fn ends_with(value: String) -> Condition {
-                    Condition::ends_with(value)
-                }
-                pub fn set(value: #field_name::Type) -> SetValue {
-                    SetValue::new(value)
+    let field_ops: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let field_name = format_ident!("{}", field.name);
+            quote! {
+                pub mod #field_name {
+                    use super::*;
+                    pub fn equals(value: #field_name::Type) -> Condition {
+                        Condition::equals(value)
+                    }
+                    pub fn not_equals(value: #field_name::Type) -> Condition {
+                        Condition::not_equals(value)
+                    }
+                    pub fn gt(value: #field_name::Type) -> Condition {
+                        Condition::gt(value)
+                    }
+                    pub fn gte(value: #field_name::Type) -> Condition {
+                        Condition::gte(value)
+                    }
+                    pub fn lt(value: #field_name::Type) -> Condition {
+                        Condition::lt(value)
+                    }
+                    pub fn lte(value: #field_name::Type) -> Condition {
+                        Condition::lte(value)
+                    }
+                    pub fn contains(value: String) -> Condition {
+                        Condition::contains(value)
+                    }
+                    pub fn starts_with(value: String) -> Condition {
+                        Condition::starts_with(value)
+                    }
+                    pub fn ends_with(value: String) -> Condition {
+                        Condition::ends_with(value)
+                    }
+                    pub fn set(value: #field_name::Type) -> SetValue {
+                        SetValue::new(value)
+                    }
                 }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     quote! {
         #(#field_ops)*
@@ -651,22 +671,28 @@ pub fn generate_field_ops(fields: &[Field]) -> TokenStream {
 }
 
 pub fn generate_set_value_methods(fields: &[Field]) -> TokenStream {
-    let field_variants: Vec<_> = fields.iter().map(|field| {
-        let field_name = format_ident!("{}", field.name);
-        let ty = &field.ty;
-        quote! {
-            #field_name(sea_orm::ActiveValue<#ty>)
-        }
-    }).collect();
-
-    let match_arms: Vec<_> = fields.iter().map(|field| {
-        let field_name = format_ident!("{}", field.name);
-        quote! {
-            SetValue::#field_name(value) => {
-                model.#field_name = value.clone();
+    let field_variants: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let field_name = format_ident!("{}", field.name);
+            let ty = &field.ty;
+            quote! {
+                #field_name(sea_orm::ActiveValue<#ty>)
             }
-        }
-    }).collect();
+        })
+        .collect();
+
+    let match_arms: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let field_name = format_ident!("{}", field.name);
+            quote! {
+                SetValue::#field_name(value) => {
+                    model.#field_name = value.clone();
+                }
+            }
+        })
+        .collect();
 
     quote! {
         pub enum SetValue {
@@ -684,7 +710,6 @@ pub fn generate_set_value_methods(fields: &[Field]) -> TokenStream {
 }
 
 pub fn generate_query_builders(entity_name: &str, fields: &[Field]) -> TokenStream {
-
     quote! {
         pub struct FindQuery {
             entity_name: &'static str,
@@ -726,4 +751,4 @@ pub fn generate_query_builders(entity_name: &str, fields: &[Field]) -> TokenStre
             }
         }
     }
-} 
+}

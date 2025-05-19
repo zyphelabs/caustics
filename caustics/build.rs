@@ -1,9 +1,9 @@
+use quote::{format_ident, quote};
 use std::env;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
+use syn::{parse_file, Attribute, Item, Meta};
 use walkdir::WalkDir;
-use syn::{parse_file, Item, Attribute, Meta};
-use quote::{quote, format_ident};
 
 fn main() {
     // Main client (for src/)
@@ -66,7 +66,9 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
                         if let Some((_, items)) = &module.content {
                             for item in items {
                                 if let Item::Struct(struct_item) = item {
-                                    if struct_item.ident == "Model" && has_caustics_derive(&struct_item.attrs) {
+                                    if struct_item.ident == "Model"
+                                        && has_caustics_derive(&struct_item.attrs)
+                                    {
                                         let entity_name = to_pascal_case(&module_name);
                                         let module_path = module_name.clone();
                                         entities.push((entity_name, module_path));
@@ -122,25 +124,31 @@ fn to_pascal_case(s: &str) -> String {
 }
 
 fn generate_client_code(entities: &[(String, String)]) -> String {
-    let entity_methods: Vec<_> = entities.iter().map(|(name, module_path)| {
-        let method_name = format_ident!("{}", name.to_lowercase());
-        let module_path = format_ident!("{}", module_path);
-        quote! {
-            pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseConnection> {
-                #module_path::EntityClient::new(&*self.db)
+    let entity_methods: Vec<_> = entities
+        .iter()
+        .map(|(name, module_path)| {
+            let method_name = format_ident!("{}", name.to_lowercase());
+            let module_path = format_ident!("{}", module_path);
+            quote! {
+                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseConnection> {
+                    #module_path::EntityClient::new(&*self.db)
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
-    let tx_entity_methods: Vec<_> = entities.iter().map(|(name, module_path)| {
-        let method_name = format_ident!("{}", name.to_lowercase());
-        let module_path = format_ident!("{}", module_path);
-        quote! {
-            pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseTransaction> {
-                #module_path::EntityClient::new(&*self.tx)
+    let tx_entity_methods: Vec<_> = entities
+        .iter()
+        .map(|(name, module_path)| {
+            let method_name = format_ident!("{}", name.to_lowercase());
+            let module_path = format_ident!("{}", module_path);
+            quote! {
+                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseTransaction> {
+                    #module_path::EntityClient::new(&*self.tx)
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     let client_code = quote! {
         use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
@@ -218,4 +226,4 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
     };
 
     client_code.to_string()
-} 
+}

@@ -1,6 +1,6 @@
 generator client {
   provider        = "cargo prisma"
-  output          = "../example/db.rs"
+  output          = "../example/src/generated/db.rs"
   previewFeatures = ["multiSchema"]
 }
 
@@ -12,7 +12,7 @@ datasource db {
 
 
 model User {
-  id         Int       @id
+  id         Int       @id @default(autoincrement())
   email      String    @unique
   name       String
   age        Int?      // nullable
@@ -26,7 +26,7 @@ model User {
 }
 
 model Post {
-  id              Int       @id
+  id              Int       @id @default(autoincrement())
   title           String
   content         String?   // nullable
   createdAt       DateTime  @map("created_at")
