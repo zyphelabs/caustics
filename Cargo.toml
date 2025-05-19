@@ -3,4 +3,7 @@ members = [
     "caustics",
     "caustics-macros"
 ]
+exclude = [
+    "prisma-cli"
+]
 resolver = "2" 

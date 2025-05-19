@@ -1,0 +1,2 @@
+[alias]
+prisma = "run --features=postgresql --manifest-path prisma-cli/Cargo.toml --"

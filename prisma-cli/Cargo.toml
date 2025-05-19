@@ -1,0 +1,14 @@
+[package]
+name = "prisma-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "prisma"
+path = "src/bin/prisma.rs"
+
+[features]
+postgresql = ["prisma-client-rust-cli/postgresql"]
+
+[dependencies]
+prisma-client-rust-cli = { git = "https://github.com/Brendonovich/prisma-client-rust.git", default-features = false }

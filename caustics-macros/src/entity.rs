@@ -1,20 +1,39 @@
 use proc_macro2::TokenStream;
-use quote::{quote, format_ident};
+use quote::{quote, format_ident, ToTokens};
 use syn::{DeriveInput, Data, Fields};
 use heck::ToPascalCase;
 use crate::common::is_option;
 
-#[derive(Debug)]
-pub struct Relation {
-    pub name: String,
-    pub related_entity: String,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Field {
     pub name: String,
     pub ty: String,
     pub is_optional: bool,
+    pub is_primary_key: bool,
+    pub is_created_at: bool,
+    pub is_updated_at: bool,
+    pub column_name: Option<String>,
+}
+
+impl ToTokens for Field {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let name = format_ident!("{}", self.name);
+        let ty = syn::parse_str::<syn::Type>(&self.ty).unwrap();
+        tokens.extend(quote! { #name: #ty });
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Relation {
+    pub name: String,
+    pub target: String,
+    pub kind: RelationKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum RelationKind {
+    HasMany,
+    BelongsTo,
 }
 
 pub fn generate_entity(ast: DeriveInput) -> TokenStream {
@@ -27,8 +46,9 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         _ => panic!("Expected a struct"),
     };
 
-    // Remove attribute-based relation extraction
-    let relations = Vec::new();
+    // Extract relations from attributes
+    let relations = extract_relations(&ast);
+
     // Filter out primary key fields for set operations
     let primary_key_fields: Vec<_> = fields
         .iter()
@@ -469,27 +489,84 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-// Add this function to generate relation submodules with fetch operators
-pub fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
-    let submodules: Vec<_> = relations.iter().map(|relation| {
-        let relation_name = format_ident!("{}", relation.name.to_lowercase());
-        let related_entity = format_ident!("{}", relation.related_entity);
-        quote! {
-            pub mod #relation_name {
-                use super::super::#related_entity;
-                pub fn fetch(conditions: Vec<#related_entity::Condition>) -> FetchRelation<#related_entity::Entity, #related_entity::Condition> {
-                    FetchRelation::new(conditions)
+fn extract_relations(ast: &DeriveInput) -> Vec<Relation> {
+    let mut relations = Vec::new();
+    
+    for attr in &ast.attrs {
+        if let syn::Meta::List(meta) = &attr.meta {
+            if meta.path.is_ident("relation") {
+                if let Ok(nested) = meta.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated) {
+                    let mut name = None;
+                    let mut target = None;
+                    let mut kind = None;
+
+                    for meta in nested {
+                        match meta {
+                            syn::Meta::NameValue(nv) => {
+                                if nv.path.is_ident("name") {
+                                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                        name = Some(lit.value());
+                                    }
+                                } else if nv.path.is_ident("target") {
+                                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                        target = Some(lit.value());
+                                    }
+                                } else if nv.path.is_ident("kind") {
+                                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                        kind = Some(match lit.value().as_str() {
+                                            "has_many" => RelationKind::HasMany,
+                                            "belongs_to" => RelationKind::BelongsTo,
+                                            _ => panic!("Invalid relation kind"),
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if let (Some(name), Some(target), Some(kind)) = (name, target, kind) {
+                        relations.push(Relation { name, target, kind });
+                    }
                 }
             }
         }
-    }).collect();
+    }
+
+    relations
+}
+
+fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
+    let mut submodules = Vec::new();
+
+    for relation in relations {
+        let relation_name = &relation.name;
+        let relation_name_ident = format_ident!("{}", relation_name);
+        let relation_name_lower = relation_name.to_lowercase();
+        let relation_name_lower_ident = format_ident!("{}", relation_name_lower);
+        let relation_name_str = relation_name;
+
+        let submodule = quote! {
+            pub mod #relation_name_lower_ident {
+                use super::*;
+
+                pub fn fetch(filters: Vec<Filter>) -> RelationFilter {
+                    RelationFilter {
+                        relation: #relation_name_str,
+                        filters,
+                    }
+                }
+            }
+        };
+
+        submodules.push(submodule);
+    }
 
     quote! {
         #(#submodules)*
     }
 }
 
-// In your generate_entity_code function, add a call to generate_relation_submodules
 pub fn generate_entity_code(entity_name: &str, fields: &[Field], relations: &[Relation]) -> TokenStream {
     let entity_name_lower = format_ident!("{}", entity_name.to_lowercase());
     

@@ -1,0 +1,41 @@
+generator client {
+  provider        = "cargo prisma"
+  output          = "../example/db.rs"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["auth", "public", "sandbox"]
+}
+
+
+model User {
+  id         Int       @id
+  email      String    @unique
+  name       String
+  age        Int?      // nullable
+  createdAt  DateTime  @map("created_at")
+  updatedAt  DateTime  @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at") // nullable
+  posts      Post[]    // relation to Post model
+  reviewedPosts Post[] @relation("Reviewer") // relation to Post model as reviewer
+
+  @@schema("public")
+}
+
+model Post {
+  id              Int       @id
+  title           String
+  content         String?   // nullable
+  createdAt       DateTime  @map("created_at")
+  updatedAt       DateTime  @map("updated_at")
+  userId          Int       @map("user_id")
+  reviewerUserId  Int?      @map("reviewer_user_id") // nullable
+  user            User      @relation(fields: [userId], references: [id])
+  reviewer        User?     @relation("Reviewer", fields: [reviewerUserId], references: [id])
+  customData      Json?     @default("{}")
+
+  @@schema("public")
+}
