@@ -22,7 +22,7 @@ pub mod user {
         pub deleted_at: Option<DateTime<FixedOffset>>,
     }
 
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {
         #[sea_orm(
             has_many = "super::post::Entity",
@@ -33,6 +33,13 @@ pub mod user {
     }
 
     impl sea_orm::ActiveModelBehavior for ActiveModel {}
+
+    // Add Related trait implementation
+    impl Related<super::user::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Posts.def()
+        }
+    }
 }
 
 pub mod post {
@@ -58,7 +65,7 @@ pub mod post {
         pub reviewer_user_id: Option<i32>,
     }
 
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {
         #[sea_orm(
             belongs_to = "super::user::Entity",

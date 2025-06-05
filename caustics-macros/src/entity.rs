@@ -203,6 +203,41 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
     // Generate relation submodules
     let relation_submodules = generate_relation_submodules(&relations);
 
+    // Generate ModelWithRelations struct fields
+    let model_with_relations_fields = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let ty = &field.ty;
+        quote! { pub #name: #ty }
+    }).collect::<Vec<_>>();
+
+    // Generate field names for From implementation
+    let field_names = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        quote! { #name }
+    }).collect::<Vec<_>>();
+
+    // Generate relation fields for ModelWithRelations
+    let relation_fields = relations.iter().map(|relation| {
+        let name = format_ident!("{}", relation.name);
+        let target = format_ident!("{}", relation.target);
+        match relation.kind {
+            RelationKind::HasMany => quote! { pub #name: Vec<#target::Model> },
+            RelationKind::BelongsTo => quote! { pub #name: Option<#target::Model> },
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate From<Model> implementation for ModelWithRelations
+    let from_model_impl = quote! {
+        impl From<Model> for ModelWithRelations {
+            fn from(model: Model) -> Self {
+                Self {
+                    #(#field_names: model.#field_names,)*
+                    #(#relation_fields: Default::default(),)*
+                }
+            }
+        }
+    };
+
     let expanded = {
         let required_struct_fields = required_struct_fields.clone();
         let required_fn_args = required_fn_args.clone();
@@ -224,6 +259,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                 ConnectionTrait,
             };
             use std::marker::PhantomData;
+            use std::default::Default;
             use super::SortOrder;
 
             pub struct EntityClient<'a, C: ConnectionTrait> {
@@ -265,14 +301,21 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                 }
             }
 
+            pub struct ModelWithRelations {
+                #(#model_with_relations_fields,)*
+                #(#relation_fields,)*
+            }
+
+            #from_model_impl
+
             pub struct UniqueQueryBuilder<'a, C: ConnectionTrait> {
                 query: sea_orm::Select<Entity>,
                 conn: &'a C,
             }
 
             impl<'a, C: ConnectionTrait> UniqueQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
-                    self.query.one(self.conn).await
+                pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
+                    self.query.one(self.conn).await.map(|opt| opt.map(ModelWithRelations::from))
                 }
 
                 pub fn with<T>(self, _relation: T) -> Self {
@@ -287,8 +330,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             }
 
             impl<'a, C: ConnectionTrait> FirstQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<Option<Model>, sea_orm::DbErr> {
-                    self.query.one(self.db).await
+                pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
+                    self.query.one(self.db).await.map(|opt| opt.map(ModelWithRelations::from))
                 }
 
                 pub fn with<T>(self, _relation: T) -> Self {
@@ -323,8 +366,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                     self.query = self.query.order_by(col, order);
                     self
                 }
-                pub async fn exec(self) -> Result<Vec<Model>, sea_orm::DbErr> {
-                    self.query.all(self.db).await
+                pub async fn exec(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr> {
+                    self.query.all(self.db).await.map(|models| models.into_iter().map(ModelWithRelations::from).collect())
                 }
 
                 pub fn with<T>(self, _relation: T) -> Self {
@@ -339,8 +382,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             }
 
             impl<'a, C: ConnectionTrait> CreateQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
-                    self.model.insert(self.db).await
+                pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
+                    self.model.insert(self.db).await.map(ModelWithRelations::from)
                 }
             }
 
@@ -367,7 +410,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             }
 
             impl<'a, C: ConnectionTrait> UpsertQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
+                pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
                     let existing = Entity::find()
                         .filter(self.condition.clone())
                         .one(self.db)
@@ -379,14 +422,14 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                             for change in self.update {
                                 change.merge_into(&mut active_model);
                             }
-                            active_model.update(self.db).await
+                            active_model.update(self.db).await.map(ModelWithRelations::from)
                         }
                         None => {
                             let mut active_model = self.create.into_active_model();
                             for change in self.update {
                                 change.merge_into(&mut active_model);
                             }
-                            active_model.insert(self.db).await
+                            active_model.insert(self.db).await.map(ModelWithRelations::from)
                         }
                     }
                 }
@@ -399,13 +442,13 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
             }
 
             impl<'a, C: ConnectionTrait> UpdateQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<Model, sea_orm::DbErr> {
+                pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
                     let mut entity = <Entity as EntityTrait>::find().filter(self.condition).one(self.db).await?;
                     if let Some(mut model) = entity.map(|m| m.into_active_model()) {
                         for change in self.changes {
                             change.merge_into(&mut model);
                         }
-                        model.update(self.db).await
+                        model.update(self.db).await.map(ModelWithRelations::from)
                     } else {
                         Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
                     }
