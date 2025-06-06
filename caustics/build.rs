@@ -28,11 +28,38 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
             let file = parse_file(&content).unwrap();
 
             for item in file.items {
-                if let Item::Struct(struct_item) = item {
-                    if has_caustics_derive(&struct_item.attrs) {
-                        let name = struct_item.ident.to_string();
-                        let module_path = get_module_path(entry.path());
-                        entities.push((name, module_path));
+                if let Item::Mod(module) = &item {
+                    let module_name = module.ident.to_string();
+                    if let Some((_, items)) = &module.content {
+                        let has_caustics_attr = has_caustics_attribute(&module.attrs);
+                        let mut model_found = false;
+                        let mut relation_found = false;
+
+                        for item in items {
+                            if let Item::Struct(struct_item) = item {
+                                if struct_item.ident == "Model" {
+                                    model_found = true;
+                                    if has_caustics_attr || has_caustics_derive(&struct_item.attrs) {
+                                        let entity_name = to_pascal_case(&module_name);
+                                        let module_path = module_name.clone();
+                                        entities.push((entity_name, module_path));
+                                    }
+                                }
+                            } else if let Item::Enum(enum_item) = item {
+                                if enum_item.ident == "Relation" {
+                                    relation_found = true;
+                                }
+                            }
+                        }
+
+                        // If we found both Model and Relation in a caustics module, ensure the entity is added
+                        if has_caustics_attr && model_found && relation_found {
+                            let entity_name = to_pascal_case(&module_name);
+                            let module_path = module_name.clone();
+                            if !entities.iter().any(|(name, _)| name == &entity_name) {
+                                entities.push((entity_name, module_path));
+                            }
+                        }
                     }
                 }
             }
@@ -64,15 +91,33 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
                     if let Item::Mod(module) = &item {
                         let module_name = module.ident.to_string();
                         if let Some((_, items)) = &module.content {
+                            let has_caustics_attr = has_caustics_attribute(&module.attrs);
+                            let mut model_found = false;
+                            let mut relation_found = false;
+
                             for item in items {
                                 if let Item::Struct(struct_item) = item {
-                                    if struct_item.ident == "Model"
-                                        && has_caustics_derive(&struct_item.attrs)
-                                    {
-                                        let entity_name = to_pascal_case(&module_name);
-                                        let module_path = module_name.clone();
-                                        entities.push((entity_name, module_path));
+                                    if struct_item.ident == "Model" {
+                                        model_found = true;
+                                        if has_caustics_attr || has_caustics_derive(&struct_item.attrs) {
+                                            let entity_name = to_pascal_case(&module_name);
+                                            let module_path = module_name.clone();
+                                            entities.push((entity_name, module_path));
+                                        }
                                     }
+                                } else if let Item::Enum(enum_item) = item {
+                                    if enum_item.ident == "Relation" {
+                                        relation_found = true;
+                                    }
+                                }
+                            }
+
+                            // If we found both Model and Relation in a caustics module, ensure the entity is added
+                            if has_caustics_attr && model_found && relation_found {
+                                let entity_name = to_pascal_case(&module_name);
+                                let module_path = module_name.clone();
+                                if !entities.iter().any(|(name, _)| name == &entity_name) {
+                                    entities.push((entity_name, module_path));
                                 }
                             }
                         }
@@ -84,6 +129,10 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
 
     let client_code = generate_client_code(&entities);
     fs::write(out_path, client_code).unwrap();
+}
+
+fn has_caustics_attribute(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident("caustics"))
 }
 
 fn has_caustics_derive(attrs: &[Attribute]) -> bool {
@@ -98,13 +147,6 @@ fn has_caustics_derive(attrs: &[Attribute]) -> bool {
             false
         }
     })
-}
-
-fn get_module_path(file_path: &Path) -> String {
-    let mut path = file_path.to_string_lossy().to_string();
-    path = path.replace("src/", "").replace("tests/", "");
-    path = path.replace(".rs", "");
-    path.replace("/", "::")
 }
 
 fn to_pascal_case(s: &str) -> String {

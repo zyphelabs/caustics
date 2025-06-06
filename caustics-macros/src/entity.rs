@@ -36,9 +36,9 @@ pub enum RelationKind {
     BelongsTo,
 }
 
-pub fn generate_entity(ast: DeriveInput) -> TokenStream {
+pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> TokenStream {
     // Extract fields
-    let fields = match &ast.data {
+    let fields = match &model_ast.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields_named) => fields_named.named.iter().collect::<Vec<_>>(),
             _ => panic!("Expected named fields"),
@@ -46,8 +46,8 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         _ => panic!("Expected a struct"),
     };
 
-    // Extract relations from attributes
-    let relations = extract_relations(&ast);
+    // Extract relations from relation_ast
+    let relations = extract_relations(&relation_ast);
 
     // Filter out primary key fields for set operations
     let primary_key_fields: Vec<_> = fields
@@ -216,6 +216,13 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         quote! { #name }
     }).collect::<Vec<_>>();
 
+    // Generate field names and types for constructor
+    let field_params = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let ty = &field.ty;
+        quote! { #name: #ty }
+    }).collect::<Vec<_>>();
+
     // Generate relation fields for ModelWithRelations
     let relation_fields = relations.iter().map(|relation| {
         let name = format_ident!("{}", relation.name);
@@ -226,13 +233,56 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
         }
     }).collect::<Vec<_>>();
 
-    // Generate From<Model> implementation for ModelWithRelations
-    let from_model_impl = quote! {
-        impl From<Model> for ModelWithRelations {
-            fn from(model: Model) -> Self {
+    // Generate relation field names for constructor
+    let relation_field_names = relations.iter().map(|relation| {
+        let name = format_ident!("{}", relation.name);
+        let target = format_ident!("{}", relation.target);
+        match relation.kind {
+            RelationKind::HasMany => quote! { #name: Vec<#target::Model> },
+            RelationKind::BelongsTo => quote! { #name: Option<#target::Model> },
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate default values for relation fields
+    let relation_defaults = relations.iter().map(|relation| {
+        let name = format_ident!("{}", relation.name);
+        match relation.kind {
+            RelationKind::HasMany => quote! { #name: Vec::new() },
+            RelationKind::BelongsTo => quote! { #name: None },
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate ModelWithRelations struct and constructor
+    let model_with_relations_impl = quote! {
+        pub struct ModelWithRelations {
+            #(#model_with_relations_fields,)*
+            #(#relation_fields,)*
+        }
+
+        impl ModelWithRelations {
+            pub fn new(
+                #(#field_params,)*
+                #(#relation_field_names,)*
+            ) -> Self {
+                Self {
+                    #(#field_names,)*
+                    #(#relation_field_names,)*
+                }
+            }
+
+            pub fn from_model(model: Model) -> Self {
                 Self {
                     #(#field_names: model.#field_names,)*
-                    #(#relation_fields: Default::default(),)*
+                    #(#relation_defaults,)*
+                }
+            }
+        }
+
+        impl std::default::Default for ModelWithRelations {
+            fn default() -> Self {
+                Self {
+                    #(#field_names: Default::default(),)*
+                    #(#relation_defaults,)*
                 }
             }
         }
@@ -301,12 +351,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                 }
             }
 
-            pub struct ModelWithRelations {
-                #(#model_with_relations_fields,)*
-                #(#relation_fields,)*
-            }
-
-            #from_model_impl
+            #model_with_relations_impl
 
             pub struct UniqueQueryBuilder<'a, C: ConnectionTrait> {
                 query: sea_orm::Select<Entity>,
@@ -315,7 +360,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
 
             impl<'a, C: ConnectionTrait> UniqueQueryBuilder<'a, C> {
                 pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
-                    self.query.one(self.conn).await.map(|opt| opt.map(ModelWithRelations::from))
+                    self.query.one(self.conn).await.map(|opt| opt.map(ModelWithRelations::from_model))
                 }
 
                 pub fn with<T>(self, _relation: T) -> Self {
@@ -331,7 +376,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
 
             impl<'a, C: ConnectionTrait> FirstQueryBuilder<'a, C> {
                 pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
-                    self.query.one(self.db).await.map(|opt| opt.map(ModelWithRelations::from))
+                    self.query.one(self.db).await.map(|opt| opt.map(ModelWithRelations::from_model))
                 }
 
                 pub fn with<T>(self, _relation: T) -> Self {
@@ -367,7 +412,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                     self
                 }
                 pub async fn exec(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr> {
-                    self.query.all(self.db).await.map(|models| models.into_iter().map(ModelWithRelations::from).collect())
+                    self.query.all(self.db).await.map(|models| models.into_iter().map(ModelWithRelations::from_model).collect())
                 }
 
                 pub fn with<T>(self, _relation: T) -> Self {
@@ -383,7 +428,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
 
             impl<'a, C: ConnectionTrait> CreateQueryBuilder<'a, C> {
                 pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
-                    self.model.insert(self.db).await.map(ModelWithRelations::from)
+                    self.model.insert(self.db).await.map(ModelWithRelations::from_model)
                 }
             }
 
@@ -422,14 +467,14 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                             for change in self.update {
                                 change.merge_into(&mut active_model);
                             }
-                            active_model.update(self.db).await.map(ModelWithRelations::from)
+                            active_model.update(self.db).await.map(ModelWithRelations::from_model)
                         }
                         None => {
                             let mut active_model = self.create.into_active_model();
                             for change in self.update {
                                 change.merge_into(&mut active_model);
                             }
-                            active_model.insert(self.db).await.map(ModelWithRelations::from)
+                            active_model.insert(self.db).await.map(ModelWithRelations::from_model)
                         }
                     }
                 }
@@ -448,7 +493,7 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
                         for change in self.changes {
                             change.merge_into(&mut model);
                         }
-                        model.update(self.db).await.map(ModelWithRelations::from)
+                        model.update(self.db).await.map(ModelWithRelations::from_model)
                     } else {
                         Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
                     }
@@ -531,58 +576,38 @@ pub fn generate_entity(ast: DeriveInput) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn extract_relations(ast: &DeriveInput) -> Vec<Relation> {
+fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
     let mut relations = Vec::new();
 
-    for attr in &ast.attrs {
+    for attr in &relation_ast.attrs {
         if let syn::Meta::List(meta) = &attr.meta {
-            if meta.path.is_ident("relation") {
+            if meta.path.is_ident("sea_orm") {
                 if let Ok(nested) = meta.parse_args_with(
                     syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
                 ) {
-                    let mut name = None;
-                    let mut target = None;
-                    let mut kind = None;
-
                     for meta in nested {
-                        match meta {
-                            syn::Meta::NameValue(nv) => {
-                                if nv.path.is_ident("name") {
-                                    if let syn::Expr::Lit(syn::ExprLit {
-                                        lit: syn::Lit::Str(lit),
-                                        ..
-                                    }) = &nv.value
-                                    {
-                                        name = Some(lit.value());
-                                    }
-                                } else if nv.path.is_ident("target") {
-                                    if let syn::Expr::Lit(syn::ExprLit {
-                                        lit: syn::Lit::Str(lit),
-                                        ..
-                                    }) = &nv.value
-                                    {
-                                        target = Some(lit.value());
-                                    }
-                                } else if nv.path.is_ident("kind") {
-                                    if let syn::Expr::Lit(syn::ExprLit {
-                                        lit: syn::Lit::Str(lit),
-                                        ..
-                                    }) = &nv.value
-                                    {
-                                        kind = Some(match lit.value().as_str() {
-                                            "has_many" => RelationKind::HasMany,
-                                            "belongs_to" => RelationKind::BelongsTo,
-                                            _ => panic!("Invalid relation kind"),
-                                        });
-                                    }
+                        if let syn::Meta::NameValue(nv) = &meta {
+                            if nv.path.is_ident("has_many") || nv.path.is_ident("belongs_to") {
+                                if let syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Str(lit),
+                                    ..
+                                }) = &nv.value
+                                {
+                                    let target = lit.value();
+                                    let name = if nv.path.is_ident("has_many") {
+                                        target.split("::").last().unwrap().to_string()
+                                    } else {
+                                        target.split("::").last().unwrap().to_string()
+                                    };
+                                    let kind = if nv.path.is_ident("has_many") {
+                                        RelationKind::HasMany
+                                    } else {
+                                        RelationKind::BelongsTo
+                                    };
+                                    relations.push(Relation { name, target, kind });
                                 }
                             }
-                            _ => {}
                         }
-                    }
-
-                    if let (Some(name), Some(target), Some(kind)) = (name, target, kind) {
-                        relations.push(Relation { name, target, kind });
                     }
                 }
             }
@@ -620,178 +645,5 @@ fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
 
     quote! {
         #(#submodules)*
-    }
-}
-
-pub fn generate_entity_code(
-    entity_name: &str,
-    fields: &[Field],
-    relations: &[Relation],
-) -> TokenStream {
-    let entity_name_lower = format_ident!("{}", entity_name.to_lowercase());
-
-    let field_ops = generate_field_ops(fields);
-    let set_value_methods = generate_set_value_methods(fields);
-    let query_builders = generate_query_builders(entity_name, fields);
-    let relation_submodules = generate_relation_submodules(relations);
-
-    // Generate the entity code
-    let expanded = quote! {
-        pub mod #entity_name_lower {
-            use super::*;
-            use sea_orm::{EntityTrait, ConnectionTrait, QueryTrait, QueryFilter, QuerySelect, QueryOrder, QueryLimit, QueryOffset};
-            use std::future::Future;
-
-            #field_ops
-
-            #set_value_methods
-
-            #query_builders
-
-            #relation_submodules
-
-            pub struct EntityClient<'a, C: ConnectionTrait> {
-                db: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> EntityClient<'a, C> {
-                pub fn new(db: &'a C) -> Self {
-                    Self { db }
-                }
-            }
-        }
-    };
-
-    expanded
-}
-
-pub fn generate_field_ops(fields: &[Field]) -> TokenStream {
-    let field_ops: Vec<_> = fields
-        .iter()
-        .map(|field| {
-            let field_name = format_ident!("{}", field.name);
-            quote! {
-                pub mod #field_name {
-                    use super::*;
-                    pub fn equals(value: #field_name::Type) -> Condition {
-                        Condition::equals(value)
-                    }
-                    pub fn not_equals(value: #field_name::Type) -> Condition {
-                        Condition::not_equals(value)
-                    }
-                    pub fn gt(value: #field_name::Type) -> Condition {
-                        Condition::gt(value)
-                    }
-                    pub fn gte(value: #field_name::Type) -> Condition {
-                        Condition::gte(value)
-                    }
-                    pub fn lt(value: #field_name::Type) -> Condition {
-                        Condition::lt(value)
-                    }
-                    pub fn lte(value: #field_name::Type) -> Condition {
-                        Condition::lte(value)
-                    }
-                    pub fn contains(value: String) -> Condition {
-                        Condition::contains(value)
-                    }
-                    pub fn starts_with(value: String) -> Condition {
-                        Condition::starts_with(value)
-                    }
-                    pub fn ends_with(value: String) -> Condition {
-                        Condition::ends_with(value)
-                    }
-                    pub fn set(value: #field_name::Type) -> SetValue {
-                        SetValue::new(value)
-                    }
-                }
-            }
-        })
-        .collect();
-
-    quote! {
-        #(#field_ops)*
-    }
-}
-
-pub fn generate_set_value_methods(fields: &[Field]) -> TokenStream {
-    let field_variants: Vec<_> = fields
-        .iter()
-        .map(|field| {
-            let field_name = format_ident!("{}", field.name);
-            let ty = &field.ty;
-            quote! {
-                #field_name(sea_orm::ActiveValue<#ty>)
-            }
-        })
-        .collect();
-
-    let match_arms: Vec<_> = fields
-        .iter()
-        .map(|field| {
-            let field_name = format_ident!("{}", field.name);
-            quote! {
-                SetValue::#field_name(value) => {
-                    model.#field_name = value.clone();
-                }
-            }
-        })
-        .collect();
-
-    quote! {
-        pub enum SetValue {
-            #(#field_variants,)*
-        }
-
-        impl SetValue {
-            fn merge_into(&self, model: &mut ActiveModel) {
-                match self {
-                    #(#match_arms,)*
-                }
-            }
-        }
-    }
-}
-
-pub fn generate_query_builders(entity_name: &str, fields: &[Field]) -> TokenStream {
-    quote! {
-        pub struct FindQuery {
-            entity_name: &'static str,
-        }
-
-        impl FindQuery {
-            pub fn new(entity_name: &'static str) -> Self {
-                Self { entity_name }
-            }
-        }
-
-        pub struct CreateQuery {
-            entity_name: &'static str,
-        }
-
-        impl CreateQuery {
-            pub fn new(entity_name: &'static str) -> Self {
-                Self { entity_name }
-            }
-        }
-
-        pub struct UpdateQuery {
-            entity_name: &'static str,
-        }
-
-        impl UpdateQuery {
-            pub fn new(entity_name: &'static str) -> Self {
-                Self { entity_name }
-            }
-        }
-
-        pub struct DeleteQuery {
-            entity_name: &'static str,
-        }
-
-        impl DeleteQuery {
-            pub fn new(entity_name: &'static str) -> Self {
-                Self { entity_name }
-            }
-        }
     }
 }

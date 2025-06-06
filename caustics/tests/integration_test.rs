@@ -1,7 +1,9 @@
 include!(concat!(env!("OUT_DIR"), "/caustics_client_test.rs"));
 
 use std::sync::Arc;
+use caustics_macros::caustics;
 
+#[caustics]
 pub mod user {
     use caustics_macros::Caustics;
     use chrono::{DateTime, FixedOffset};
@@ -42,6 +44,7 @@ pub mod user {
     }
 }
 
+#[caustics]
 pub mod post {
     use caustics_macros::Caustics;
     use chrono::{DateTime, FixedOffset};
@@ -516,6 +519,7 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
+        // assert_eq!(author.posts.len(), 0);
 
         let reviewer = client
             .user()
