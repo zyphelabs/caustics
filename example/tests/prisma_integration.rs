@@ -1,15 +1,15 @@
+use caustics_example::generated::db::user::CreateUnchecked;
 use caustics_example::generated::db::PrismaClient;
 use caustics_example::generated::db::*;
-use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
-use testcontainers::{clients, GenericImage, Container};
 use once_cell::sync::Lazy;
-use std::env;
 use prisma_client_rust::Raw;
-use std::time::Duration;
-use tokio::time::sleep;
+use std::env;
 use std::process::Command;
-use caustics_example::generated::db::user::CreateUnchecked;
+use std::sync::Arc;
+use std::time::Duration;
+use testcontainers::{clients, Container, GenericImage};
+use tokio::sync::{Mutex, MutexGuard};
+use tokio::time::sleep;
 
 static DOCKER: Lazy<clients::Cli> = Lazy::new(|| clients::Cli::default());
 static POSTGRES_IMAGE: Lazy<GenericImage> = Lazy::new(|| {
@@ -34,7 +34,8 @@ impl<'a> Drop for TestContainer<'a> {
 pub mod helpers {
     use super::*;
 
-    pub async fn setup_test_db<'a>() -> Result<(Arc<Mutex<PrismaClient>>, TestContainer<'a>), Box<dyn std::error::Error>> {
+    pub async fn setup_test_db<'a>(
+    ) -> Result<(Arc<Mutex<PrismaClient>>, TestContainer<'a>), Box<dyn std::error::Error>> {
         println!("Setting up test database...");
         println!("Starting PostgreSQL container...");
         let container = TestContainer(DOCKER.run(POSTGRES_IMAGE.clone()));
@@ -65,18 +66,27 @@ pub mod helpers {
         // Run Prisma migrations
         println!("Running Prisma migrations...");
         env::set_var("PGPASSWORD", "postgres");
-        let migration_sql = include_str!("../../prisma/migrations/20240320000000_init/migration.sql");
+        let migration_sql =
+            include_str!("../../prisma/migrations/20240320000000_init/migration.sql");
         let output = Command::new("psql")
             .args([
-                "-h", "127.0.0.1",
-                "-p", &pg_port.to_string(),
-                "-U", "postgres",
-                "-d", "postgres",
-                "-c", migration_sql
+                "-h",
+                "127.0.0.1",
+                "-p",
+                &pg_port.to_string(),
+                "-U",
+                "postgres",
+                "-d",
+                "postgres",
+                "-c",
+                migration_sql,
             ])
             .output()?;
         if !output.status.success() {
-            println!("Migration error: {}", String::from_utf8_lossy(&output.stderr));
+            println!(
+                "Migration error: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             return Err("Failed to run Prisma migrations".into());
         }
         println!("Migrations completed successfully");
@@ -84,19 +94,24 @@ pub mod helpers {
         println!("Verifying tables exist...");
         let output = Command::new("psql")
             .args([
-                "-h", "127.0.0.1",
-                "-p", &pg_port.to_string(),
-                "-U", "postgres",
-                "-d", "postgres",
-                "-c", "\\dt"
+                "-h",
+                "127.0.0.1",
+                "-p",
+                &pg_port.to_string(),
+                "-U",
+                "postgres",
+                "-d",
+                "postgres",
+                "-c",
+                "\\dt",
             ])
             .output()?;
-        println!("Tables in database: {}", String::from_utf8_lossy(&output.stdout));
+        println!(
+            "Tables in database: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         println!("Connecting to database...");
-        let client = PrismaClient::_builder()
-            .with_url(db_url)
-            .build()
-            .await?;
+        let client = PrismaClient::_builder().with_url(db_url).build().await?;
         let client = Arc::new(Mutex::new(client));
         println!("Database setup complete!");
         Ok((client, container))
@@ -104,14 +119,21 @@ pub mod helpers {
 
     pub async fn cleanup_test_db(client: &PrismaClient) -> Result<(), Box<dyn std::error::Error>> {
         println!("Cleaning up test database...");
-        client._query_raw::<()>(Raw::new("TRUNCATE TABLE \"Post\", \"User\" RESTART IDENTITY CASCADE;", Vec::new()))
+        client
+            ._query_raw::<()>(Raw::new(
+                "TRUNCATE TABLE \"Post\", \"User\" RESTART IDENTITY CASCADE;",
+                Vec::new(),
+            ))
             .exec()
             .await?;
         println!("Database cleanup complete!");
         Ok(())
     }
 
-    pub async fn teardown_test_db(client_guard: MutexGuard<'_, PrismaClient>, container: TestContainer<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn teardown_test_db(
+        client_guard: MutexGuard<'_, PrismaClient>,
+        container: TestContainer<'_>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         cleanup_test_db(&client_guard).await?;
         container.0.stop();
         println!("Test teardown complete!");
@@ -129,8 +151,11 @@ mod client_tests {
         let client = client.lock().await;
         // Test that we can execute a simple query
         #[derive(serde::Deserialize)]
-        struct Row { value: i32 }
-        let row: Vec<Row> = client._query_raw(Raw::new("SELECT 1 as value", Vec::new()))
+        struct Row {
+            value: i32,
+        }
+        let row: Vec<Row> = client
+            ._query_raw(Raw::new("SELECT 1 as value", Vec::new()))
             .exec()
             .await?;
         assert_eq!(row.len(), 1);
@@ -142,13 +167,14 @@ mod client_tests {
 }
 
 mod query_builder_tests {
-    use std::str::FromStr;
-    use chrono::{DateTime, FixedOffset};
     use super::helpers::{setup_test_db, teardown_test_db};
     use super::*;
     use caustics_example::generated::db::PrismaClient as DbClient;
+    use chrono::{DateTime, FixedOffset};
+    use std::str::FromStr;
 
-    async fn setup<'a>() -> Result<(Arc<Mutex<DbClient>>, TestContainer<'a>), Box<dyn std::error::Error>> {
+    async fn setup<'a>(
+    ) -> Result<(Arc<Mutex<DbClient>>, TestContainer<'a>), Box<dyn std::error::Error>> {
         let (client, container) = setup_test_db().await?;
         Ok((client, container))
     }
@@ -169,10 +195,7 @@ mod query_builder_tests {
         // Find first with multiple conditions
         let user = client
             .user()
-            .find_first(vec![
-                user::name::equals("John"),
-                user::age::gt(18),
-            ])
+            .find_first(vec![user::name::equals("John"), user::age::gt(18)])
             .exec()
             .await?;
         assert!(user.is_none());
@@ -180,9 +203,7 @@ mod query_builder_tests {
         // Find many with pagination and sorting
         let users = client
             .user()
-            .find_many(vec![
-                user::age::gt(18),
-            ])
+            .find_many(vec![user::age::gt(18)])
             .order_by(user::created_at::order(SortOrder::Desc))
             .take(10)
             .skip(0)
@@ -209,10 +230,7 @@ mod query_builder_tests {
                 "John".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                vec![
-                    user::age::set(Some(25)),
-                    user::deleted_at::set(None),
-                ]
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await?;
@@ -221,7 +239,8 @@ mod query_builder_tests {
             .user()
             .find_unique(user::email::equals(&email))
             .exec()
-            .await?.ok_or("Not found")?;
+            .await?
+            .ok_or("Not found")?;
         assert_eq!(found_user.name, "John");
         assert_eq!(found_user.email, email);
         assert_eq!(found_user.age, Some(25));
@@ -234,9 +253,9 @@ mod query_builder_tests {
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 user::id::equals(user.id),
-                vec![
-                    post::content::set(Some("This is my first post".to_string())),
-                ]
+                vec![post::content::set(Some(
+                    "This is my first post".to_string(),
+                ))],
             )
             .exec()
             .await?;
@@ -245,9 +264,13 @@ mod query_builder_tests {
             .post()
             .find_unique(post::id::equals(post.id))
             .exec()
-            .await?.ok_or("Not found")?;
+            .await?
+            .ok_or("Not found")?;
         assert_eq!(found_post.title, "Hello World");
-        assert_eq!(found_post.content, Some("This is my first post".to_string()));
+        assert_eq!(
+            found_post.content,
+            Some("This is my first post".to_string())
+        );
         assert_eq!(found_post.user_id, user.id);
 
         teardown_test_db(client, container).await?;
@@ -269,10 +292,7 @@ mod query_builder_tests {
                 "John".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                vec![
-                    user::age::set(Some(25)),
-                    user::deleted_at::set(None),
-                ]
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await?;
@@ -285,8 +305,8 @@ mod query_builder_tests {
                 vec![
                     user::name::set("John Updated".to_string()),
                     user::age::set(Some(26)),
-                    user::email::set(email.clone()),  // Clone the email for the update
-                ]
+                    user::email::set(email.clone()), // Clone the email for the update
+                ],
             )
             .exec()
             .await?;
@@ -356,9 +376,7 @@ mod query_builder_tests {
                     email: "john@example.com".to_string(),
                     created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    _params: vec![
-                        user::age::set(Some(25)),
-                    ],
+                    _params: vec![user::age::set(Some(25))],
                 },
                 vec![user::name::set("John"), user::age::set(25)],
             )
@@ -407,10 +425,7 @@ mod query_builder_tests {
                 "John".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                vec![
-                    user::age::set(Some(25)),
-                    user::deleted_at::set(None),
-                ]
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await?;
@@ -437,8 +452,6 @@ mod query_builder_tests {
         Ok(())
     }
 
-
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_transaction_operations() -> Result<(), Box<dyn std::error::Error>> {
         let (client, container) = setup().await?;
@@ -455,10 +468,7 @@ mod query_builder_tests {
                         "John".to_string(),
                         DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                         DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        vec![
-                            user::age::set(Some(25)),
-                            user::deleted_at::set(None),
-                        ]
+                        vec![user::age::set(Some(25)), user::deleted_at::set(None)],
                     )
                     .exec()
                     .await?;
@@ -470,9 +480,9 @@ mod query_builder_tests {
                         DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                         DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                         user::id::equals(user.id),
-                        vec![
-                            post::content::set(Some("This is my first post".to_string())),
-                        ]
+                        vec![post::content::set(Some(
+                            "This is my first post".to_string(),
+                        ))],
                     )
                     .exec()
                     .await?;
@@ -556,9 +566,9 @@ mod query_builder_tests {
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 user::id::equals(author.id),
-                vec![
-                    post::content::set("This post hasn't been reviewed yet".to_string()),
-                ],
+                vec![post::content::set(
+                    "This post hasn't been reviewed yet".to_string(),
+                )],
             )
             .exec()
             .await
@@ -600,8 +610,14 @@ mod query_builder_tests {
             .await
             .unwrap()
             .unwrap();
-        println!("post_without_reviewer.reviewer: {:?}", post_without_reviewer.reviewer);
-        assert!(post_without_reviewer.reviewer.is_none() || post_without_reviewer.reviewer.as_ref().unwrap().is_none());
+        println!(
+            "post_without_reviewer.reviewer: {:?}",
+            post_without_reviewer.reviewer
+        );
+        assert!(
+            post_without_reviewer.reviewer.is_none()
+                || post_without_reviewer.reviewer.as_ref().unwrap().is_none()
+        );
 
         teardown_test_db(client, container).await?;
 
@@ -623,20 +639,14 @@ mod query_builder_tests {
                     name: "John".to_string(),
                     created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    _params: vec![
-                        user::age::set(Some(25)),
-                        user::deleted_at::set(None),
-                    ],
+                    _params: vec![user::age::set(Some(25)), user::deleted_at::set(None)],
                 },
                 CreateUnchecked {
                     email: format!("jane_{}@example.com", timestamp),
                     name: "Jane".to_string(),
                     created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    _params: vec![
-                        user::age::set(Some(30)),
-                        user::deleted_at::set(None),
-                    ],
+                    _params: vec![user::age::set(Some(30)), user::deleted_at::set(None)],
                 },
             ])
             .exec()
@@ -663,19 +673,14 @@ mod query_builder_tests {
                     "John".to_string(),
                     DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    vec![
-                        user::age::set(Some(25)),
-                        user::deleted_at::set(None),
-                    ],
+                    vec![user::age::set(Some(25)), user::deleted_at::set(None)],
                 ),
                 client.user().create(
                     format!("jane_{}@example.com", timestamp),
                     "Jane".to_string(),
                     DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                     DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    vec![
-                        user::age::set(Some(30)),
-                    ],
+                    vec![user::age::set(Some(30))],
                 ),
             ))
             .await?;
@@ -687,4 +692,4 @@ mod query_builder_tests {
 
         Ok(())
     }
-} 
+}

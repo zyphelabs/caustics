@@ -39,7 +39,8 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
                             if let Item::Struct(struct_item) = item {
                                 if struct_item.ident == "Model" {
                                     model_found = true;
-                                    if has_caustics_attr || has_caustics_derive(&struct_item.attrs) {
+                                    if has_caustics_attr || has_caustics_derive(&struct_item.attrs)
+                                    {
                                         let entity_name = to_pascal_case(&module_name);
                                         let module_path = module_name.clone();
                                         entities.push((entity_name, module_path));
@@ -99,7 +100,9 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
                                 if let Item::Struct(struct_item) = item {
                                     if struct_item.ident == "Model" {
                                         model_found = true;
-                                        if has_caustics_attr || has_caustics_derive(&struct_item.attrs) {
+                                        if has_caustics_attr
+                                            || has_caustics_derive(&struct_item.attrs)
+                                        {
                                             let entity_name = to_pascal_case(&module_name);
                                             let module_path = module_name.clone();
                                             entities.push((entity_name, module_path));

@@ -1,7 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/caustics_client_test.rs"));
 
-use std::sync::Arc;
 use caustics_macros::caustics;
+use std::sync::Arc;
 
 #[caustics]
 pub mod user {
@@ -519,7 +519,7 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        // assert_eq!(author.posts.len(), 0);
+        assert_eq!(author.posts.len(), 0);
 
         let reviewer = client
             .user()
@@ -535,76 +535,76 @@ mod query_builder_tests {
             .unwrap();
 
         /*// Create posts - one with reviewer, one without
-        let post_with_reviewer = client
-            .post()
-            .create(
-                "Reviewed Post".to_string(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                user::id::equals(author.id),
-                vec![
-                    post::content::set("This post has been reviewed".to_string()),
-                    post::reviewer::connect(user::id::equals(reviewer.id)),
-                ],
-            )
-            .exec()
-            .await
-            .unwrap();
+                let post_with_reviewer = client
+                    .post()
+                    .create(
+                        "Reviewed Post".to_string(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        user::id::equals(author.id),
+                        vec![
+                            post::content::set("This post has been reviewed".to_string()),
+                            post::reviewer::connect(user::id::equals(reviewer.id)),
+                        ],
+                    )
+                    .exec()
+                    .await
+                    .unwrap();
 
-        let post_without_reviewer = client
-            .post()
-            .create(
-                "Unreviewed Post".to_string(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                user::id::equals(author.id),
-                vec![
-                    post::content::set("This post hasn't been reviewed yet".to_string()),
-                ],
-            )
-            .exec()
-            .await
-            .unwrap();
+                let post_without_reviewer = client
+                    .post()
+                    .create(
+                        "Unreviewed Post".to_string(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        user::id::equals(author.id),
+                        vec![
+                            post::content::set("This post hasn't been reviewed yet".to_string()),
+                        ],
+                    )
+                    .exec()
+                    .await
+                    .unwrap();
 
-        // Test fetching user with posts
-        let user_with_posts = client
-            .user()
-            .find_unique(user::id::equals(author.id))
-            .with(user::posts::fetch(vec![]))
-            .exec()
-            .await
-            .unwrap()
-            .unwrap();
-        let posts = user_with_posts.posts.unwrap();
-        assert_eq!(posts.len(), 2);
-        assert_eq!(posts[0].title, "Reviewed Post");
-        assert_eq!(posts[1].title, "Unreviewed Post");
+                // Test fetching user with posts
+                let user_with_posts = client
+                    .user()
+                    .find_unique(user::id::equals(author.id))
+                    .with(user::posts::fetch(vec![]))
+                    .exec()
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let posts = user_with_posts.posts.unwrap();
+                assert_eq!(posts.len(), 2);
+                assert_eq!(posts[0].title, "Reviewed Post");
+                assert_eq!(posts[1].title, "Unreviewed Post");
 
-        // Test fetching post with reviewer
-        let post_with_reviewer = client
-            .post()
-            .find_unique(post::id::equals(post_with_reviewer.id))
-            .with(post::reviewer::fetch())
-            .exec()
-            .await
-            .unwrap()
-            .unwrap();
-        let reviewer = post_with_reviewer.reviewer.unwrap().unwrap();
-        assert_eq!(reviewer.name, "Jane");
-        assert_eq!(reviewer.email, "jane@example.com");
+                // Test fetching post with reviewer
+                let post_with_reviewer = client
+                    .post()
+                    .find_unique(post::id::equals(post_with_reviewer.id))
+                    .with(post::reviewer::fetch())
+                    .exec()
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let reviewer = post_with_reviewer.reviewer.unwrap().unwrap();
+                assert_eq!(reviewer.name, "Jane");
+                assert_eq!(reviewer.email, "jane@example.com");
 
-        // Test fetching post without reviewer
-        let post_without_reviewer = client
-            .post()
-            .find_unique(post::id::equals(post_without_reviewer.id))
-            .with(post::reviewer::fetch())
-            .exec()
-            .await
-            .unwrap()
-            .unwrap();
-        println!("post_without_reviewer.reviewer: {:?}", post_without_reviewer.reviewer);
-        assert!(post_without_reviewer.reviewer.is_none() || post_without_reviewer.reviewer.as_ref().unwrap().is_none());
-*/
+                // Test fetching post without reviewer
+                let post_without_reviewer = client
+                    .post()
+                    .find_unique(post::id::equals(post_without_reviewer.id))
+                    .with(post::reviewer::fetch())
+                    .exec()
+                    .await
+                    .unwrap()
+                    .unwrap();
+                println!("post_without_reviewer.reviewer: {:?}", post_without_reviewer.reviewer);
+                assert!(post_without_reviewer.reviewer.is_none() || post_without_reviewer.reviewer.as_ref().unwrap().is_none());
+        */
     }
     /*
         #[tokio::test]

@@ -3,9 +3,8 @@
 #![allow(unused_variables)]
 
 use proc_macro::TokenStream;
-use syn::{DeriveInput, Error, File};
 use quote::quote;
-
+use syn::{DeriveInput, Error, File};
 
 mod common;
 mod entity;
@@ -14,7 +13,14 @@ mod entity;
 pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut ast = match syn::parse::<syn::ItemMod>(input.clone()) {
         Ok(ast) => ast,
-        Err(e) => return Error::new(e.span(), "The #[caustics] attribute must be placed on a module declaration").to_compile_error().into(),
+        Err(e) => {
+            return Error::new(
+                e.span(),
+                "The #[caustics] attribute must be placed on a module declaration",
+            )
+            .to_compile_error()
+            .into()
+        }
     };
 
     let mut model_ast = None;
@@ -23,7 +29,11 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
     // Get module content or return error
     let content = match &ast.content {
         Some(content) => content,
-        None => return Error::new(ast.ident.span(), "Module must have a body").to_compile_error().into(),
+        None => {
+            return Error::new(ast.ident.span(), "Module must have a body")
+                .to_compile_error()
+                .into()
+        }
     };
 
     // Find struct and enum with #[derive(Caustics)]
@@ -42,14 +52,16 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                     }
                 }) {
                     // Filter out #[derive(Caustics)] attributes
-                    let filtered_attrs: Vec<_> = struct_item.attrs.iter()
+                    let filtered_attrs: Vec<_> = struct_item
+                        .attrs
+                        .iter()
                         .filter(|attr| {
-                            !(attr.path().is_ident("derive") && 
-                              if let syn::Meta::List(meta) = &attr.meta {
-                                  meta.tokens.to_string().contains("Caustics")
-                              } else {
-                                  false
-                              })
+                            !(attr.path().is_ident("derive")
+                                && if let syn::Meta::List(meta) = &attr.meta {
+                                    meta.tokens.to_string().contains("Caustics")
+                                } else {
+                                    false
+                                })
                         })
                         .cloned()
                         .collect();
@@ -80,14 +92,16 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                     }
                 }) {
                     // Filter out #[derive(Caustics)] attributes
-                    let filtered_attrs: Vec<_> = enum_item.attrs.iter()
+                    let filtered_attrs: Vec<_> = enum_item
+                        .attrs
+                        .iter()
                         .filter(|attr| {
-                            !(attr.path().is_ident("derive") && 
-                              if let syn::Meta::List(meta) = &attr.meta {
-                                  meta.tokens.to_string().contains("Caustics")
-                              } else {
-                                  false
-                              })
+                            !(attr.path().is_ident("derive")
+                                && if let syn::Meta::List(meta) = &attr.meta {
+                                    meta.tokens.to_string().contains("Caustics")
+                                } else {
+                                    false
+                                })
                         })
                         .cloned()
                         .collect();
@@ -113,11 +127,16 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
     match (model_ast, relation_ast) {
         (Some(model_ast), Some(relation_ast)) => {
             let generated = entity::generate_entity(model_ast, relation_ast);
-            
+
             // Parse the generated items into a File
             let generated_file = match syn::parse2::<File>(generated) {
                 Ok(file) => file,
-                Err(e) => return Error::new(e.span(), format!("Failed to parse generated items: {}", e)).to_compile_error().into(),
+                Err(e) => {
+                    eprintln!("Parse error: {}", e);
+                    return Error::new(e.span(), format!("Failed to parse generated items: {}", e))
+                        .to_compile_error()
+                        .into();
+                }
             };
 
             // Modify the module's content to include the generated items
@@ -128,13 +147,15 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
             // Return the modified module
             quote! {
                 #ast
-            }.into()
+            }
+            .into()
         }
         _ => {
             // If we didn't find both struct and enum with #[derive(Caustics)], return the original module
             quote! {
                 #ast
-            }.into()
+            }
+            .into()
         }
     }
 }

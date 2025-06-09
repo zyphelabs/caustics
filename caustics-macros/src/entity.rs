@@ -1,5 +1,5 @@
 use crate::common::is_option;
-use heck::ToPascalCase;
+use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::{Data, DeriveInput, Fields};
@@ -26,7 +26,7 @@ impl ToTokens for Field {
 #[derive(Debug, Clone)]
 pub struct Relation {
     pub name: String,
-    pub target: String,
+    pub target: syn::Path,
     pub kind: RelationKind,
 }
 
@@ -204,56 +204,98 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     let relation_submodules = generate_relation_submodules(&relations);
 
     // Generate ModelWithRelations struct fields
-    let model_with_relations_fields = fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let ty = &field.ty;
-        quote! { pub #name: #ty }
-    }).collect::<Vec<_>>();
+    let model_with_relations_fields = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let ty = &field.ty;
+            quote! { pub #name: #ty }
+        })
+        .collect::<Vec<_>>();
 
     // Generate field names for From implementation
-    let field_names = fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        quote! { #name }
-    }).collect::<Vec<_>>();
+    let field_names = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            quote! { #name }
+        })
+        .collect::<Vec<_>>();
 
     // Generate field names and types for constructor
-    let field_params = fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let ty = &field.ty;
-        quote! { #name: #ty }
-    }).collect::<Vec<_>>();
+    let field_params = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let ty = &field.ty;
+            quote! { #name: #ty }
+        })
+        .collect::<Vec<_>>();
 
     // Generate relation fields for ModelWithRelations
-    let relation_fields = relations.iter().map(|relation| {
-        let name = format_ident!("{}", relation.name);
-        let target = format_ident!("{}", relation.target);
-        match relation.kind {
-            RelationKind::HasMany => quote! { pub #name: Vec<#target::Model> },
-            RelationKind::BelongsTo => quote! { pub #name: Option<#target::Model> },
-        }
-    }).collect::<Vec<_>>();
+    let relation_fields = relations
+        .iter()
+        .map(|relation| {
+            let name = format_ident!("{}", relation.name.to_snake_case());
+            let target = &relation.target;
+            match relation.kind {
+                RelationKind::HasMany => quote! { pub #name: Vec<#target> },
+                RelationKind::BelongsTo => quote! { pub #name: Option<#target> },
+            }
+        })
+        .collect::<Vec<_>>();
 
     // Generate relation field names for constructor
-    let relation_field_names = relations.iter().map(|relation| {
-        let name = format_ident!("{}", relation.name);
-        let target = format_ident!("{}", relation.target);
-        match relation.kind {
-            RelationKind::HasMany => quote! { #name: Vec<#target::Model> },
-            RelationKind::BelongsTo => quote! { #name: Option<#target::Model> },
-        }
-    }).collect::<Vec<_>>();
+    let relation_field_names = relations
+        .iter()
+        .map(|relation| {
+            let name = format_ident!("{}", relation.name.to_snake_case());
+            let target = &relation.target;
+            match relation.kind {
+                RelationKind::HasMany => quote! { #name: Vec<#target> },
+                RelationKind::BelongsTo => quote! { #name: Option<#target> },
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate relation field names for initialization
+    let relation_init_names = relations
+        .iter()
+        .map(|relation| {
+            let name = format_ident!("{}", relation.name.to_snake_case());
+            quote! { #name }
+        })
+        .collect::<Vec<_>>();
 
     // Generate default values for relation fields
-    let relation_defaults = relations.iter().map(|relation| {
-        let name = format_ident!("{}", relation.name);
-        match relation.kind {
-            RelationKind::HasMany => quote! { #name: Vec::new() },
-            RelationKind::BelongsTo => quote! { #name: None },
+    let relation_defaults = relations
+        .iter()
+        .map(|relation| {
+            let name = format_ident!("{}", relation.name.to_snake_case());
+            match relation.kind {
+                RelationKind::HasMany => quote! { #name: Vec::new() },
+                RelationKind::BelongsTo => quote! { #name: None },
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate Filter and RelationFilter types
+    let filter_types = quote! {
+        pub struct Filter {
+            pub field: String,
+            pub value: String,
         }
-    }).collect::<Vec<_>>();
+
+        pub struct RelationFilter {
+            pub relation: &'static str,
+            pub filters: Vec<Filter>,
+        }
+    };
 
     // Generate ModelWithRelations struct and constructor
     let model_with_relations_impl = quote! {
+        #filter_types
+
         pub struct ModelWithRelations {
             #(#model_with_relations_fields,)*
             #(#relation_fields,)*
@@ -266,7 +308,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             ) -> Self {
                 Self {
                     #(#field_names,)*
-                    #(#relation_field_names,)*
+                    #(#relation_init_names,)*
                 }
             }
 
@@ -573,38 +615,57 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             #relation_submodules
         }
     };
+
+    // Debug print the generated code
+    let module_path = model_ast.ident.span().source_text().unwrap_or_default();
+    eprintln!("Generated code for {}:\n{}", module_path, expanded);
+
     TokenStream::from(expanded)
 }
 
 fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
     let mut relations = Vec::new();
 
-    for attr in &relation_ast.attrs {
-        if let syn::Meta::List(meta) = &attr.meta {
-            if meta.path.is_ident("sea_orm") {
-                if let Ok(nested) = meta.parse_args_with(
-                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-                ) {
-                    for meta in nested {
-                        if let syn::Meta::NameValue(nv) = &meta {
-                            if nv.path.is_ident("has_many") || nv.path.is_ident("belongs_to") {
-                                if let syn::Expr::Lit(syn::ExprLit {
-                                    lit: syn::Lit::Str(lit),
-                                    ..
-                                }) = &nv.value
-                                {
-                                    let target = lit.value();
-                                    let name = if nv.path.is_ident("has_many") {
-                                        target.split("::").last().unwrap().to_string()
-                                    } else {
-                                        target.split("::").last().unwrap().to_string()
-                                    };
-                                    let kind = if nv.path.is_ident("has_many") {
-                                        RelationKind::HasMany
-                                    } else {
-                                        RelationKind::BelongsTo
-                                    };
-                                    relations.push(Relation { name, target, kind });
+    if let syn::Data::Enum(data_enum) = &relation_ast.data {
+        for variant in &data_enum.variants {
+            for attr in &variant.attrs {
+                if let syn::Meta::List(meta) = &attr.meta {
+                    if meta.path.is_ident("sea_orm") {
+                        if let Ok(nested) = meta.parse_args_with(
+                            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                        ) {
+                            for meta in nested {
+                                if let syn::Meta::NameValue(nv) = &meta {
+                                    if nv.path.is_ident("has_many") || nv.path.is_ident("belongs_to") {
+                                        if let syn::Expr::Lit(syn::ExprLit {
+                                            lit: syn::Lit::Str(lit),
+                                            ..
+                                        }) = &nv.value
+                                        {
+                                            // Parse the target as a path
+                                            let target_str = lit.value();
+                                            let target_path = syn::parse_str::<syn::Path>(&target_str)
+                                                .expect("Failed to parse relation target as path");
+
+                                            // Create a new path with ModelWithRelations
+                                            let mut new_path = target_path.clone();
+                                            if let Some(last_segment) = new_path.segments.last_mut() {
+                                                last_segment.ident = syn::Ident::new("ModelWithRelations", last_segment.ident.span());
+                                            }
+
+                                            let name = variant.ident.to_string();
+                                            let kind = if nv.path.is_ident("has_many") {
+                                                RelationKind::HasMany
+                                            } else {
+                                                RelationKind::BelongsTo
+                                            };
+                                            relations.push(Relation {
+                                                name,
+                                                target: new_path,
+                                                kind
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -626,6 +687,7 @@ fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
         let relation_name_lower = relation_name.to_lowercase();
         let relation_name_lower_ident = format_ident!("{}", relation_name_lower);
         let relation_name_str = relation_name;
+        let target = &relation.target;
 
         let submodule = quote! {
             pub mod #relation_name_lower_ident {
