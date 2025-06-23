@@ -197,15 +197,7 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
 
     let client_code = quote! {
         use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
-
-        pub type QueryError = sea_orm::DbErr;
-
-        #[derive(Copy, Clone, Debug)]
-        #[allow(dead_code)]
-        pub enum SortOrder {
-            Asc,
-            Desc,
-        }
+        use caustics::{QueryError, SortOrder};
 
         pub struct CausticsClient {
             db: std::sync::Arc<DatabaseConnection>,

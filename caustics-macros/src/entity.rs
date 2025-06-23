@@ -109,6 +109,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         })
         .collect::<Vec<_>>();
 
+    // Generate match arms for SetParam
     let match_arms = fields
         .iter()
         .filter(|field| !primary_key_fields.contains(field))
@@ -116,14 +117,14 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let name = field.ident.as_ref().unwrap();
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             quote! {
-                SetValue::#pascal_name(value) => {
+                SetParam::#pascal_name(value) => {
                     model.#name = value.clone();
                 }
             }
         })
         .collect::<Vec<_>>();
 
-    // Generate field variants for SetValue enum (excluding primary keys)
+    // Generate field variants for SetParam enum (excluding primary keys)
     let field_variants = fields
         .iter()
         .filter(|field| !primary_key_fields.contains(field))
@@ -137,6 +138,47 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         })
         .collect::<Vec<_>>();
 
+    // Generate field variants for WhereParam enum (all fields)
+    let where_field_variants = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+        let ty = &field.ty;
+        quote! {
+            #pascal_name(sea_orm::Condition)
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate field variants for OrderByParam enum (all fields)
+    let order_by_field_variants = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+        quote! {
+            #pascal_name(caustics::SortOrder)
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate match arms for WhereParam
+    let where_match_arms = fields.iter().map(|field| {
+        let pascal_name = format_ident!("{}", field.ident.as_ref().unwrap().to_string().to_pascal_case());
+        quote! {
+            WhereParam::#pascal_name(condition) => condition.clone()
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate match arms for OrderByParam
+    let order_by_match_arms = fields.iter().map(|field| {
+        let pascal_name = format_ident!("{}", field.ident.as_ref().unwrap().to_string().to_pascal_case());
+        quote! {
+            OrderByParam::#pascal_name(order) => {
+                let sea_order = match order {
+                    SortOrder::Asc => sea_orm::Order::Asc,
+                    SortOrder::Desc => sea_orm::Order::Desc,
+                };
+                (<Entity as EntityTrait>::Column::#pascal_name, sea_order)
+            }
+        }
+    }).collect::<Vec<_>>();
+
     // Generate field operator modules (including primary keys for query operations)
     let field_ops = fields.iter().map(|field| {
         let field_name = &field.ident;
@@ -148,53 +190,55 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
 
         let set_fn = if !is_primary_key {
             quote! {
-                pub fn set<T: Into<#field_type>>(value: T) -> SetValue {
-                    SetValue::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
+                pub fn set<T: Into<#field_type>>(value: T) -> SetParam {
+                    SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
                 }
             }
         } else {
             quote! {}
         };
         let order_fn = quote! {
-            pub fn order(order: super::super::SortOrder) -> (<Entity as EntityTrait>::Column, super::super::SortOrder) {
-                (<Entity as EntityTrait>::Column::#pascal_name, order)
+            pub fn order(order: caustics::SortOrder) -> OrderByParam {
+                OrderByParam::#pascal_name(order)
             }
         };
         quote! {
             pub mod #field_name {
-                use super::{Entity, Model, ActiveModel, SetValue};
+                use super::{Entity, Model, ActiveModel, SetParam, WhereParam, OrderByParam};
                 use sea_orm::{Condition, ColumnTrait, EntityTrait, ActiveValue};
                 use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
                 use uuid::Uuid;
                 use std::vec::Vec;
-                use super::super::SortOrder;
 
                 #set_fn
-                #order_fn
+                
+                pub fn order(order: caustics::SortOrder) -> OrderByParam {
+                    OrderByParam::#pascal_name(order)
+                }
 
-                pub fn equals<T: Into<#field_type>>(value: T) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value.into()))
+                pub fn equals<T: Into<#field_type>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
                 }
-                pub fn not_equals<T: Into<#field_type>>(value: T) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value.into()))
+                pub fn not_equals<T: Into<#field_type>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value.into())))
                 }
-                pub fn gt<T: Into<#field_type>>(value: T) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(value.into()))
+                pub fn gt<T: Into<#field_type>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(value.into())))
                 }
-                pub fn lt<T: Into<#field_type>>(value: T) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(value.into()))
+                pub fn lt<T: Into<#field_type>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(value.into())))
                 }
-                pub fn gte<T: Into<#field_type>>(value: T) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(value.into()))
+                pub fn gte<T: Into<#field_type>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(value.into())))
                 }
-                pub fn lte<T: Into<#field_type>>(value: T) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(value.into()))
+                pub fn lte<T: Into<#field_type>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(value.into())))
                 }
-                pub fn in_vec<T: Into<#field_type>>(values: Vec<T>) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>()))
+                pub fn in_vec<T: Into<#field_type>>(values: Vec<T>) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
                 }
-                pub fn not_in_vec<T: Into<#field_type>>(values: Vec<T>) -> Condition {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>()))
+                pub fn not_in_vec<T: Into<#field_type>>(values: Vec<T>) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
                 }
             }
         }
@@ -328,6 +372,12 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 }
             }
         }
+
+        impl caustics::FromModel<Model> for ModelWithRelations {
+            fn from_model(model: Model) -> Self {
+                Self::from_model(model)
+            }
+        }
     };
 
     let expanded = {
@@ -352,17 +402,25 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             };
             use std::marker::PhantomData;
             use std::default::Default;
-            use super::SortOrder;
+            use caustics::{SortOrder, MergeInto};
 
             pub struct EntityClient<'a, C: ConnectionTrait> {
                 conn: &'a C
             }
 
-            pub enum SetValue {
+            pub enum SetParam {
                 #(#field_variants,)*
             }
 
-            impl SetValue {
+            pub enum WhereParam {
+                #(#where_field_variants,)*
+            }
+
+            pub enum OrderByParam {
+                #(#order_by_field_variants,)*
+            }
+
+            impl MergeInto<ActiveModel> for SetParam {
                 fn merge_into(&self, model: &mut ActiveModel) {
                     match self {
                         #(#match_arms,)*
@@ -370,13 +428,29 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 }
             }
 
+            impl From<WhereParam> for Condition {
+                fn from(param: WhereParam) -> Self {
+                    match param {
+                        #(#where_match_arms,)*
+                    }
+                }
+            }
+
+            impl From<OrderByParam> for (<Entity as EntityTrait>::Column, sea_orm::Order) {
+                fn from(param: OrderByParam) -> Self {
+                    match param {
+                        #(#order_by_match_arms,)*
+                    }
+                }
+            }
+
             pub struct Create {
                 #(#required_struct_fields,)*
-                pub _params: Vec<SetValue>,
+                pub _params: Vec<SetParam>,
             }
 
             impl Create {
-                pub fn new(#(#required_fn_args,)* _params: Vec<SetValue>) -> Self {
+                pub fn new(#(#required_fn_args,)* _params: Vec<SetParam>) -> Self {
                     Self {
                         #(#required_inits,)*
                         _params,
@@ -395,216 +469,76 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
 
             #model_with_relations_impl
 
-            pub struct UniqueQueryBuilder<'a, C: ConnectionTrait> {
-                query: sea_orm::Select<Entity>,
-                conn: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> UniqueQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
-                    self.query.one(self.conn).await.map(|opt| opt.map(ModelWithRelations::from_model))
-                }
-
-                pub fn with<T>(self, _relation: T) -> Self {
-                    // Stub implementation for now
-                    todo!("Implement .with() to fetch related rows matching the filter")
-                }
-            }
-
-            pub struct FirstQueryBuilder<'a, C: ConnectionTrait> {
-                query: sea_orm::Select<Entity>,
-                db: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> FirstQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
-                    self.query.one(self.db).await.map(|opt| opt.map(ModelWithRelations::from_model))
-                }
-
-                pub fn with<T>(self, _relation: T) -> Self {
-                    // Stub implementation for now
-                    todo!("Implement .with() to fetch related rows matching the filter")
-                }
-            }
-
-            pub struct ManyQueryBuilder<'a, C: ConnectionTrait> {
-                query: sea_orm::Select<Entity>,
-                db: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> ManyQueryBuilder<'a, C> {
-                pub fn take(mut self, limit: u64) -> Self {
-                    self.query = self.query.limit(limit);
-                    self
-                }
-                pub fn skip(mut self, offset: u64) -> Self {
-                    self.query = self.query.offset(offset);
-                    self
-                }
-                pub fn order_by<Col>(mut self, col_and_order: (Col, SortOrder)) -> Self
-                where
-                    Col: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr
-                {
-                    let (col, sort_order) = col_and_order;
-                    let order = match sort_order {
-                        SortOrder::Asc => sea_orm::Order::Asc,
-                        SortOrder::Desc => sea_orm::Order::Desc,
-                    };
-                    self.query = self.query.order_by(col, order);
-                    self
-                }
-                pub async fn exec(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr> {
-                    self.query.all(self.db).await.map(|models| models.into_iter().map(ModelWithRelations::from_model).collect())
-                }
-
-                pub fn with<T>(self, _relation: T) -> Self {
-                    // Stub implementation for now
-                    todo!("Implement .with() to fetch related rows matching the filter")
-                }
-            }
-
-            pub struct CreateQueryBuilder<'a, C: ConnectionTrait> {
-                model: ActiveModel,
-                db: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> CreateQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
-                    self.model.insert(self.db).await.map(ModelWithRelations::from_model)
-                }
-            }
-
-            pub struct DeleteQueryBuilder<'a, C: ConnectionTrait> {
-                condition: Condition,
-                db: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> DeleteQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<(), sea_orm::DbErr> {
-                    Entity::delete_many()
-                        .filter(self.condition)
-                        .exec(self.db)
-                        .await?;
-                    Ok(())
-                }
-            }
-
-            pub struct UpsertQueryBuilder<'a, C: ConnectionTrait> {
-                condition: Condition,
-                create: Create,
-                update: Vec<SetValue>,
-                db: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> UpsertQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
-                    let existing = Entity::find()
-                        .filter(self.condition.clone())
-                        .one(self.db)
-                        .await?;
-
-                    match existing {
-                        Some(model) => {
-                            let mut active_model = model.into_active_model();
-                            for change in self.update {
-                                change.merge_into(&mut active_model);
-                            }
-                            active_model.update(self.db).await.map(ModelWithRelations::from_model)
-                        }
-                        None => {
-                            let mut active_model = self.create.into_active_model();
-                            for change in self.update {
-                                change.merge_into(&mut active_model);
-                            }
-                            active_model.insert(self.db).await.map(ModelWithRelations::from_model)
-                        }
-                    }
-                }
-            }
-
-            pub struct UpdateQueryBuilder<'a, C: ConnectionTrait> {
-                condition: Condition,
-                changes: Vec<SetValue>,
-                db: &'a C,
-            }
-
-            impl<'a, C: ConnectionTrait> UpdateQueryBuilder<'a, C> {
-                pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
-                    let mut entity = <Entity as EntityTrait>::find().filter(self.condition).one(self.db).await?;
-                    if let Some(mut model) = entity.map(|m| m.into_active_model()) {
-                        for change in self.changes {
-                            change.merge_into(&mut model);
-                        }
-                        model.update(self.db).await.map(ModelWithRelations::from_model)
-                    } else {
-                        Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
-                    }
-                }
-            }
-
             impl<'a, C: ConnectionTrait> EntityClient<'a, C> {
                 pub fn new(conn: &'a C) -> Self {
                     Self { conn }
                 }
 
-                pub fn find_unique(&self, condition: Condition) -> UniqueQueryBuilder<'a, C> {
-                    UniqueQueryBuilder {
-                        query: <Entity as EntityTrait>::find().filter(condition),
+                pub fn find_unique(&self, condition: WhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                    caustics::UniqueQueryBuilder {
+                        query: <Entity as EntityTrait>::find().filter::<Condition>(condition.into()),
                         conn: self.conn,
+                        _phantom: std::marker::PhantomData,
                     }
                 }
 
-                pub fn find_first(&self, conditions: Vec<Condition>) -> FirstQueryBuilder<'a, C> {
+                pub fn find_first(&self, conditions: Vec<WhereParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
                     let mut query = <Entity as EntityTrait>::find();
                     for cond in conditions {
-                        query = query.filter(cond);
+                        query = query.filter::<Condition>(cond.into());
                     }
-                    FirstQueryBuilder {
+                    caustics::FirstQueryBuilder {
                         query,
-                        db: self.conn,
+                        conn: self.conn,
+                        _phantom: std::marker::PhantomData,
                     }
                 }
 
-                pub fn find_many(&self, conditions: Vec<Condition>) -> ManyQueryBuilder<'a, C> {
+                pub fn find_many(&self, conditions: Vec<WhereParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
                     let mut query = <Entity as EntityTrait>::find();
                     for cond in conditions {
-                        query = query.filter(cond);
+                        query = query.filter::<Condition>(cond.into());
                     }
-                    ManyQueryBuilder {
+                    caustics::ManyQueryBuilder {
                         query,
-                        db: self.conn,
+                        conn: self.conn,
+                        _phantom: std::marker::PhantomData,
                     }
                 }
 
-                pub fn create(&self, #(#required_fn_args,)* _params: Vec<SetValue>) -> CreateQueryBuilder<'a, C> {
+                pub fn create(&self, #(#required_fn_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
                     let create = Create::new(#(#required_inits,)* _params);
-                    CreateQueryBuilder {
+                    caustics::CreateQueryBuilder {
                         model: create.into_active_model(),
-                        db: self.conn,
+                        conn: self.conn,
+                        _phantom: std::marker::PhantomData,
                     }
                 }
 
-                pub fn update(&self, condition: Condition, changes: Vec<SetValue>) -> UpdateQueryBuilder<'a, C> {
-                    UpdateQueryBuilder {
-                        condition,
+                pub fn update(&self, condition: WhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                    caustics::UpdateQueryBuilder {
+                        condition: condition.into(),
                         changes,
-                        db: self.conn,
+                        conn: self.conn,
+                        _phantom: std::marker::PhantomData,
                     }
                 }
 
-                pub fn delete(&self, condition: Condition) -> DeleteQueryBuilder<'a, C> {
-                    DeleteQueryBuilder {
-                        condition,
-                        db: self.conn,
+                pub fn delete(&self, condition: WhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
+                    caustics::DeleteQueryBuilder {
+                        condition: condition.into(),
+                        conn: self.conn,
+                        _phantom: std::marker::PhantomData,
                     }
                 }
 
-                pub fn upsert(&self, condition: Condition, create: Create, update: Vec<SetValue>) -> UpsertQueryBuilder<'a, C> {
-                    UpsertQueryBuilder {
-                        condition,
-                        create,
+                pub fn upsert(&self, condition: WhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                    caustics::UpsertQueryBuilder {
+                        condition: condition.into(),
+                        create: create.into_active_model(),
                         update,
-                        db: self.conn,
+                        conn: self.conn,
+                        _phantom: std::marker::PhantomData,
                     }
                 }
             }
