@@ -14,6 +14,7 @@ pub mod user {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i32,
+        #[sea_orm(unique)]
         pub email: String,
         pub name: String,
         #[sea_orm(nullable)]
@@ -534,7 +535,7 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        /*// Create posts - one with reviewer, one without
+        // Create posts - one with reviewer, one without
                 let post_with_reviewer = client
                     .post()
                     .create(
@@ -550,8 +551,8 @@ mod query_builder_tests {
                     .exec()
                     .await
                     .unwrap();
-
-                let post_without_reviewer = client
+        
+         /*       let post_without_reviewer = client
                     .post()
                     .create(
                         "Unreviewed Post".to_string(),

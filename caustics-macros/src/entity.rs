@@ -28,6 +28,7 @@ pub struct Relation {
     pub name: String,
     pub target: syn::Path,
     pub kind: RelationKind,
+    pub foreign_key_field: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,10 +66,38 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         })
         .collect();
 
-    // Only non-nullable, non-primary-key fields are required
+    // Filter out unique fields (including primary keys)
+    let unique_fields: Vec<_> = fields
+        .iter()
+        .filter(|field| {
+            field.attrs.iter().any(|attr| {
+                if let syn::Meta::List(meta) = &attr.meta {
+                    (meta.path.is_ident("sea_orm")
+                        && (meta.tokens.to_string().contains("primary_key") || meta.tokens.to_string().contains("unique")))
+                        || meta.path.is_ident("primary_key")
+                        || meta.path.is_ident("unique")
+                } else {
+                    false
+                }
+            })
+        })
+        .collect();
+
+    // Identify foreign key fields from relations
+    let foreign_key_fields: Vec<_> = relations
+        .iter()
+        .filter_map(|relation| relation.foreign_key_field.clone())
+        .collect();
+
+    // Only non-nullable, non-primary-key, non-foreign-key fields are required
     let required_fields: Vec<_> = fields
         .iter()
-        .filter(|field| !primary_key_fields.contains(field) && !is_option(&field.ty))
+        .filter(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            !primary_key_fields.contains(field) 
+                && !is_option(&field.ty)
+                && !foreign_key_fields.contains(&field_name)
+        })
         .collect();
 
     // Generate struct fields for required fields (with pub)
@@ -106,6 +135,62 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         .map(|field| {
             let name = field.ident.as_ref().unwrap();
             quote! { model.#name = sea_orm::ActiveValue::Set(self.#name); }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate foreign key relation fields for Create struct
+    let foreign_key_relation_fields = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let relation_name = format_ident!("{}", relation.name.to_snake_case());
+            let target_module = &relation.target;
+            quote! {
+                pub #relation_name: #target_module::UniqueWhereParam
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate foreign key relation function arguments
+    let foreign_key_relation_args = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let relation_name = format_ident!("{}", relation.name.to_snake_case());
+            let target_module = &relation.target;
+            quote! {
+                #relation_name: #target_module::UniqueWhereParam
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate foreign key relation initializers
+    let foreign_key_relation_inits = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let relation_name = format_ident!("{}", relation.name.to_snake_case());
+            quote! { #relation_name }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate foreign key assignments (convert UniqueWhereParam to foreign key value)
+    let foreign_key_assigns = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let fk_field = relation.foreign_key_field.as_ref().unwrap();
+            let fk_field_ident = format_ident!("{}", fk_field);
+            let relation_name = format_ident!("{}", relation.name.to_snake_case());
+            let target_module = &relation.target;
+            quote! {
+                // Extract foreign key value from UniqueWhereParam
+                let fk_value = match self.#relation_name {
+                    #target_module::UniqueWhereParam::IdEquals(id) => id,
+                    _ => panic!("Only IdEquals is supported for foreign key relations"),
+                };
+                model.#fk_field_ident = sea_orm::ActiveValue::Set(fk_value);
+            }
         })
         .collect::<Vec<_>>();
 
@@ -165,6 +250,18 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         }
     }).collect::<Vec<_>>();
 
+    // Generate match arms for UniqueWhereParam
+    let unique_where_match_arms = unique_fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+        let equals_variant = format_ident!("{}Equals", pascal_name);
+        quote! {
+            UniqueWhereParam::#equals_variant(value) => {
+                Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+            }
+        }
+    }).collect::<Vec<_>>();
+
     // Generate match arms for OrderByParam
     let order_by_match_arms = fields.iter().map(|field| {
         let pascal_name = format_ident!("{}", field.ident.as_ref().unwrap().to_string().to_pascal_case());
@@ -179,16 +276,43 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         }
     }).collect::<Vec<_>>();
 
+    // Generate UniqueWhereParam enum for unique fields
+    let unique_where_variants = unique_fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = name.to_string().to_pascal_case();
+        let equals_variant = format_ident!("{}Equals", pascal_name);
+        let ty = &field.ty;
+        quote! {
+            #equals_variant(#ty)
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate UniqueWhereParam serialize implementation
+    let unique_where_serialize_arms = unique_fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = name.to_string().to_pascal_case();
+        let equals_variant = format_ident!("{}Equals", pascal_name);
+        let field_name = name.to_string();
+        quote! {
+            UniqueWhereParam::#equals_variant(value) => (
+                #field_name,
+                ::prisma_client_rust::SerializedWhereValue::Value(
+                    ::prisma_client_rust::PrismaValue::Int(value),
+                ),
+            ),
+        }
+    }).collect::<Vec<_>>();
+
     // Generate field operator modules (including primary keys for query operations)
     let field_ops = fields.iter().map(|field| {
         let field_name = &field.ident;
         let field_type = &field.ty;
         let pascal_name = format_ident!("{}", field_name.as_ref().unwrap().to_string().to_pascal_case());
-        let is_primary_key = primary_key_fields.iter().any(|pk_field| {
-            pk_field.ident.as_ref().unwrap() == field_name.as_ref().unwrap()
+        let is_unique = unique_fields.iter().any(|unique_field| {
+            unique_field.ident.as_ref().unwrap() == field_name.as_ref().unwrap()
         });
 
-        let set_fn = if !is_primary_key {
+        let set_fn = if !is_unique {
             quote! {
                 pub fn set<T: Into<#field_type>>(value: T) -> SetParam {
                     SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
@@ -197,6 +321,42 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         } else {
             quote! {}
         };
+
+        let unique_where_fn = if is_unique {
+            let equals_variant = format_ident!("{}Equals", pascal_name);
+            quote! {
+                pub struct Equals(pub #field_type);
+                
+                pub fn equals<T: From<Equals>>(value: impl Into<#field_type>) -> T {
+                    Equals(value.into()).into()
+                }
+
+                impl From<Equals> for #field_type {
+                    fn from(Equals(v): Equals) -> Self {
+                        v
+                    }
+                }
+                
+                impl From<Equals> for UniqueWhereParam {
+                    fn from(Equals(v): Equals) -> Self {
+                        UniqueWhereParam::#equals_variant(v)
+                    }
+                }
+                
+                impl From<Equals> for WhereParam {
+                    fn from(Equals(v): Equals) -> Self {
+                        WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)))
+                    }
+                }
+            }
+        } else {
+            quote! {
+                pub fn equals<T: Into<#field_type>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                }
+            }
+        };
+
         let order_fn = quote! {
             pub fn order(order: caustics::SortOrder) -> OrderByParam {
                 OrderByParam::#pascal_name(order)
@@ -204,21 +364,20 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         };
         quote! {
             pub mod #field_name {
-                use super::{Entity, Model, ActiveModel, SetParam, WhereParam, OrderByParam};
+                use super::{Entity, Model, ActiveModel, SetParam, WhereParam, OrderByParam, UniqueWhereParam};
                 use sea_orm::{Condition, ColumnTrait, EntityTrait, ActiveValue};
                 use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
                 use uuid::Uuid;
                 use std::vec::Vec;
 
                 #set_fn
+                #unique_where_fn
                 
                 pub fn order(order: caustics::SortOrder) -> OrderByParam {
                     OrderByParam::#pascal_name(order)
                 }
 
-                pub fn equals<T: Into<#field_type>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
-                }
+     
                 pub fn not_equals<T: Into<#field_type>>(value: T) -> WhereParam {
                     WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value.into())))
                 }
@@ -283,8 +442,8 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let name = format_ident!("{}", relation.name.to_snake_case());
             let target = &relation.target;
             match relation.kind {
-                RelationKind::HasMany => quote! { pub #name: Vec<#target> },
-                RelationKind::BelongsTo => quote! { pub #name: Option<#target> },
+                RelationKind::HasMany => quote! { pub #name: Vec<#target::ModelWithRelations> },
+                RelationKind::BelongsTo => quote! { pub #name: Option<#target::ModelWithRelations> },
             }
         })
         .collect::<Vec<_>>();
@@ -296,8 +455,8 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let name = format_ident!("{}", relation.name.to_snake_case());
             let target = &relation.target;
             match relation.kind {
-                RelationKind::HasMany => quote! { #name: Vec<#target> },
-                RelationKind::BelongsTo => quote! { #name: Option<#target> },
+                RelationKind::HasMany => quote! { #name: Vec<#target::ModelWithRelations> },
+                RelationKind::BelongsTo => quote! { #name: Option<#target::ModelWithRelations> },
             }
         })
         .collect::<Vec<_>>();
@@ -420,6 +579,12 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 #(#order_by_field_variants,)*
             }
 
+            #[derive(Debug, Clone)]
+            pub enum UniqueWhereParam {
+                #(#unique_where_variants,)*
+            }
+
+
             impl MergeInto<ActiveModel> for SetParam {
                 fn merge_into(&self, model: &mut ActiveModel) {
                     match self {
@@ -436,6 +601,14 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 }
             }
 
+            impl From<UniqueWhereParam> for Condition {
+                fn from(param: UniqueWhereParam) -> Self {
+                    match param {
+                        #(#unique_where_match_arms,)*
+                    }
+                }
+            }
+
             impl From<OrderByParam> for (<Entity as EntityTrait>::Column, sea_orm::Order) {
                 fn from(param: OrderByParam) -> Self {
                     match param {
@@ -446,13 +619,15 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
 
             pub struct Create {
                 #(#required_struct_fields,)*
+                #(#foreign_key_relation_fields,)*
                 pub _params: Vec<SetParam>,
             }
 
             impl Create {
-                pub fn new(#(#required_fn_args,)* _params: Vec<SetParam>) -> Self {
+                pub fn new(#(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> Self {
                     Self {
                         #(#required_inits,)*
+                        #(#foreign_key_relation_inits,)*
                         _params,
                     }
                 }
@@ -460,6 +635,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 fn into_active_model(self) -> ActiveModel {
                     let mut model = ActiveModel::new();
                     #(#required_assigns)*
+                    #(#foreign_key_assigns)*
                     for opt in self._params {
                         opt.merge_into(&mut model);
                     }
@@ -474,7 +650,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     Self { conn }
                 }
 
-                pub fn find_unique(&self, condition: WhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                pub fn find_unique(&self, condition: UniqueWhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
                     caustics::UniqueQueryBuilder {
                         query: <Entity as EntityTrait>::find().filter::<Condition>(condition.into()),
                         conn: self.conn,
@@ -506,8 +682,8 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     }
                 }
 
-                pub fn create(&self, #(#required_fn_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
-                    let create = Create::new(#(#required_inits,)* _params);
+                pub fn create(&self, #(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
+                    let create = Create::new(#(#required_inits,)* #(#foreign_key_relation_inits,)* _params);
                     caustics::CreateQueryBuilder {
                         model: create.into_active_model(),
                         conn: self.conn,
@@ -515,7 +691,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     }
                 }
 
-                pub fn update(&self, condition: WhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
                     caustics::UpdateQueryBuilder {
                         condition: condition.into(),
                         changes,
@@ -524,7 +700,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     }
                 }
 
-                pub fn delete(&self, condition: WhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
+                pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
                     caustics::DeleteQueryBuilder {
                         condition: condition.into(),
                         conn: self.conn,
@@ -532,7 +708,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     }
                 }
 
-                pub fn upsert(&self, condition: WhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                pub fn upsert(&self, condition: UniqueWhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
                     caustics::UpsertQueryBuilder {
                         condition: condition.into(),
                         create: create.into_active_model(),
@@ -562,6 +738,8 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
 
     if let syn::Data::Enum(data_enum) = &relation_ast.data {
         for variant in &data_enum.variants {
+            let mut foreign_key_field = None;
+            
             for attr in &variant.attrs {
                 if let syn::Meta::List(meta) = &attr.meta {
                     if meta.path.is_ident("sea_orm") {
@@ -581,10 +759,19 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
                                             let target_path = syn::parse_str::<syn::Path>(&target_str)
                                                 .expect("Failed to parse relation target as path");
 
-                                            // Create a new path with ModelWithRelations
-                                            let mut new_path = target_path.clone();
-                                            if let Some(last_segment) = new_path.segments.last_mut() {
-                                                last_segment.ident = syn::Ident::new("ModelWithRelations", last_segment.ident.span());
+                                            // Create a new clean path without the "Entity" suffix
+                                            let mut new_path = syn::Path {
+                                                leading_colon: target_path.leading_colon,
+                                                segments: syn::punctuated::Punctuated::new(),
+                                            };
+                                            
+                                            // Copy all segments except the last one if it's "Entity"
+                                            for (i, segment) in target_path.segments.iter().enumerate() {
+                                                if i == target_path.segments.len() - 1 && segment.ident == "Entity" {
+                                                    // Skip the "Entity" segment
+                                                    continue;
+                                                }
+                                                new_path.segments.push(segment.clone());
                                             }
 
                                             let name = variant.ident.to_string();
@@ -596,8 +783,23 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
                                             relations.push(Relation {
                                                 name,
                                                 target: new_path,
-                                                kind
+                                                kind,
+                                                foreign_key_field: foreign_key_field.clone(),
                                             });
+                                        }
+                                    } else if nv.path.is_ident("from") {
+                                        if let syn::Expr::Lit(syn::ExprLit {
+                                            lit: syn::Lit::Str(lit),
+                                            ..
+                                        }) = &nv.value
+                                        {
+                                            // Extract foreign key field name from "Column::FieldName"
+                                            let column_str = lit.value();
+                                            if let Some(field_name) = column_str.split("::").nth(1) {
+                                                // Convert PascalCase to snake_case for field name
+                                                let snake_case_name = field_name.to_string().to_snake_case();
+                                                foreign_key_field = Some(snake_case_name);
+                                            }
                                         }
                                     }
                                 }
