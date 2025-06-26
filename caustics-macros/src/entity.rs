@@ -194,21 +194,6 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         })
         .collect::<Vec<_>>();
 
-    // Generate match arms for SetParam
-    let match_arms = fields
-        .iter()
-        .filter(|field| !primary_key_fields.contains(field))
-        .map(|field| {
-            let name = field.ident.as_ref().unwrap();
-            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-            quote! {
-                SetParam::#pascal_name(value) => {
-                    model.#name = value.clone();
-                }
-            }
-        })
-        .collect::<Vec<_>>();
-
     // Generate field variants for SetParam enum (excluding primary keys)
     let field_variants = fields
         .iter()
@@ -222,6 +207,38 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             }
         })
         .collect::<Vec<_>>();
+
+    // Generate relation connection variants for SetParam enum
+    let relation_connect_variants = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
+            let target_module = &relation.target;
+            quote! {
+                #relation_name(#target_module::UniqueWhereParam)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate relation disconnect variants for SetParam enum
+    let relation_disconnect_variants = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
+            quote! {
+                #relation_name
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Combine all SetParam variants
+    let all_set_param_variants = quote! {
+        #(#field_variants,)*
+        #(#relation_connect_variants,)*
+        #(#relation_disconnect_variants,)*
+    };
 
     // Generate field variants for WhereParam enum (all fields)
     let where_field_variants = fields.iter().map(|field| {
@@ -539,11 +556,71 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         }
     };
 
+    // Generate match arms for SetParam (excluding primary keys)
+    let match_arms = fields
+        .iter()
+        .filter(|field| !primary_key_fields.contains(field))
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            quote! {
+                SetParam::#pascal_name(value) => {
+                    model.#name = value.clone();
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate relation connection match arms for SetParam
+    let relation_connect_match_arms = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
+            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
+            let target_module = &relation.target;
+            quote! {
+                SetParam::#relation_name(where_param) => {
+                    // Convert UniqueWhereParam to foreign key value
+                    let condition: sea_orm::Condition = where_param.into();
+                    // For now, we'll need to execute a query to get the ID
+                    // This is a simplified implementation - in practice, you'd need to handle this differently
+                    // For belongs_to relations, we typically set the foreign key directly
+                    // This would need to be implemented in the query builder
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate relation disconnect match arms for SetParam
+    let relation_disconnect_match_arms = relations
+        .iter()
+        .filter(|relation| relation.foreign_key_field.is_some())
+        .map(|relation| {
+            let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
+            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
+            quote! {
+                SetParam::#relation_name => {
+                    model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Combine all match arms
+    let all_match_arms = quote! {
+        #(#match_arms,)*
+        #(#relation_connect_match_arms,)*
+        #(#relation_disconnect_match_arms,)*
+    };
+
     let expanded = {
         let required_struct_fields = required_struct_fields.clone();
         let required_fn_args = required_fn_args.clone();
         let required_inits = required_inits.clone();
         let required_assigns = required_assigns.clone();
+        let all_set_param_variants = all_set_param_variants.clone();
+        let all_match_arms = all_match_arms.clone();
         quote! {
             use sea_orm::{
                 DatabaseConnection,
@@ -568,7 +645,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             }
 
             pub enum SetParam {
-                #(#field_variants,)*
+                #all_set_param_variants
             }
 
             pub enum WhereParam {
@@ -588,7 +665,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             impl MergeInto<ActiveModel> for SetParam {
                 fn merge_into(&self, model: &mut ActiveModel) {
                     match self {
-                        #(#match_arms,)*
+                        #all_match_arms
                     }
                 }
             }
@@ -739,6 +816,9 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
     if let syn::Data::Enum(data_enum) = &relation_ast.data {
         for variant in &data_enum.variants {
             let mut foreign_key_field = None;
+            let mut relation_name = None;
+            let mut relation_target = None;
+            let mut relation_kind = None;
             
             for attr in &variant.attrs {
                 if let syn::Meta::List(meta) = &attr.meta {
@@ -774,17 +854,12 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
                                                 new_path.segments.push(segment.clone());
                                             }
 
-                                            let name = variant.ident.to_string();
-                                            let kind = if nv.path.is_ident("has_many") {
+                                            relation_name = Some(variant.ident.to_string());
+                                            relation_target = Some(new_path);
+                                            relation_kind = Some(if nv.path.is_ident("has_many") {
                                                 RelationKind::HasMany
                                             } else {
                                                 RelationKind::BelongsTo
-                                            };
-                                            relations.push(Relation {
-                                                name,
-                                                target: new_path,
-                                                kind,
-                                                foreign_key_field: foreign_key_field.clone(),
                                             });
                                         }
                                     } else if nv.path.is_ident("from") {
@@ -808,6 +883,16 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
                     }
                 }
             }
+
+            // Only add the relation if we have all the required information
+            if let (Some(name), Some(target), Some(kind)) = (relation_name, relation_target, relation_kind) {
+                relations.push(Relation {
+                    name,
+                    target,
+                    kind,
+                    foreign_key_field,
+                });
+            }
         }
     }
 
@@ -825,14 +910,49 @@ fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
         let relation_name_str = relation_name;
         let target = &relation.target;
 
-        let submodule = quote! {
-            pub mod #relation_name_lower_ident {
-                use super::*;
+        let submodule = if relation.foreign_key_field.is_some() {
+            // For relations with foreign keys, generate connect/disconnect functions
+            let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
+            let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
+            quote! {
+                pub mod #relation_name_lower_ident {
+                    use super::*;
 
-                pub fn fetch(filters: Vec<Filter>) -> RelationFilter {
-                    RelationFilter {
-                        relation: #relation_name_str,
-                        filters,
+                    pub fn fetch(filters: Vec<Filter>) -> RelationFilter {
+                        RelationFilter {
+                            relation: #relation_name_str,
+                            filters,
+                        }
+                    }
+
+                    pub struct Connect(#target::UniqueWhereParam);
+                    
+                    impl From<Connect> for SetParam {
+                        fn from(Connect(where_param): Connect) -> Self {
+                            SetParam::#connect_variant(where_param)
+                        }
+                    }
+
+                    pub fn connect<T: From<Connect>>(value: #target::UniqueWhereParam) -> T {
+                        Connect(value).into()
+                    }
+
+                    pub fn disconnect() -> SetParam {
+                        SetParam::#disconnect_variant
+                    }
+                }
+            }
+        } else {
+            // For relations without foreign keys (has_many), just generate fetch
+            quote! {
+                pub mod #relation_name_lower_ident {
+                    use super::*;
+
+                    pub fn fetch(filters: Vec<Filter>) -> RelationFilter {
+                        RelationFilter {
+                            relation: #relation_name_str,
+                            filters,
+                        }
                     }
                 }
             }
