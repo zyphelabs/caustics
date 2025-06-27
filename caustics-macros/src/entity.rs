@@ -141,7 +141,22 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Generate foreign key relation fields for Create struct
     let foreign_key_relation_fields = relations
         .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some() && {
+                // Check if the foreign key field is not nullable (not Option<T>)
+                // Only required relations should be in the Create struct
+                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                }) {
+                    !is_option(&field.ty)
+                } else {
+                    false
+                }
+            }
+        })
         .map(|relation| {
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             let target_module = &relation.target;
@@ -154,7 +169,22 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Generate foreign key relation function arguments
     let foreign_key_relation_args = relations
         .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some() && {
+                // Check if the foreign key field is not nullable (not Option<T>)
+                // Only required relations should be function arguments
+                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                }) {
+                    !is_option(&field.ty)
+                } else {
+                    false
+                }
+            }
+        })
         .map(|relation| {
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             let target_module = &relation.target;
@@ -167,7 +197,22 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Generate foreign key relation initializers
     let foreign_key_relation_inits = relations
         .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some() && {
+                // Check if the foreign key field is not nullable (not Option<T>)
+                // Only required relations should be initializers
+                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                }) {
+                    !is_option(&field.ty)
+                } else {
+                    false
+                }
+            }
+        })
         .map(|relation| {
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             quote! { #relation_name }
@@ -177,7 +222,22 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Generate foreign key assignments (convert UniqueWhereParam to foreign key value)
     let foreign_key_assigns = relations
         .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some() && {
+                // Check if the foreign key field is not nullable (not Option<T>)
+                // Only required relations should be in foreign key assignments
+                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                }) {
+                    !is_option(&field.ty)
+                } else {
+                    false
+                }
+            }
+        })
         .map(|relation| {
             let fk_field = relation.foreign_key_field.as_ref().unwrap();
             let fk_field_ident = format_ident!("{}", fk_field);
@@ -211,12 +271,35 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Generate relation connection variants for SetParam enum
     let relation_connect_variants = relations
         .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some()
+        })
         .map(|relation| {
             let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
             let target_module = &relation.target;
-            quote! {
-                #relation_name(#target_module::UniqueWhereParam)
+            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+            
+            // Check if this is an optional relation
+            let is_optional = if let Some(field) = fields.iter().find(|f| {
+                f.ident.as_ref().unwrap().to_string() == *fk_field_name
+            }) {
+                is_option(&field.ty)
+            } else {
+                false
+            };
+            
+            if is_optional {
+                // For optional relations, allow connecting to None or a specific entity
+                quote! {
+                    #relation_name(Option<#target_module::UniqueWhereParam>)
+                }
+            } else {
+                // For required relations, only allow connecting to a specific entity
+                quote! {
+                    #relation_name(#target_module::UniqueWhereParam)
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -224,7 +307,21 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Generate relation disconnect variants for SetParam enum
     let relation_disconnect_variants = relations
         .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some() && {
+                // Only optional relations can be disconnected (set to None)
+                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                }) {
+                    is_option(&field.ty)
+                } else {
+                    false
+                }
+            }
+        })
         .map(|relation| {
             let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
             quote! {
@@ -331,8 +428,8 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
 
         let set_fn = if !is_unique {
             quote! {
-                pub fn set<T: Into<#field_type>>(value: T) -> SetParam {
-                    SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
+                pub fn set<T: Into<#field_type>>(value: T) -> super::SetParam {
+                    super::SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
                 }
             }
         } else {
@@ -354,34 +451,33 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     }
                 }
                 
-                impl From<Equals> for UniqueWhereParam {
+                impl From<Equals> for super::UniqueWhereParam {
                     fn from(Equals(v): Equals) -> Self {
-                        UniqueWhereParam::#equals_variant(v)
+                        super::UniqueWhereParam::#equals_variant(v)
                     }
                 }
                 
-                impl From<Equals> for WhereParam {
+                impl From<Equals> for super::WhereParam {
                     fn from(Equals(v): Equals) -> Self {
-                        WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)))
+                        super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(v)))
                     }
                 }
             }
         } else {
             quote! {
-                pub fn equals<T: Into<#field_type>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                pub fn equals<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
                 }
             }
         };
 
         let order_fn = quote! {
-            pub fn order(order: caustics::SortOrder) -> OrderByParam {
-                OrderByParam::#pascal_name(order)
+            pub fn order(order: caustics::SortOrder) -> super::OrderByParam {
+                super::OrderByParam::#pascal_name(order)
             }
         };
         quote! {
             pub mod #field_name {
-                use super::{Entity, Model, ActiveModel, SetParam, WhereParam, OrderByParam, UniqueWhereParam};
                 use sea_orm::{Condition, ColumnTrait, EntityTrait, ActiveValue};
                 use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
                 use uuid::Uuid;
@@ -390,38 +486,38 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 #set_fn
                 #unique_where_fn
                 
-                pub fn order(order: caustics::SortOrder) -> OrderByParam {
-                    OrderByParam::#pascal_name(order)
+                pub fn order(order: caustics::SortOrder) -> super::OrderByParam {
+                    super::OrderByParam::#pascal_name(order)
                 }
 
      
-                pub fn not_equals<T: Into<#field_type>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value.into())))
+                pub fn not_equals<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.ne(value.into())))
                 }
-                pub fn gt<T: Into<#field_type>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(value.into())))
+                pub fn gt<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.gt(value.into())))
                 }
-                pub fn lt<T: Into<#field_type>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(value.into())))
+                pub fn lt<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.lt(value.into())))
                 }
-                pub fn gte<T: Into<#field_type>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(value.into())))
+                pub fn gte<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.gte(value.into())))
                 }
-                pub fn lte<T: Into<#field_type>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(value.into())))
+                pub fn lte<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.lte(value.into())))
                 }
-                pub fn in_vec<T: Into<#field_type>>(values: Vec<T>) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
+                pub fn in_vec<T: Into<#field_type>>(values: Vec<T>) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.is_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
                 }
-                pub fn not_in_vec<T: Into<#field_type>>(values: Vec<T>) -> WhereParam {
-                    WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
+                pub fn not_in_vec<T: Into<#field_type>>(values: Vec<T>) -> super::WhereParam {
+                    super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.is_not_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
                 }
             }
         }
     });
 
     // Generate relation submodules
-    let relation_submodules = generate_relation_submodules(&relations);
+    let relation_submodules = generate_relation_submodules(&relations, &fields);
 
     // Generate ModelWithRelations struct fields
     let model_with_relations_fields = fields
@@ -459,8 +555,32 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let name = format_ident!("{}", relation.name.to_snake_case());
             let target = &relation.target;
             match relation.kind {
-                RelationKind::HasMany => quote! { pub #name: Vec<#target::ModelWithRelations> },
-                RelationKind::BelongsTo => quote! { pub #name: Option<#target::ModelWithRelations> },
+                RelationKind::HasMany => quote! { pub #name: Option<Vec<#target::ModelWithRelations>> },
+                RelationKind::BelongsTo => {
+                    // Check if this is an optional relation by looking at the foreign key field
+                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                        if let Some(field) = fields.iter().find(|f| {
+                            f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                        }) {
+                            is_option(&field.ty)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    
+                    if is_optional {
+                        // For optional relations: Option<Option<ModelWithRelations>>
+                        // First Option: whether relation was fetched
+                        // Second Option: whether relation exists in DB
+                        quote! { pub #name: Option<Option<#target::ModelWithRelations>> }
+                    } else {
+                        // For required relations: Option<ModelWithRelations>
+                        // Option: whether relation was fetched
+                        quote! { pub #name: Option<#target::ModelWithRelations> }
+                    }
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -472,8 +592,29 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let name = format_ident!("{}", relation.name.to_snake_case());
             let target = &relation.target;
             match relation.kind {
-                RelationKind::HasMany => quote! { #name: Vec<#target::ModelWithRelations> },
-                RelationKind::BelongsTo => quote! { #name: Option<#target::ModelWithRelations> },
+                RelationKind::HasMany => quote! { #name: Option<Vec<#target::ModelWithRelations>> },
+                RelationKind::BelongsTo => {
+                    // Check if this is an optional relation by looking at the foreign key field
+                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                        if let Some(field) = fields.iter().find(|f| {
+                            f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                        }) {
+                            is_option(&field.ty)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    
+                    if is_optional {
+                        // For optional relations: Option<Option<ModelWithRelations>>
+                        quote! { #name: Option<Option<#target::ModelWithRelations>> }
+                    } else {
+                        // For required relations: Option<ModelWithRelations>
+                        quote! { #name: Option<#target::ModelWithRelations> }
+                    }
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -492,10 +633,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         .iter()
         .map(|relation| {
             let name = format_ident!("{}", relation.name.to_snake_case());
-            match relation.kind {
-                RelationKind::HasMany => quote! { #name: Vec::new() },
-                RelationKind::BelongsTo => quote! { #name: None },
-            }
+            quote! { #name: None }
         })
         .collect::<Vec<_>>();
 
@@ -516,6 +654,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     let model_with_relations_impl = quote! {
         #filter_types
 
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub struct ModelWithRelations {
             #(#model_with_relations_fields,)*
             #(#relation_fields,)*
@@ -556,6 +695,93 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         }
     };
 
+    // Generate relation connection match arms for SetParam
+    let relation_connect_match_arms = relations
+        .iter()
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some()
+        })
+        .map(|relation| {
+            let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
+            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
+            let target_module = &relation.target;
+            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+            
+            // Check if this is an optional relation
+            let is_optional = if let Some(field) = fields.iter().find(|f| {
+                f.ident.as_ref().unwrap().to_string() == *fk_field_name
+            }) {
+                is_option(&field.ty)
+            } else {
+                false
+            };
+            
+            if is_optional {
+                // For optional relations, handle Option<UniqueWhereParam>
+                quote! {
+                    SetParam::#relation_name(where_param_opt) => {
+                        match where_param_opt {
+                            Some(where_param) => {
+                                // Convert UniqueWhereParam to foreign key value
+                                let fk_value = match where_param {
+                                    #target_module::UniqueWhereParam::IdEquals(id) => *id,
+                                    _ => panic!("Only IdEquals is supported for foreign key relations"),
+                                };
+                                model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(fk_value));
+                            }
+                            None => {
+                                model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // For required relations, handle UniqueWhereParam directly
+                quote! {
+                    SetParam::#relation_name(where_param) => {
+                        // Convert UniqueWhereParam to foreign key value
+                        let fk_value = match where_param {
+                            #target_module::UniqueWhereParam::IdEquals(id) => *id,
+                            _ => panic!("Only IdEquals is supported for foreign key relations"),
+                        };
+                        model.#foreign_key_field = sea_orm::ActiveValue::Set(fk_value);
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate relation disconnect match arms for SetParam
+    let relation_disconnect_match_arms = relations
+        .iter()
+        .filter(|relation| {
+            // Only include belongs_to relationships (where this entity has the foreign key)
+            matches!(relation.kind, RelationKind::BelongsTo) && 
+            relation.foreign_key_field.is_some() && {
+                // Only optional relations can be disconnected (set to None)
+                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                }) {
+                    is_option(&field.ty)
+                } else {
+                    false
+                }
+            }
+        })
+        .map(|relation| {
+            let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
+            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
+            quote! {
+                SetParam::#relation_name => {
+                    model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Generate match arms for SetParam (excluding primary keys)
     let match_arms = fields
         .iter()
@@ -566,42 +792,6 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             quote! {
                 SetParam::#pascal_name(value) => {
                     model.#name = value.clone();
-                }
-            }
-        })
-        .collect::<Vec<_>>();
-
-    // Generate relation connection match arms for SetParam
-    let relation_connect_match_arms = relations
-        .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
-        .map(|relation| {
-            let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
-            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
-            let target_module = &relation.target;
-            quote! {
-                SetParam::#relation_name(where_param) => {
-                    // Convert UniqueWhereParam to foreign key value
-                    let condition: sea_orm::Condition = where_param.into();
-                    // For now, we'll need to execute a query to get the ID
-                    // This is a simplified implementation - in practice, you'd need to handle this differently
-                    // For belongs_to relations, we typically set the foreign key directly
-                    // This would need to be implemented in the query builder
-                }
-            }
-        })
-        .collect::<Vec<_>>();
-
-    // Generate relation disconnect match arms for SetParam
-    let relation_disconnect_match_arms = relations
-        .iter()
-        .filter(|relation| relation.foreign_key_field.is_some())
-        .map(|relation| {
-            let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
-            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
-            quote! {
-                SetParam::#relation_name => {
-                    model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
                 }
             }
         })
@@ -899,7 +1089,7 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
     relations
 }
 
-fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
+fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) -> TokenStream {
     let mut submodules = Vec::new();
 
     for relation in relations {
@@ -910,46 +1100,59 @@ fn generate_relation_submodules(relations: &[Relation]) -> TokenStream {
         let relation_name_str = relation_name;
         let target = &relation.target;
 
-        let submodule = if relation.foreign_key_field.is_some() {
-            // For relations with foreign keys, generate connect/disconnect functions
-            let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
-            let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
-            quote! {
-                pub mod #relation_name_lower_ident {
-                    use super::*;
-
-                    pub fn fetch(filters: Vec<Filter>) -> RelationFilter {
-                        RelationFilter {
-                            relation: #relation_name_str,
-                            filters,
+        let submodule = if matches!(relation.kind, RelationKind::BelongsTo) && relation.foreign_key_field.is_some() {
+            // Check if this is an optional relation
+            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+            let is_optional = if let Some(field) = fields.iter().find(|f| {
+                f.ident.as_ref().unwrap().to_string() == *fk_field_name
+            }) {
+                is_option(&field.ty)
+            } else {
+                false
+            };
+            
+            if is_optional {
+                // For optional relations, include connect and disconnect functionality
+                let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
+                let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
+                
+                quote! {
+                    pub mod #relation_name_lower_ident {
+                        pub fn fetch() -> super::RelationFilter {
+                            super::RelationFilter {
+                                relation: #relation_name_str,
+                                filters: vec![],
+                            }
+                        }
+                        
+                        pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
+                            super::SetParam::#connect_variant(Some(where_param))
+                        }
+                        
+                        pub fn disconnect() -> super::SetParam {
+                            super::SetParam::#disconnect_variant
                         }
                     }
-
-                    pub struct Connect(#target::UniqueWhereParam);
-                    
-                    impl From<Connect> for SetParam {
-                        fn from(Connect(where_param): Connect) -> Self {
-                            SetParam::#connect_variant(where_param)
+                }
+            } else {
+                // For required relations, only include fetch functionality (no connect/disconnect)
+                quote! {
+                    pub mod #relation_name_lower_ident {
+                        pub fn fetch() -> super::RelationFilter {
+                            super::RelationFilter {
+                                relation: #relation_name_str,
+                                filters: vec![],
+                            }
                         }
-                    }
-
-                    pub fn connect<T: From<Connect>>(value: #target::UniqueWhereParam) -> T {
-                        Connect(value).into()
-                    }
-
-                    pub fn disconnect() -> SetParam {
-                        SetParam::#disconnect_variant
                     }
                 }
             }
         } else {
-            // For relations without foreign keys (has_many), just generate fetch
+            // For relations without foreign keys (has_many), generate fetch with filters
             quote! {
                 pub mod #relation_name_lower_ident {
-                    use super::*;
-
-                    pub fn fetch(filters: Vec<Filter>) -> RelationFilter {
-                        RelationFilter {
+                    pub fn fetch(filters: Vec<super::Filter>) -> super::RelationFilter {
+                        super::RelationFilter {
                             relation: #relation_name_str,
                             filters,
                         }

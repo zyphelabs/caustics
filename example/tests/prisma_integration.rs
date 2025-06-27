@@ -518,6 +518,7 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
+        assert!(author.posts.is_none());
 
         let reviewer = client
             .user()
