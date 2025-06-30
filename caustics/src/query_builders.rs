@@ -1,11 +1,12 @@
 use sea_orm::{ConnectionTrait, EntityTrait, Select, QuerySelect, QueryOrder, QueryFilter, IntoActiveModel};
 
-use crate::{FromModel, MergeInto};
+use crate::{FromModel, MergeInto, RelationFilterTrait, RelationFilter};
 
 /// Query builder for finding a unique entity record
 pub struct UniqueQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
     pub query: Select<Entity>,
     pub conn: &'a C,
+    pub relations_to_fetch: Vec<RelationFilter>,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -15,16 +16,72 @@ impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> UniqueQuer
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
-        self.query
-            .one(self.conn)
-            .await
-            .map(|opt| opt.map(|model| ModelWithRelations::from_model(model)))
+        if self.relations_to_fetch.is_empty() {
+            // No relations to fetch, use simple query
+            self.query
+                .one(self.conn)
+                .await
+                .map(|opt| opt.map(|model| ModelWithRelations::from_model(model)))
+        } else {
+            // Fetch with relations
+            self.exec_with_relations().await
+        }
     }
 
     /// Add a relation to fetch with the query
-    pub fn with<T>(self, _relation: T) -> Self {
-        // Stub implementation for now
-        todo!("Implement .with() to fetch related rows matching the filter")
+    pub fn with<T: Into<RelationFilter>>(mut self, relation: T) -> Self {
+        self.relations_to_fetch.push(relation.into());
+        self
+    }
+
+    /// Execute query with relations
+    async fn exec_with_relations(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr>
+    where
+        ModelWithRelations: FromModel<Entity::Model>,
+    {
+        let Self { query, conn, relations_to_fetch, .. } = self;
+        let main_result = query.one(conn).await?;
+        
+        if let Some(main_model) = main_result {
+            let mut model_with_relations = ModelWithRelations::from_model(main_model);
+            
+            // Fetch relations for the main model
+            for relation_filter in relations_to_fetch {
+                Self::fetch_relation_for_model(conn, &mut model_with_relations, &relation_filter).await?;
+            }
+            
+            Ok(Some(model_with_relations))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Fetch a single relation for a model
+    async fn fetch_relation_for_model(
+        _conn: &C,
+        _model_with_relations: &mut ModelWithRelations,
+        relation_filter: &RelationFilter,
+    ) -> Result<(), sea_orm::DbErr> {
+        // This is a placeholder implementation
+        // In a real implementation, you would:
+        // 1. Use the relation name to determine which relation to fetch
+        // 2. Use SeaORM's relation API to fetch related data
+        // 3. Apply any filters from the relation_filter
+        // 4. Populate the appropriate field in model_with_relations
+        
+        let relation_name = relation_filter.relation_name();
+        let filters = relation_filter.filters();
+        
+        // For now, we'll just log what we would fetch
+        println!("Would fetch relation '{}' with {} filters", relation_name, filters.len());
+        
+        // TODO: Implement actual relation fetching logic
+        // This would involve:
+        // - Using SeaORM's RelationTrait to get the related entity
+        // - Building a query with the filters
+        // - Executing the query and populating the relation field
+        
+        Ok(())
     }
 }
 
@@ -32,6 +89,7 @@ impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> UniqueQuer
 pub struct FirstQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
     pub query: Select<Entity>,
     pub conn: &'a C,
+    pub relations_to_fetch: Vec<RelationFilter>,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -41,16 +99,72 @@ impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> FirstQuery
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
-        self.query
-            .one(self.conn)
-            .await
-            .map(|opt| opt.map(|model| ModelWithRelations::from_model(model)))
+        if self.relations_to_fetch.is_empty() {
+            // No relations to fetch, use simple query
+            self.query
+                .one(self.conn)
+                .await
+                .map(|opt| opt.map(|model| ModelWithRelations::from_model(model)))
+        } else {
+            // Fetch with relations
+            self.exec_with_relations().await
+        }
     }
 
     /// Add a relation to fetch with the query
-    pub fn with<T>(self, _relation: T) -> Self {
-        // Stub implementation for now
-        todo!("Implement .with() to fetch related rows matching the filter")
+    pub fn with<T: Into<RelationFilter>>(mut self, relation: T) -> Self {
+        self.relations_to_fetch.push(relation.into());
+        self
+    }
+
+    /// Execute query with relations
+    async fn exec_with_relations(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr>
+    where
+        ModelWithRelations: FromModel<Entity::Model>,
+    {
+        let Self { query, conn, relations_to_fetch, .. } = self;
+        let main_result = query.one(conn).await?;
+        
+        if let Some(main_model) = main_result {
+            let mut model_with_relations = ModelWithRelations::from_model(main_model);
+            
+            // Fetch relations for the main model
+            for relation_filter in relations_to_fetch {
+                Self::fetch_relation_for_model(conn, &mut model_with_relations, &relation_filter).await?;
+            }
+            
+            Ok(Some(model_with_relations))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Fetch a single relation for a model
+    async fn fetch_relation_for_model(
+        _conn: &C,
+        _model_with_relations: &mut ModelWithRelations,
+        relation_filter: &RelationFilter,
+    ) -> Result<(), sea_orm::DbErr> {
+        // This is a placeholder implementation
+        // In a real implementation, you would:
+        // 1. Use the relation name to determine which relation to fetch
+        // 2. Use SeaORM's relation API to fetch related data
+        // 3. Apply any filters from the relation_filter
+        // 4. Populate the appropriate field in model_with_relations
+        
+        let relation_name = relation_filter.relation_name();
+        let filters = relation_filter.filters();
+        
+        // For now, we'll just log what we would fetch
+        println!("Would fetch relation '{}' with {} filters", relation_name, filters.len());
+        
+        // TODO: Implement actual relation fetching logic
+        // This would involve:
+        // - Using SeaORM's RelationTrait to get the related entity
+        // - Building a query with the filters
+        // - Executing the query and populating the relation field
+        
+        Ok(())
     }
 }
 
@@ -58,6 +172,7 @@ impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> FirstQuery
 pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
     pub query: Select<Entity>,
     pub conn: &'a C,
+    pub relations_to_fetch: Vec<RelationFilter>,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -89,16 +204,71 @@ impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> ManyQueryB
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
-        self.query
-            .all(self.conn)
-            .await
-            .map(|models| models.into_iter().map(|model| ModelWithRelations::from_model(model)).collect())
+        if self.relations_to_fetch.is_empty() {
+            // No relations to fetch, use simple query
+            self.query
+                .all(self.conn)
+                .await
+                .map(|models| models.into_iter().map(|model| ModelWithRelations::from_model(model)).collect())
+        } else {
+            // Fetch with relations
+            self.exec_with_relations().await
+        }
     }
 
     /// Add a relation to fetch with the query
-    pub fn with<T>(self, _relation: T) -> Self {
-        // Stub implementation for now
-        todo!("Implement .with() to fetch related rows matching the filter")
+    pub fn with<T: Into<RelationFilter>>(mut self, relation: T) -> Self {
+        self.relations_to_fetch.push(relation.into());
+        self
+    }
+
+    /// Execute query with relations
+    async fn exec_with_relations(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
+    where
+        ModelWithRelations: FromModel<Entity::Model>,
+    {
+        let Self { query, conn, relations_to_fetch, .. } = self;
+        let main_results = query.all(conn).await?;
+        
+        let mut models_with_relations = Vec::new();
+        
+        for main_model in main_results {
+            let mut model_with_relations = ModelWithRelations::from_model(main_model);
+            for relation_filter in &relations_to_fetch {
+                Self::fetch_relation_for_model(conn, &mut model_with_relations, relation_filter).await?;
+            }
+            models_with_relations.push(model_with_relations);
+        }
+        
+        Ok(models_with_relations)
+    }
+
+    /// Fetch a single relation for a model
+    async fn fetch_relation_for_model(
+        _conn: &C,
+        _model_with_relations: &mut ModelWithRelations,
+        relation_filter: &RelationFilter,
+    ) -> Result<(), sea_orm::DbErr> {
+        // This is a placeholder implementation
+        // In a real implementation, you would:
+        // 1. Use the relation name to determine which relation to fetch
+        // 2. Use SeaORM's relation API to fetch related data
+        // 3. Apply any filters from the relation_filter
+        // 4. Populate the appropriate field in model_with_relations
+        
+        let relation_name = relation_filter.relation_name();
+        let filters = relation_filter.filters();
+        
+        // For now, we'll just log what we would fetch
+        println!("Would fetch relation '{}' with {} filters", relation_name, filters.len());
+        
+        // TODO: Implement actual relation fetching logic
+        // This would involve:
+        // - Using SeaORM's RelationTrait to get the related entity
+        // - Building a query with the filters
+        // - Executing the query and populating the relation field
+        
+        Ok(())
     }
 }
 

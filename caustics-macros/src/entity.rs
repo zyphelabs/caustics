@@ -639,14 +639,31 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
 
     // Generate Filter and RelationFilter types
     let filter_types = quote! {
-        pub struct Filter {
-            pub field: String,
-            pub value: String,
-        }
-
+        pub type Filter = caustics::Filter;
+        
+        #[derive(Clone)]
         pub struct RelationFilter {
             pub relation: &'static str,
             pub filters: Vec<Filter>,
+        }
+
+        impl caustics::RelationFilterTrait for RelationFilter {
+            fn relation_name(&self) -> &'static str {
+                self.relation
+            }
+            
+            fn filters(&self) -> &[caustics::Filter] {
+                &self.filters
+            }
+        }
+
+        impl From<RelationFilter> for caustics::RelationFilter {
+            fn from(relation_filter: RelationFilter) -> Self {
+                caustics::RelationFilter {
+                    relation: relation_filter.relation,
+                    filters: relation_filter.filters,
+                }
+            }
         }
     };
 
@@ -921,6 +938,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     caustics::UniqueQueryBuilder {
                         query: <Entity as EntityTrait>::find().filter::<Condition>(condition.into()),
                         conn: self.conn,
+                        relations_to_fetch: vec![],
                         _phantom: std::marker::PhantomData,
                     }
                 }
@@ -933,6 +951,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     caustics::FirstQueryBuilder {
                         query,
                         conn: self.conn,
+                        relations_to_fetch: vec![],
                         _phantom: std::marker::PhantomData,
                     }
                 }
@@ -945,6 +964,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     caustics::ManyQueryBuilder {
                         query,
                         conn: self.conn,
+                        relations_to_fetch: vec![],
                         _phantom: std::marker::PhantomData,
                     }
                 }
