@@ -2,6 +2,8 @@ use sea_orm::{ConnectionTrait, EntityTrait, Select, QuerySelect, QueryOrder, Que
 
 use crate::{FromModel, MergeInto, RelationFilterTrait, RelationFilter};
 
+use std::any::Any;
+
 /// Query builder for finding a unique entity record
 pub struct UniqueQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
     pub query: Select<Entity>,
@@ -272,10 +274,21 @@ impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> ManyQueryB
     }
 }
 
+/// Internal structure for storing deferred foreign key lookups
+pub struct DeferredLookup<C: ConnectionTrait> {
+    pub unique_param: Box<dyn Any + Send>,
+    pub assign: fn(&mut (dyn Any + 'static), i32),
+    pub entity_resolver: Box<
+        dyn for<'a> Fn(&'a C, &dyn Any) -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<i32, sea_orm::DbErr>> + Send + 'a>>
+        + Send
+    >,
+}
+
 /// Query builder for creating a new entity record
-pub struct CreateQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send, ModelWithRelations> {
+pub struct CreateQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send + 'static, ModelWithRelations> {
     pub model: ActiveModel,
     pub conn: &'a C,
+    pub deferred_lookups: Vec<DeferredLookup<C>>,
     pub _phantom: std::marker::PhantomData<(Entity, ModelWithRelations)>,
 }
 
@@ -283,15 +296,25 @@ impl<'a, C, Entity, ActiveModel, ModelWithRelations> CreateQueryBuilder<'a, C, E
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as EntityTrait>::Model>,
 {
     pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr>
     where
         <Entity as EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
     {
-        self.model.insert(self.conn).await.map(ModelWithRelations::from_model)
+        let mut model = self.model;
+        
+        // Execute all deferred lookups in batch
+        for lookup in &self.deferred_lookups {
+            let lookup_result = (lookup.entity_resolver)(self.conn, &*lookup.unique_param).await?;
+            (lookup.assign)(&mut model as &mut (dyn Any + 'static), lookup_result);
+        }
+        
+        model.insert(self.conn).await.map(ModelWithRelations::from_model)
     }
+    
+
 }
 
 /// Query builder for deleting entity records matching a condition
@@ -316,9 +339,9 @@ where
 }
 
 /// Query builder for upserting (insert or update) entity records
-pub struct UpsertQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send, ModelWithRelations, T: MergeInto<ActiveModel>> {
+pub struct UpsertQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send + 'static, ModelWithRelations, T: MergeInto<ActiveModel>> {
     pub condition: sea_orm::Condition,
-    pub create: ActiveModel,
+    pub create: (ActiveModel, Vec<DeferredLookup<C>>),
     pub update: Vec<T>,
     pub conn: &'a C,
     pub _phantom: std::marker::PhantomData<(Entity, ModelWithRelations)>,
@@ -328,7 +351,7 @@ impl<'a, C, Entity, ActiveModel, ModelWithRelations, T> UpsertQueryBuilder<'a, C
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as EntityTrait>::Model>,
     T: MergeInto<ActiveModel>,
     <Entity as EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
@@ -340,15 +363,20 @@ where
             .await?;
 
         match existing {
-            Some(model) => {
-                let mut active_model = model.into_active_model();
+            Some(active_model) => {
+                let mut active_model = active_model.into_active_model();
                 for change in self.update {
                     change.merge_into(&mut active_model);
                 }
                 active_model.update(self.conn).await.map(ModelWithRelations::from_model)
             }
             None => {
-                let mut active_model = self.create;
+                let (mut active_model, deferred_lookups) = self.create;
+                // Execute all deferred lookups in batch (if needed)
+                for lookup in &deferred_lookups {
+                    let lookup_result = (lookup.entity_resolver)(self.conn, &*lookup.unique_param).await?;
+                    (lookup.assign)(&mut active_model as &mut (dyn Any + 'static), lookup_result);
+                }
                 for change in self.update {
                     change.merge_into(&mut active_model);
                 }
@@ -356,6 +384,8 @@ where
             }
         }
     }
+
+
 }
 
 /// Query builder for updating entity records
@@ -377,8 +407,8 @@ where
 {
     pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
         let entity = <Entity as EntityTrait>::find().filter(self.condition).one(self.conn).await?;
-        if let Some(model) = entity.map(|m| m.into_active_model()) {
-            let mut active_model = model;
+        if let Some(entity) = entity {
+            let mut active_model = entity.into_active_model();
             for change in self.changes {
                 change.merge_into(&mut active_model);
             }

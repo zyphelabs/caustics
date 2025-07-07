@@ -29,6 +29,8 @@ pub struct Relation {
     pub target: syn::Path,
     pub kind: RelationKind,
     pub foreign_key_field: Option<String>,
+    pub foreign_key_type: Option<syn::Type>,
+    pub target_unique_param: Option<syn::Path>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +50,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     };
 
     // Extract relations from relation_ast
-    let relations = extract_relations(&relation_ast);
+    let relations = extract_relations(&relation_ast, &fields);
 
     // Filter out primary key fields for set operations
     let primary_key_fields: Vec<_> = fields
@@ -244,12 +246,39 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             let target_module = &relation.target;
             quote! {
-                // Extract foreign key value from UniqueWhereParam
-                let fk_value = match self.#relation_name {
-                    #target_module::UniqueWhereParam::IdEquals(id) => id,
-                    _ => panic!("Only IdEquals is supported for foreign key relations"),
-                };
-                model.#fk_field_ident = sea_orm::ActiveValue::Set(fk_value);
+                // Handle foreign key value from UniqueWhereParam
+                match self.#relation_name {
+                    #target_module::UniqueWhereParam::IdEquals(id) => {
+                        model.#fk_field_ident = sea_orm::ActiveValue::Set(id.clone());
+                    }
+                    other => {
+                        // Add to deferred lookups for async resolution
+                        deferred_lookups.push(caustics::DeferredLookup::<C> {
+                            unique_param: Box::new(other.clone()),
+                            assign: |model, value| {
+                                let model = model.downcast_mut::<ActiveModel>().unwrap();
+                                model.#fk_field_ident = sea_orm::ActiveValue::Set(value);
+                            },
+                            entity_resolver: Box::new(|conn: &C, param| {
+                                let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                Box::pin(async move {
+                                    let condition: sea_orm::Condition = param.clone().into();
+                                    let result = #target_module::Entity::find()
+                                        .filter(condition)
+                                        .one(conn)
+                                        .await?;
+                                    result.map(|entity| entity.id).ok_or_else(|| {
+                                        sea_orm::DbErr::Custom(format!(
+                                            "No {} found for condition: {:?}",
+                                            stringify!(#target_module),
+                                            param
+                                        ))
+                                    })
+                                })
+                            }),
+                        });
+                    }
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -291,12 +320,10 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             };
             
             if is_optional {
-                // For optional relations, allow connecting to None or a specific entity
                 quote! {
                     #relation_name(Option<#target_module::UniqueWhereParam>)
                 }
             } else {
-                // For required relations, only allow connecting to a specific entity
                 quote! {
                     #relation_name(#target_module::UniqueWhereParam)
                 }
@@ -400,6 +427,14 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             #equals_variant(#ty)
         }
     }).collect::<Vec<_>>();
+
+    // Generate all unique field variant id idents (e.g., IdEquals, EmailEquals)
+    let unique_where_variant_idents: Vec<_> = unique_fields.iter().map(|field| {
+        let pascal_name = field.ident.as_ref().unwrap().to_string().to_pascal_case();
+        format_ident!("{}Equals", pascal_name)
+    }).collect();
+    // Filter out the primary key variant (IdEquals)
+    let other_unique_variants: Vec<_> = unique_where_variant_idents.iter().filter(|ident| ident.to_string() != "IdEquals").collect();
 
     // Generate UniqueWhereParam serialize implementation
     let unique_where_serialize_arms = unique_fields.iter().map(|field| {
@@ -712,8 +747,8 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         }
     };
 
-    // Generate relation connection match arms for SetParam
-    let relation_connect_match_arms = relations
+    // Generate relation connection match arms for SetParam (for deferred lookups)
+    let relation_connect_deferred_match_arms = relations
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
@@ -725,6 +760,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
             let target_module = &relation.target;
             let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+            let target_entity_name = relation.target.segments.last().unwrap().ident.to_string().to_lowercase();
+            
+
             
             // Check if this is an optional relation
             let is_optional = if let Some(field) = fields.iter().find(|f| {
@@ -736,17 +774,42 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             };
             
             if is_optional {
-                // For optional relations, handle Option<UniqueWhereParam>
                 quote! {
                     SetParam::#relation_name(where_param_opt) => {
                         match where_param_opt {
                             Some(where_param) => {
-                                // Convert UniqueWhereParam to foreign key value
-                                let fk_value = match where_param {
-                                    #target_module::UniqueWhereParam::IdEquals(id) => *id,
-                                    _ => panic!("Only IdEquals is supported for foreign key relations"),
-                                };
-                                model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(fk_value));
+                                match where_param {
+                                    #target_module::UniqueWhereParam::IdEquals(id) => {
+                                        model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(id.clone()));
+                                    }
+                                    other => {
+                                        // Store deferred lookup instead of executing
+                                        deferred_lookups.push(caustics::DeferredLookup::<C> {
+                                            unique_param: Box::new(other.clone()),
+                                            assign: |model, value| {
+                                                let model = model.downcast_mut::<ActiveModel>().unwrap();
+                                                model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(value));
+                                            },
+                                            entity_resolver: Box::new(|conn: &C, param| {
+                                                let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                                Box::pin(async move {
+                                                    let condition: sea_orm::Condition = param.clone().into();
+                                                    let result = #target_module::Entity::find()
+                                                        .filter(condition)
+                                                        .one(conn)
+                                                        .await?;
+                                                    result.map(|entity| entity.id).ok_or_else(|| {
+                                                        sea_orm::DbErr::Custom(format!(
+                                                            "No {} found for condition: {:?}",
+                                                            stringify!(#target_module),
+                                                            param
+                                                        ))
+                                                    })
+                                                })
+                                            }),
+                                        });
+                                    }
+                                }
                             }
                             None => {
                                 model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
@@ -755,15 +818,40 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     }
                 }
             } else {
-                // For required relations, handle UniqueWhereParam directly
                 quote! {
                     SetParam::#relation_name(where_param) => {
-                        // Convert UniqueWhereParam to foreign key value
-                        let fk_value = match where_param {
-                            #target_module::UniqueWhereParam::IdEquals(id) => *id,
-                            _ => panic!("Only IdEquals is supported for foreign key relations"),
-                        };
-                        model.#foreign_key_field = sea_orm::ActiveValue::Set(fk_value);
+                        match where_param {
+                            #target_module::UniqueWhereParam::IdEquals(id) => {
+                                model.#foreign_key_field = sea_orm::ActiveValue::Set(id.clone());
+                            }
+                            other => {
+                                // Store deferred lookup instead of executing
+                                deferred_lookups.push(caustics::DeferredLookup::<C> {
+                                    unique_param: Box::new(other.clone()),
+                                    assign: |model, value| {
+                                        let model = model.downcast_mut::<ActiveModel>().unwrap();
+                                        model.#foreign_key_field = sea_orm::ActiveValue::Set(value);
+                                    },
+                                    entity_resolver: Box::new(|conn: &C, param| {
+                                        let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                        Box::pin(async move {
+                                            let condition: sea_orm::Condition = param.clone().into();
+                                            let result = #target_module::Entity::find()
+                                                .filter(condition)
+                                                .one(conn)
+                                                .await?;
+                                            result.map(|entity| entity.id).ok_or_else(|| {
+                                                sea_orm::DbErr::Custom(format!(
+                                                    "No {} found for condition: {:?}",
+                                                    stringify!(#target_module),
+                                                    param
+                                                ))
+                                            })
+                                        })
+                                    }),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -817,7 +905,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Combine all match arms
     let all_match_arms = quote! {
         #(#match_arms,)*
-        #(#relation_connect_match_arms,)*
+        #(#relation_connect_deferred_match_arms,)*
         #(#relation_disconnect_match_arms,)*
     };
 
@@ -845,6 +933,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             };
             use std::marker::PhantomData;
             use std::default::Default;
+            use std::any::Any;
             use caustics::{SortOrder, MergeInto};
 
             pub struct EntityClient<'a, C: ConnectionTrait> {
@@ -872,7 +961,11 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             impl MergeInto<ActiveModel> for SetParam {
                 fn merge_into(&self, model: &mut ActiveModel) {
                     match self {
-                        #all_match_arms
+                        #(#match_arms,)*
+                        _ => {
+                            // Relation SetParam values are handled in into_active_model, not here
+                            // This prevents infinite recursion
+                        }
                     }
                 }
             }
@@ -908,22 +1001,25 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             }
 
             impl Create {
-                pub fn new(#(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> Self {
-                    Self {
-                        #(#required_inits,)*
-                        #(#foreign_key_relation_inits,)*
-                        _params,
-                    }
-                }
-
-                fn into_active_model(self) -> ActiveModel {
+                fn into_active_model<C: ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
                     let mut model = ActiveModel::new();
+                    let mut deferred_lookups = Vec::new();
+                    
                     #(#required_assigns)*
                     #(#foreign_key_assigns)*
-                    for opt in self._params {
-                        opt.merge_into(&mut model);
+                    
+                    // Process SetParam values and collect deferred lookups
+                    for param in self._params {
+                        match param {
+                            #(#relation_connect_deferred_match_arms,)*
+                            #(#relation_disconnect_match_arms,)*
+                            other => {
+                                // For non-relation SetParam values, use the normal merge_into
+                                other.merge_into(&mut model);
+                            }
+                        }
                     }
-                    model
+                    (model, deferred_lookups)
                 }
             }
 
@@ -970,10 +1066,16 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 }
 
                 pub fn create(&self, #(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
-                    let create = Create::new(#(#required_inits,)* #(#foreign_key_relation_inits,)* _params);
+                    let create = Create {
+                        #(#required_inits,)* 
+                        #(#foreign_key_relation_inits,)* 
+                        _params,
+                    };
+                    let (model, deferred_lookups) = create.into_active_model::<C>();
                     caustics::CreateQueryBuilder {
-                        model: create.into_active_model(),
+                        model,
                         conn: self.conn,
+                        deferred_lookups,
                         _phantom: std::marker::PhantomData,
                     }
                 }
@@ -996,9 +1098,10 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 }
 
                 pub fn upsert(&self, condition: UniqueWhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                    let (model, deferred_lookups) = create.into_active_model::<C>();
                     caustics::UpsertQueryBuilder {
                         condition: condition.into(),
-                        create: create.into_active_model(),
+                        create: (model, deferred_lookups),
                         update,
                         conn: self.conn,
                         _phantom: std::marker::PhantomData,
@@ -1020,12 +1123,13 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     TokenStream::from(expanded)
 }
 
-fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
+fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -> Vec<Relation> {
     let mut relations = Vec::new();
 
     if let syn::Data::Enum(data_enum) = &relation_ast.data {
         for variant in &data_enum.variants {
             let mut foreign_key_field = None;
+            let mut foreign_key_type = None;
             let mut relation_name = None;
             let mut relation_target = None;
             let mut relation_kind = None;
@@ -1083,7 +1187,14 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
                                             if let Some(field_name) = column_str.split("::").nth(1) {
                                                 // Convert PascalCase to snake_case for field name
                                                 let snake_case_name = field_name.to_string().to_snake_case();
-                                                foreign_key_field = Some(snake_case_name);
+                                                foreign_key_field = Some(snake_case_name.clone());
+                                                
+                                                // Find the corresponding field in the model to get its type
+                                                if let Some(field) = model_fields.iter().find(|f| {
+                                                    f.ident.as_ref().unwrap().to_string() == snake_case_name
+                                                }) {
+                                                    foreign_key_type = Some(field.ty.clone());
+                                                }
                                             }
                                         }
                                     }
@@ -1096,11 +1207,25 @@ fn extract_relations(relation_ast: &DeriveInput) -> Vec<Relation> {
 
             // Only add the relation if we have all the required information
             if let (Some(name), Some(target), Some(kind)) = (relation_name, relation_target, relation_kind) {
+                // Construct the target unique param path
+                let target_unique_param = if foreign_key_field.is_some() {
+                    let mut unique_param_path = target.clone();
+                    unique_param_path.segments.push(syn::PathSegment {
+                        ident: syn::Ident::new("UniqueWhereParam", proc_macro2::Span::call_site()),
+                        arguments: syn::PathArguments::None,
+                    });
+                    Some(unique_param_path)
+                } else {
+                    None
+                };
+
                 relations.push(Relation {
                     name,
                     target,
                     kind,
                     foreign_key_field,
+                    foreign_key_type,
+                    target_unique_param,
                 });
             }
         }
@@ -1188,3 +1313,5 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         #(#submodules)*
     }
 }
+
+
