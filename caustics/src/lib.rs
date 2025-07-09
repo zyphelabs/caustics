@@ -9,3 +9,6 @@ pub use types::*;
 
 // Re-export DeferredLookup for use in macros
 pub use query_builders::DeferredLookup;
+
+// Re-export traits for use in generated code
+pub use types::{EntityRegistry, EntityFetcher};

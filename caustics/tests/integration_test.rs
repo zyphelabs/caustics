@@ -1,7 +1,6 @@
 include!(concat!(env!("OUT_DIR"), "/caustics_client_test.rs"));
 
 use caustics_macros::caustics;
-use std::sync::Arc;
 
 #[caustics]
 pub mod user {

@@ -52,6 +52,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Extract relations from relation_ast
     let relations = extract_relations(&relation_ast, &fields);
 
+    // Compute at codegen time if this entity is the target of a has_many relation
+    let is_has_many_target = relations.iter().any(|rel| matches!(rel.kind, RelationKind::HasMany));
+
     // Filter out primary key fields for set operations
     let primary_key_fields: Vec<_> = fields
         .iter()
@@ -1231,6 +1234,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 }
             }
 
+            // Compute at codegen time if this entity is the target of a has_many relation
+            const IS_HAS_MANY_TARGET: bool = #is_has_many_target;
+
             impl<C: sea_orm::ConnectionTrait> caustics::EntityFetcher<C> for EntityFetcherImpl {
                 fn fetch_by_foreign_key<'a>(
                     &'a self,
@@ -1244,12 +1250,21 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                             if target_entity == #entity_name_lit {
                                 if let Some(col) = column_from_str(foreign_key_column) {
                                     let condition = sea_orm::Condition::all().add(col.eq(fk_value));
-                                    let result = <Entity as sea_orm::EntityTrait>::find()
-                                        .filter(condition)
-                                        .one(conn)
-                                        .await?
-                                        .map(|model| Box::new(model) as Box<dyn std::any::Any + Send>);
-                                    return result.ok_or_else(|| sea_orm::DbErr::Custom("No entity found".to_string()));
+                                    if #is_has_many_target {
+                                        let models = <Entity as sea_orm::EntityTrait>::find()
+                                            .filter(condition)
+                                            .all(conn)
+                                            .await?;
+                                        let vec_with_rel: Vec<ModelWithRelations> = models.into_iter().map(ModelWithRelations::from_model).collect();
+                                        return Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>);
+                                    } else {
+                                        let opt_model = <Entity as sea_orm::EntityTrait>::find()
+                                            .filter(condition)
+                                            .one(conn)
+                                            .await?;
+                                        let with_rel = opt_model.map(ModelWithRelations::from_model);
+                                        return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
+                                    }
                                 } else {
                                     return Err(sea_orm::DbErr::Custom(format!("Unknown column: {}", foreign_key_column)));
                                 }

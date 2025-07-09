@@ -16,7 +16,7 @@ pub struct UniqueQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, Model
 
 impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> 
 where
-    ModelWithRelations: FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + 'static,
+    ModelWithRelations: FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + Send + 'static,
 {
     /// Execute the query and return a single result
     pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr>
@@ -95,7 +95,7 @@ where
                         &target_entity_name,
                     ).await?;
                     
-                    // Set the fetched result on the model
+                    // The fetcher already returns the correct type, just pass it directly
                     (descriptor.set_field)(model_with_relations, fetched_result);
                 } else {
                     // If no fetcher is available, set None
@@ -120,7 +120,7 @@ pub struct FirstQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelW
 
 impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> FirstQueryBuilder<'a, C, Entity, ModelWithRelations> 
 where
-    ModelWithRelations: FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + 'static,
+    ModelWithRelations: FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + Send + 'static,
 {
     /// Execute the query and return a single result
     pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr>
@@ -199,7 +199,7 @@ where
                         &target_entity_name,
                     ).await?;
                     
-                    // Set the fetched result on the model
+                    // The fetcher already returns the correct type, just pass it directly
                     (descriptor.set_field)(model_with_relations, fetched_result);
                 } else {
                     // If no fetcher is available, set None
@@ -224,7 +224,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
 
 impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> ManyQueryBuilder<'a, C, Entity, ModelWithRelations> 
 where
-    ModelWithRelations: FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + 'static,
+    ModelWithRelations: FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + Send + 'static,
 {
     /// Limit the number of results
     pub fn take(mut self, limit: u64) -> Self {
@@ -326,7 +326,7 @@ where
                         &target_entity_name,
                     ).await?;
                     
-                    // Set the fetched result on the model
+                    // The fetcher already returns the correct type, just pass it directly
                     (descriptor.set_field)(model_with_relations, fetched_result);
                 } else {
                     // If no fetcher is available, set None

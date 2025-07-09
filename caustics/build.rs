@@ -130,7 +130,8 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
         }
     }
 
-    let client_code = generate_client_code(&entities);
+    // Use test-specific client code generation
+    let client_code = generate_test_client_code(&entities);
     fs::write(out_path, client_code).unwrap();
 }
 
@@ -209,18 +210,19 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
 
     let client_code = quote! {
         use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
-        use std::sync::Arc;
+        // Traits are re-exported in crate root, no need to import here
+        // Arc is used directly to avoid conflicts with test imports
 
         pub struct CausticsClient {
-            db: Arc<DatabaseConnection>,
+            db: std::sync::Arc<DatabaseConnection>,
         }
 
         pub struct TransactionCausticsClient {
-            tx: Arc<DatabaseTransaction>,
+            tx: std::sync::Arc<DatabaseTransaction>,
         }
 
         pub struct TransactionBuilder {
-            db: Arc<DatabaseConnection>,
+            db: std::sync::Arc<DatabaseConnection>,
         }
 
         // Composite Entity Registry for relation fetching
@@ -241,10 +243,10 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
 
         impl CausticsClient {
             pub fn new(db: DatabaseConnection) -> Self {
-                Self { db: Arc::new(db) }
+                Self { db: std::sync::Arc::new(db) }
             }
 
-            pub fn db(&self) -> Arc<DatabaseConnection> {
+            pub fn db(&self) -> std::sync::Arc<DatabaseConnection> {
                 self.db.clone()
             }
 
@@ -258,7 +260,7 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
         }
 
         impl TransactionCausticsClient {
-            pub fn new(tx: Arc<DatabaseTransaction>) -> Self {
+            pub fn new(tx: std::sync::Arc<DatabaseTransaction>) -> Self {
                 Self { tx }
             }
 
@@ -272,10 +274,136 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
                 Fut: std::future::Future<Output = Result<T, sea_orm::DbErr>>,
             {
                 let tx = self.db.begin().await?;
-                let tx_arc = Arc::new(tx);
+                let tx_arc = std::sync::Arc::new(tx);
                 let tx_client = TransactionCausticsClient::new(tx_arc.clone());
                 let result = f(tx_client).await;
-                let tx = Arc::try_unwrap(tx_arc).expect("Transaction Arc should be unique");
+                let tx = std::sync::Arc::try_unwrap(tx_arc).expect("Transaction Arc should be unique");
+                match result {
+                    Ok(val) => {
+                        tx.commit().await?;
+                        Ok(val)
+                    }
+                    Err(e) => {
+                        tx.rollback().await?;
+                        Err(e)
+                    }
+                }
+            }
+        }
+    };
+
+    client_code.to_string()
+}
+
+fn generate_test_client_code(entities: &[(String, String)]) -> String {
+    let entity_methods: Vec<_> = entities
+        .iter()
+        .map(|(name, module_path)| {
+            let method_name = format_ident!("{}", name.to_lowercase());
+            let module_path = format_ident!("{}", module_path);
+            quote! {
+                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseConnection> {
+                    #module_path::EntityClient::new(&*self.db)
+                }
+            }
+        })
+        .collect();
+
+    let tx_entity_methods: Vec<_> = entities
+        .iter()
+        .map(|(name, module_path)| {
+            let method_name = format_ident!("{}", name.to_lowercase());
+            let module_path = format_ident!("{}", module_path);
+            quote! {
+                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseTransaction> {
+                    #module_path::EntityClient::new(&*self.tx)
+                }
+            }
+        })
+        .collect();
+
+    // Generate the composite registry
+    let registry_match_arms: Vec<_> = entities
+        .iter()
+        .map(|(name, module_path)| {
+            let entity_name_lower = name.to_lowercase();
+            let module_path = format_ident!("{}", module_path);
+            quote! {
+                #entity_name_lower => Some(&#module_path::EntityFetcherImpl),
+            }
+        })
+        .collect();
+
+    let client_code = quote! {
+        use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+        use caustics::{EntityRegistry, EntityFetcher};
+        // Arc is used directly to avoid conflicts with test imports
+
+        pub struct CausticsClient {
+            db: std::sync::Arc<DatabaseConnection>,
+        }
+
+        pub struct TransactionCausticsClient {
+            tx: std::sync::Arc<DatabaseTransaction>,
+        }
+
+        pub struct TransactionBuilder {
+            db: std::sync::Arc<DatabaseConnection>,
+        }
+
+        // Composite Entity Registry for relation fetching
+        pub struct CompositeEntityRegistry;
+
+        impl<C: sea_orm::ConnectionTrait> EntityRegistry<C> for CompositeEntityRegistry {
+            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>> {
+                match entity_name {
+                    #(#registry_match_arms)*
+                    _ => None,
+                }
+            }
+        }
+
+        pub fn get_registry() -> CompositeEntityRegistry {
+            CompositeEntityRegistry
+        }
+
+        impl CausticsClient {
+            pub fn new(db: DatabaseConnection) -> Self {
+                Self { db: std::sync::Arc::new(db) }
+            }
+
+            pub fn db(&self) -> std::sync::Arc<DatabaseConnection> {
+                self.db.clone()
+            }
+
+            pub fn _transaction(&self) -> TransactionBuilder {
+                TransactionBuilder {
+                    db: self.db.clone(),
+                }
+            }
+
+            #(#entity_methods)*
+        }
+
+        impl TransactionCausticsClient {
+            pub fn new(tx: std::sync::Arc<DatabaseTransaction>) -> Self {
+                Self { tx }
+            }
+
+            #(#tx_entity_methods)*
+        }
+
+        impl TransactionBuilder {
+            pub async fn run<F, Fut, T>(&self, f: F) -> Result<T, sea_orm::DbErr>
+            where
+                F: FnOnce(TransactionCausticsClient) -> Fut,
+                Fut: std::future::Future<Output = Result<T, sea_orm::DbErr>>,
+            {
+                let tx = self.db.begin().await?;
+                let tx_arc = std::sync::Arc::new(tx);
+                let tx_client = TransactionCausticsClient::new(tx_arc.clone());
+                let result = f(tx_client).await;
+                let tx = std::sync::Arc::try_unwrap(tx_arc).expect("Transaction Arc should be unique");
                 match result {
                     Ok(val) => {
                         tx.commit().await?;
