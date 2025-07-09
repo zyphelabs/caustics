@@ -237,8 +237,17 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
             }
         }
 
-        pub fn get_registry() -> CompositeEntityRegistry {
-            CompositeEntityRegistry
+        // Implement for reference so &REGISTRY works as a trait object
+        impl<C: sea_orm::ConnectionTrait> crate::EntityRegistry<C> for &'static CompositeEntityRegistry {
+            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn crate::EntityFetcher<C>> {
+                (**self).get_fetcher(entity_name)
+            }
+        }
+
+        // Use a static registry instance
+        static REGISTRY: CompositeEntityRegistry = CompositeEntityRegistry;
+        pub fn get_registry() -> &'static CompositeEntityRegistry {
+            &REGISTRY
         }
 
         impl CausticsClient {
@@ -363,8 +372,17 @@ fn generate_test_client_code(entities: &[(String, String)]) -> String {
             }
         }
 
-        pub fn get_registry() -> CompositeEntityRegistry {
-            CompositeEntityRegistry
+        // Implement for reference so &REGISTRY works as a trait object
+        impl<C: sea_orm::ConnectionTrait> EntityRegistry<C> for &'static CompositeEntityRegistry {
+            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>> {
+                (**self).get_fetcher(entity_name)
+            }
+        }
+
+        // Use a static registry instance
+        static REGISTRY: CompositeEntityRegistry = CompositeEntityRegistry;
+        pub fn get_registry() -> &'static CompositeEntityRegistry {
+            &REGISTRY
         }
 
         impl CausticsClient {

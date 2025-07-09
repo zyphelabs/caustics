@@ -16,7 +16,7 @@ pub struct Field {
 }
 
 impl ToTokens for Field {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let name = format_ident!("{}", self.name);
         let ty = syn::parse_str::<syn::Type>(&self.ty).unwrap();
         tokens.extend(quote! { #name: #ty });
@@ -31,9 +31,11 @@ pub struct Relation {
     pub foreign_key_field: Option<String>,
     pub foreign_key_type: Option<syn::Type>,
     pub target_unique_param: Option<syn::Path>,
+    pub is_nullable: bool,
+    pub foreign_key_column: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelationKind {
     HasMany,
     BelongsTo,
@@ -52,8 +54,76 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // Extract relations from relation_ast
     let relations = extract_relations(&relation_ast, &fields);
 
+    // Generate per-relation fetcher arms
+    let mut relation_names = Vec::new();
+    let mut relation_fetcher_bodies = Vec::new();
+    for rel in &relations {
+        let rel_name_snake = rel.name.to_snake_case();
+        relation_names.push(quote! { #rel_name_snake });
+        let target = &rel.target;
+        let foreign_key_column = rel.foreign_key_column.as_ref().map_or("Id", |v| v);
+        let foreign_key_column_ident = format_ident!("{}", foreign_key_column);
+        let relation_name_str = rel.name.to_snake_case();
+        
+        let fetcher_body = if matches!(rel.kind, RelationKind::HasMany) {
+            quote! {
+                let query = #target::Entity::find()
+                    .filter(#target::Column::#foreign_key_column_ident.eq(foreign_key_value.unwrap_or_default()));
+                
+                let vec_with_rel = query.all(conn).await?
+                    .into_iter()
+                    .map(|model| #target::ModelWithRelations::from_model(model))
+                    .collect::<Vec<_>>();
+                
+                println!("DEBUG: HasMany fetcher for '{}' returning Some(vec) with {} items", #relation_name_str, vec_with_rel.len());
+                println!("DEBUG: Type of vec_with_rel: {:?}", std::any::type_name::<Vec<#target::ModelWithRelations>>());
+                Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>)
+            }
+        } else {
+            // belongs_to relation - query the TARGET entity by its primary key, using the current entity's foreign key value
+            let is_nullable_fk = rel.is_nullable;
+            let target_entity = &rel.target;
+            let target_entity_type = quote! { #target_entity::Entity };
+            let target_model_with_rel = quote! { #target_entity::ModelWithRelations };
+            let target_unique_param = quote! { #target_entity::UniqueWhereParam };
+            if is_nullable_fk {
+                quote! {
+                    if let Some(fk_value) = foreign_key_value {
+                        let condition = #target_unique_param::IdEquals(fk_value);
+                        let opt_model = <#target_entity_type as sea_orm::EntityTrait>::find().filter::<sea_orm::Condition>(condition.into()).one(conn).await?;
+                        let with_rel = opt_model.map(#target_model_with_rel::from_model);
+                        let result: Option<Option<#target_model_with_rel>> = Some(with_rel);
+                        println!("DEBUG: reviewer fetcher returning value of type: {}", std::any::type_name::<Option<Option<#target_model_with_rel>>>());
+                        println!("DEBUG: reviewer fetcher value: {:?}", result);
+                        return Ok(Box::new(result) as Box<dyn std::any::Any + Send>);
+                    } else {
+                        println!("DEBUG: reviewer fetcher returning None (foreign key is None)");
+                        return Ok(Box::new(None::<Option<#target_model_with_rel>>) as Box<dyn std::any::Any + Send>);
+                    }
+                }
+            } else {
+                quote! {
+                    if let Some(fk_value) = foreign_key_value {
+                        let condition = #target_unique_param::IdEquals(fk_value);
+                        let opt_model = <#target_entity_type as sea_orm::EntityTrait>::find().filter::<sea_orm::Condition>(condition.into()).one(conn).await?;
+                        let with_rel = opt_model.map(#target_model_with_rel::from_model);
+                        return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
+                    } else {
+                        Ok(Box::new(()) as Box<dyn std::any::Any + Send>)
+                    }
+                }
+            }
+        };
+        relation_fetcher_bodies.push(fetcher_body);
+    }
+
     // Compute at codegen time if this entity is the target of a has_many relation
     let is_has_many_target = relations.iter().any(|rel| matches!(rel.kind, RelationKind::HasMany));
+    
+    // Compute if this entity has nullable foreign keys (for belongs_to relations)
+    let has_nullable_foreign_keys = relations.iter().any(|rel| {
+        matches!(rel.kind, RelationKind::BelongsTo) && rel.foreign_key_column.is_some() && rel.is_nullable
+    });
 
     // Filter out primary key fields for set operations
     let primary_key_fields: Vec<_> = fields
@@ -282,7 +352,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                                 Box::pin(async move {
                                     let condition: sea_orm::Condition = param.clone().into();
                                     let result = #target_module::Entity::find()
-                                        .filter(condition)
+                                        .filter::<sea_orm::Condition>(condition)
                                         .one(conn)
                                         .await?;
                                     result.map(|entity| entity.id).ok_or_else(|| {
@@ -471,7 +541,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     }).collect::<Vec<_>>();
 
     // Generate field operator modules (including primary keys for query operations)
-    let field_ops = fields.iter().map(|field| {
+    let field_ops: Vec<_> = fields.iter().map(|field| {
         let field_name = &field.ident;
         let field_type = &field.ty;
         let pascal_name = format_ident!("{}", field_name.as_ref().unwrap().to_string().to_pascal_case());
@@ -567,7 +637,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 }
             }
         }
-    });
+    }).collect();
 
     // Generate relation submodules
     let relation_submodules = generate_relation_submodules(&relations, &fields);
@@ -768,7 +838,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     // --- Begin relation metadata generation ---
     let relation_descriptors = relations.iter().map(|relation| {
         let rel_field = format_ident!("{}", relation.name.to_snake_case());
-        let name_str = relation.name.to_string();
+        let name_str = relation.name.to_snake_case();
         let name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
         let target = &relation.target;
         let rel_type = match relation.kind {
@@ -786,7 +856,6 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 } else {
                     false
                 };
-                
                 if is_optional {
                     // For optional relations: Option<Option<ModelWithRelations>>
                     quote! { Option<Option<#target::ModelWithRelations>> }
@@ -822,15 +891,17 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 (quote! { model.#foreign_key_field }, foreign_key_field_name.as_str(), get_fk)
             },
         };
-        
         let target_entity = syn::LitStr::new(&format!("{:?}", relation.target), proc_macro2::Span::call_site());
         let foreign_key_column = syn::LitStr::new(foreign_key_column, proc_macro2::Span::call_site());
-        
+        let debug_name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
         quote! {
             caustics::RelationDescriptor::<ModelWithRelations> {
                 name: #name,
                 set_field: |model, value| {
+                    println!("DEBUG: set_field for '{}' called with value type: {:?}", #debug_name, std::any::type_name_of_val(&*value));
+                    println!("DEBUG: Expected type: {:?}", std::any::type_name::<#rel_type>());
                     let value = value.downcast::<#rel_type>().expect("Type mismatch in set_field");
+                    println!("DEBUG: Successfully downcast to expected type");
                     model.#rel_field = *value;
                 },
                 get_foreign_key: #get_foreign_key_closure,
@@ -899,7 +970,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                                                 Box::pin(async move {
                                                     let condition: sea_orm::Condition = param.clone().into();
                                                     let result = #target_module::Entity::find()
-                                                        .filter(condition)
+                                                        .filter::<sea_orm::Condition>(condition)
                                                         .one(conn)
                                                         .await?;
                                                     result.map(|entity| entity.id).ok_or_else(|| {
@@ -941,7 +1012,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                                         Box::pin(async move {
                                             let condition: sea_orm::Condition = param.clone().into();
                                             let result = #target_module::Entity::find()
-                                                .filter(condition)
+                                                .filter::<sea_orm::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
                                             result.map(|entity| entity.id).ok_or_else(|| {
@@ -1014,293 +1085,280 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
     };
 
     let entity_name_lit = syn::LitStr::new(&model_ast.ident.to_string(), model_ast.ident.span());
-    let expanded = {
-        let required_struct_fields = required_struct_fields.clone();
-        let required_fn_args = required_fn_args.clone();
-        let required_inits = required_inits.clone();
-        let required_assigns = required_assigns.clone();
-        let all_set_param_variants = all_set_param_variants.clone();
-        let all_match_arms = all_match_arms.clone();
-        quote! {
-            use sea_orm::{
-                DatabaseConnection,
-                Condition,
-                EntityTrait,
-                ActiveValue,
-                QuerySelect,
-                QueryOrder,
-                QueryTrait,
-                Select,
-                ColumnTrait,
-                IntoSimpleExpr,
-                IntoActiveModel,
-                ConnectionTrait,
-            };
-            use std::marker::PhantomData;
-            use std::default::Default;
-            use std::any::Any;
-            use caustics::{SortOrder, MergeInto};
-
-            pub struct EntityClient<'a, C: ConnectionTrait> {
-                conn: &'a C
-            }
-
-            pub enum SetParam {
-                #all_set_param_variants
-            }
-
-            pub enum WhereParam {
-                #(#where_field_variants,)*
-            }
-
-            pub enum OrderByParam {
-                #(#order_by_field_variants,)*
-            }
-
-            #[derive(Debug, Clone)]
-            pub enum UniqueWhereParam {
-                #(#unique_where_variants,)*
-            }
-
-
-            impl MergeInto<ActiveModel> for SetParam {
-                fn merge_into(&self, model: &mut ActiveModel) {
-                    match self {
-                        #(#match_arms,)*
-                        _ => {
-                            // Relation SetParam values are handled in into_active_model, not here
-                            // This prevents infinite recursion
-                        }
-                    }
+    // Generate all field names as string literals for match arms
+    let all_field_names: Vec<_> = fields.iter().map(|field| {
+        let field_name = field.ident.as_ref().unwrap().to_string();
+        syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+    }).collect();
+    // Generate all field identifiers for column access (PascalCase for SeaORM)
+    let all_field_idents: Vec<_> = fields.iter().map(|field| {
+        let field_name = field.ident.as_ref().unwrap().to_string();
+        // Convert snake_case to PascalCase
+        let pascal_case = field_name
+            .split('_')
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().chain(chars).collect(),
                 }
+            })
+            .collect::<String>();
+        syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+    }).collect();
+    // Generate the column_from_str function using the variables
+    let column_from_str_fn = quote! {
+        pub(crate) fn column_from_str(name: &str) -> Option<<Entity as sea_orm::EntityTrait>::Column> {
+            match name {
+                #(
+                    #all_field_names => Some(<Entity as sea_orm::EntityTrait>::Column::#all_field_idents),
+                )*
+                _ => None,
             }
+        }
+    };
+    
+    let expanded = quote! {
+        use sea_orm::{
+            DatabaseConnection,
+            Condition,
+            EntityTrait,
+            ActiveValue,
+            QuerySelect,
+            QueryOrder,
+            QueryTrait,
+            Select,
+            ColumnTrait,
+            IntoSimpleExpr,
+            IntoActiveModel,
+            ConnectionTrait,
+        };
+        use std::marker::PhantomData;
+        use std::default::Default;
+        use std::any::Any;
+        use caustics::{SortOrder, MergeInto};
 
-            impl From<WhereParam> for Condition {
-                fn from(param: WhereParam) -> Self {
-                    match param {
-                        #(#where_match_arms,)*
-                    }
-                }
-            }
+        pub struct EntityClient<'a, C: ConnectionTrait> {
+            conn: &'a C
+        }
 
-            impl From<UniqueWhereParam> for Condition {
-                fn from(param: UniqueWhereParam) -> Self {
-                    match param {
-                        #(#unique_where_match_arms,)*
-                    }
-                }
-            }
+        pub enum SetParam {
+            #all_set_param_variants
+        }
 
-            impl From<OrderByParam> for (<Entity as EntityTrait>::Column, sea_orm::Order) {
-                fn from(param: OrderByParam) -> Self {
-                    match param {
-                        #(#order_by_match_arms,)*
-                    }
-                }
-            }
+        pub enum WhereParam {
+            #(#where_field_variants,)*
+        }
 
-            pub struct Create {
-                #(#required_struct_fields,)*
-                #(#foreign_key_relation_fields,)*
-                pub _params: Vec<SetParam>,
-            }
+        pub enum OrderByParam {
+            #(#order_by_field_variants,)*
+        }
 
-            impl Create {
-                fn into_active_model<C: ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
-                    let mut model = ActiveModel::new();
-                    let mut deferred_lookups = Vec::new();
-                    
-                    #(#required_assigns)*
-                    #(#foreign_key_assigns)*
-                    
-                    // Process SetParam values and collect deferred lookups
-                    for param in self._params {
-                        match param {
-                            #(#relation_connect_deferred_match_arms,)*
-                            #(#relation_disconnect_match_arms,)*
-                            other => {
-                                // For non-relation SetParam values, use the normal merge_into
-                                other.merge_into(&mut model);
-                    }
-                        }
-                    }
-                    (model, deferred_lookups)
-                }
-            }
+        #[derive(Debug, Clone)]
+        pub enum UniqueWhereParam {
+            #(#unique_where_variants,)*
+        }
 
-            #model_with_relations_impl
-            #relation_metadata_impl
 
-            impl<'a, C: ConnectionTrait> EntityClient<'a, C> {
-                pub fn new(conn: &'a C) -> Self {
-                    Self { conn }
-                }
-
-                pub fn find_unique(&self, condition: UniqueWhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                    caustics::UniqueQueryBuilder {
-                        query: <Entity as EntityTrait>::find().filter::<Condition>(condition.into()),
-                        conn: self.conn,
-                        relations_to_fetch: vec![],
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn find_first(&self, conditions: Vec<WhereParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                    let mut query = <Entity as EntityTrait>::find();
-                    for cond in conditions {
-                        query = query.filter::<Condition>(cond.into());
-                    }
-                    caustics::FirstQueryBuilder {
-                        query,
-                        conn: self.conn,
-                        relations_to_fetch: vec![],
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn find_many(&self, conditions: Vec<WhereParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                    let mut query = <Entity as EntityTrait>::find();
-                    for cond in conditions {
-                        query = query.filter::<Condition>(cond.into());
-                    }
-                    caustics::ManyQueryBuilder {
-                        query,
-                        conn: self.conn,
-                        relations_to_fetch: vec![],
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn create(&self, #(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
-                    let create = Create {
-                        #(#required_inits,)* 
-                        #(#foreign_key_relation_inits,)* 
-                        _params,
-                    };
-                    let (model, deferred_lookups) = create.into_active_model::<C>();
-                    caustics::CreateQueryBuilder {
-                        model,
-                        conn: self.conn,
-                        deferred_lookups,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
-                    caustics::UpdateQueryBuilder {
-                        condition: condition.into(),
-                        changes,
-                        conn: self.conn,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
-                    caustics::DeleteQueryBuilder {
-                        condition: condition.into(),
-                        conn: self.conn,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn upsert(&self, condition: UniqueWhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
-                    let (model, deferred_lookups) = create.into_active_model::<C>();
-                    caustics::UpsertQueryBuilder {
-                        condition: condition.into(),
-                        create: (model, deferred_lookups),
-                        update,
-                        conn: self.conn,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-            }
-
-            #(#field_ops)*
-
-            // Include the generated relation submodules
-            #relation_submodules
-
-            // --- Begin entity fetcher and registry generation ---
-            // For this entity, generate a fetcher struct and implement EntityFetcher
-            pub struct EntityFetcherImpl;
-
-            // Generate a function to map column names to Column enum variants
-            fn column_from_str(col: &str) -> Option<<Entity as sea_orm::EntityTrait>::Column> {
-                match col {
-                    #(
-                        #unique_field_names => Some(<Entity as sea_orm::EntityTrait>::Column::#unique_field_idents),
-                    )*
-                    _ => None,
-                }
-            }
-
-            // Compute at codegen time if this entity is the target of a has_many relation
-            const IS_HAS_MANY_TARGET: bool = #is_has_many_target;
-
-            impl<C: sea_orm::ConnectionTrait> caustics::EntityFetcher<C> for EntityFetcherImpl {
-                fn fetch_by_foreign_key<'a>(
-                    &'a self,
-                    conn: &'a C,
-                    foreign_key_value: Option<i32>,
-                    foreign_key_column: &'a str,
-                    target_entity: &'a str,
-                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn std::any::Any + Send>, sea_orm::DbErr>> + Send + 'a>> {
-                    Box::pin(async move {
-                        if let Some(fk_value) = foreign_key_value {
-                            if target_entity == #entity_name_lit {
-                                if let Some(col) = column_from_str(foreign_key_column) {
-                                    let condition = sea_orm::Condition::all().add(col.eq(fk_value));
-                                    if #is_has_many_target {
-                                        let models = <Entity as sea_orm::EntityTrait>::find()
-                                            .filter(condition)
-                                            .all(conn)
-                                            .await?;
-                                        let vec_with_rel: Vec<ModelWithRelations> = models.into_iter().map(ModelWithRelations::from_model).collect();
-                                        return Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>);
-                                    } else {
-                                        let opt_model = <Entity as sea_orm::EntityTrait>::find()
-                                            .filter(condition)
-                                            .one(conn)
-                                            .await?;
-                                        let with_rel = opt_model.map(ModelWithRelations::from_model);
-                                        return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
-                                    }
-                                } else {
-                                    return Err(sea_orm::DbErr::Custom(format!("Unknown column: {}", foreign_key_column)));
-                                }
-                            }
-                            Err(sea_orm::DbErr::Custom(format!("Unknown entity: {}", target_entity)))
-                        } else {
-                            Ok(Box::new(()) as Box<dyn std::any::Any + Send>)
-                        }
-                    })
-                }
-            }
-
-            // Generate the registry for this entity
-            pub struct EntityRegistryImpl<C: sea_orm::ConnectionTrait> {
-                pub fetcher: EntityFetcherImpl,
-                pub _phantom: std::marker::PhantomData<C>,
-            }
-
-            impl<C: sea_orm::ConnectionTrait> EntityRegistryImpl<C> {
-                pub fn new() -> Self {
-                    Self {
-                        fetcher: EntityFetcherImpl,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-            }
-
-            impl<C: sea_orm::ConnectionTrait> caustics::EntityRegistry<C> for EntityRegistryImpl<C> {
-                fn get_fetcher(&self, entity_name: &str) -> Option<&dyn caustics::EntityFetcher<C>> {
-                    match entity_name {
-                        #entity_name_lit => Some(&self.fetcher),
-                        _ => None,
+        impl MergeInto<ActiveModel> for SetParam {
+            fn merge_into(&self, model: &mut ActiveModel) {
+                match self {
+                    #(#match_arms,)*
+                    _ => {
+                        // Relation SetParam values are handled in into_active_model, not here
+                        // This prevents infinite recursion
                     }
                 }
             }
         }
+
+        impl From<WhereParam> for Condition {
+            fn from(param: WhereParam) -> Self {
+                match param {
+                    #(#where_match_arms,)*
+                }
+            }
+        }
+
+        impl From<UniqueWhereParam> for Condition {
+            fn from(param: UniqueWhereParam) -> Self {
+                match param {
+                    #(#unique_where_match_arms,)*
+                }
+            }
+        }
+
+        impl From<OrderByParam> for (<Entity as EntityTrait>::Column, sea_orm::Order) {
+            fn from(param: OrderByParam) -> Self {
+                match param {
+                    #(#order_by_match_arms,)*
+                }
+            }
+        }
+
+        pub struct Create {
+            #(#required_struct_fields,)*
+            #(#foreign_key_relation_fields,)*
+            pub _params: Vec<SetParam>,
+        }
+
+        impl Create {
+            fn into_active_model<C: ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
+                let mut model = ActiveModel::new();
+                let mut deferred_lookups = Vec::new();
+                
+                #(#required_assigns)*
+                #(#foreign_key_assigns)*
+                
+                // Process SetParam values and collect deferred lookups
+                for param in self._params {
+                    match param {
+                        #(#relation_connect_deferred_match_arms,)*
+                        #(#relation_disconnect_match_arms,)*
+                        other => {
+                            // For non-relation SetParam values, use the normal merge_into
+                            other.merge_into(&mut model);
+                    }
+                    }
+                }
+                (model, deferred_lookups)
+            }
+        }
+
+        #model_with_relations_impl
+        #relation_metadata_impl
+
+        impl<'a, C: ConnectionTrait> EntityClient<'a, C> {
+            pub fn new(conn: &'a C) -> Self {
+                Self { conn }
+            }
+
+            pub fn find_unique(&self, condition: UniqueWhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                #[cfg(test)]
+                let registry = super::get_registry();
+                #[cfg(not(test))]
+                let registry = crate::get_registry();
+                caustics::UniqueQueryBuilder {
+                    query: <Entity as EntityTrait>::find().filter::<Condition>(condition.clone().into()),
+                    conn: self.conn,
+                    relations_to_fetch: vec![],
+                    registry,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn find_first(&self, conditions: Vec<WhereParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                #[cfg(test)]
+                let registry = super::get_registry();
+                #[cfg(not(test))]
+                let registry = crate::get_registry();
+                let mut query = <Entity as EntityTrait>::find();
+                for cond in conditions {
+                    query = query.filter::<Condition>(cond.into());
+                }
+                caustics::FirstQueryBuilder {
+                    query,
+                    conn: self.conn,
+                    relations_to_fetch: vec![],
+                    registry,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn find_many(&self, conditions: Vec<WhereParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                #[cfg(test)]
+                let registry = super::get_registry();
+                #[cfg(not(test))]
+                let registry = crate::get_registry();
+                let mut query = <Entity as EntityTrait>::find();
+                for cond in conditions {
+                    query = query.filter::<Condition>(cond.into());
+                }
+                caustics::ManyQueryBuilder {
+                    query,
+                    conn: self.conn,
+                    relations_to_fetch: vec![],
+                    registry,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn create(&self, #(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
+                let create = Create {
+                    #(#required_inits,)* 
+                    #(#foreign_key_relation_inits,)* 
+                    _params,
+                };
+                let (model, deferred_lookups) = create.into_active_model::<C>();
+                caustics::CreateQueryBuilder {
+                    model,
+                    conn: self.conn,
+                    deferred_lookups,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                caustics::UpdateQueryBuilder {
+                    condition: condition.into(),
+                    changes,
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
+                caustics::DeleteQueryBuilder {
+                    condition: condition.into(),
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn upsert(&self, condition: UniqueWhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                let (model, deferred_lookups) = create.into_active_model::<C>();
+                caustics::UpsertQueryBuilder {
+                    condition: condition.into(),
+                    create: (model, deferred_lookups),
+                    update,
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+        }
+
+        #(#field_ops)*
+
+        // Include the generated relation submodules
+        #relation_submodules
+
+        // Generate column_from_str function
+        #column_from_str_fn
+
+        // --- Begin entity fetcher and registry generation ---
+        pub struct EntityFetcherImpl;
+
+        impl<C: sea_orm::ConnectionTrait> caustics::EntityFetcher<C> for EntityFetcherImpl {
+            fn fetch_by_foreign_key<'a>(
+                &'a self,
+                conn: &'a C,
+                foreign_key_value: Option<i32>,
+                foreign_key_column: &'a str,
+                target_entity: &'a str,
+                relation_name: &'a str,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn std::any::Any + Send>, sea_orm::DbErr>> + Send + 'a>> {
+                Box::pin(async move {
+                    match relation_name {
+                        #(
+                            #relation_names => { #relation_fetcher_bodies }
+                        )*
+                        _ => Err(sea_orm::DbErr::Custom(format!("Unknown relation: {}", relation_name))),
+                    }
+                })
+            }
+        }
+
+        // Remove individual entity registry - the composite registry is used instead
     };
 
     // Debug print the generated code
@@ -1320,6 +1378,8 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
             let mut relation_name = None;
             let mut relation_target = None;
             let mut relation_kind = None;
+            let mut is_nullable = false;
+            let mut foreign_key_column = None;
             
             for attr in &variant.attrs {
                 if let syn::Meta::List(meta) = &attr.meta {
@@ -1384,6 +1444,28 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
                                                 }
                                             }
                                         }
+                                    } else if nv.path.is_ident("to") {
+                                        if let syn::Expr::Lit(syn::ExprLit {
+                                            lit: syn::Lit::Str(lit),
+                                            ..
+                                        }) = &nv.value
+                                        {
+                                            // Extract foreign key column name from "Entity::Column::FieldName"
+                                            let column_str = lit.value();
+                                            if let Some(field_name) = column_str.split("::").last() {
+                                                foreign_key_column = Some(field_name.to_string());
+                                            }
+                                        }
+                                    } else if nv.path.is_ident("nullable") {
+                                        is_nullable = true;
+                                    } else if nv.path.is_ident("column") {
+                                        if let syn::Expr::Lit(syn::ExprLit {
+                                            lit: syn::Lit::Str(lit),
+                                            ..
+                                        }) = &nv.value
+                                        {
+                                            foreign_key_column = Some(lit.value());
+                                        }
                                     }
                                 }
                             }
@@ -1406,6 +1488,17 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
                     None
                 };
 
+                // Check if the foreign key field is nullable by examining its type
+                if let Some(fk_field_name) = &foreign_key_field {
+                    if let Some(field) = model_fields.iter().find(|f| {
+                        f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                    }) {
+                        if is_option(&field.ty) {
+                            is_nullable = true;
+                        }
+                    }
+                }
+
                 relations.push(Relation {
                     name,
                     target,
@@ -1413,6 +1506,8 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
                     foreign_key_field,
                     foreign_key_type,
                     target_unique_param,
+                    is_nullable,
+                    foreign_key_column,
                 });
             }
         }
@@ -1429,7 +1524,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         let relation_name_ident = format_ident!("{}", relation_name);
         let relation_name_lower = relation_name.to_lowercase();
         let relation_name_lower_ident = format_ident!("{}", relation_name_lower);
-        let relation_name_str = relation_name;
+        let relation_name_str = relation_name.to_snake_case();
         let target = &relation.target;
 
         let submodule = if matches!(relation.kind, RelationKind::BelongsTo) && relation.foreign_key_field.is_some() {
@@ -1444,7 +1539,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
             };
             
             if is_optional {
-                // For optional relations, include connect and disconnect functionality
+                
                 let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
                 let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
                 

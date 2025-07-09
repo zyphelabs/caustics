@@ -102,6 +102,7 @@ pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
         foreign_key_value: Option<i32>,
         foreign_key_column: &'a str,
         target_entity: &'a str,
+        relation_name: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn Any + Send>, sea_orm::DbErr>> + Send + 'a>>;
 }
 
@@ -127,9 +128,10 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
         foreign_key_value: Option<i32>,
         foreign_key_column: &str,
         target_entity: &str,
+        relation_name: &str,
     ) -> Result<Box<dyn Any + Send>, sea_orm::DbErr> {
         if let Some(fetcher) = self.registry.get_fetcher(target_entity) {
-            fetcher.fetch_by_foreign_key(conn, foreign_key_value, foreign_key_column, target_entity).await
+            fetcher.fetch_by_foreign_key(conn, foreign_key_value, foreign_key_column, target_entity, relation_name).await
         } else {
             Err(sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", target_entity)))
         }

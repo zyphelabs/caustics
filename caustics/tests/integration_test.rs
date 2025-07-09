@@ -582,6 +582,7 @@ mod query_builder_tests {
         assert_eq!(posts[1].title, "Unreviewed Post");
 
         // Test fetching post with reviewer
+        println!("DEBUG: type of post_with_reviewer: {}", std::any::type_name_of_val(&post_with_reviewer));
         let post_with_reviewer = client
             .post()
             .find_unique(post::id::equals(post_with_reviewer.id))

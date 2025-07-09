@@ -318,6 +318,7 @@ version = "0.1.0"
 dependencies = [
  "caustics-macros",
  "chrono",
+ "heck 0.4.1",
  "quote",
  "regex",
  "rust_decimal",

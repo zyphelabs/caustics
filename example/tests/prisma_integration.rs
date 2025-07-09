@@ -550,10 +550,10 @@ mod query_builder_tests {
                 "Reviewed Post".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                user::id::equals(author.id),
+                user::email::equals(author.email),
                 vec![
                     post::content::set("This post has been reviewed".to_string()),
-                    post::reviewer::connect(user::id::equals(reviewer.id)),
+                    post::reviewer::connect(user::email::equals(reviewer.email)),
                 ],
             )
             .exec()
