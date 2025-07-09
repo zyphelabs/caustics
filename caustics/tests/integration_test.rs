@@ -147,6 +147,7 @@ mod client_tests {
 mod query_builder_tests {
     use std::str::FromStr;
 
+    use caustics::{QueryError, SortOrder};
     use chrono::{DateTime, FixedOffset};
 
     use super::helpers::setup_test_db;

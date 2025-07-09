@@ -195,28 +195,56 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
         })
         .collect();
 
+    // Generate the composite registry
+    let registry_match_arms: Vec<_> = entities
+        .iter()
+        .map(|(name, module_path)| {
+            let entity_name_lower = name.to_lowercase();
+            let module_path = format_ident!("{}", module_path);
+            quote! {
+                #entity_name_lower => Some(&#module_path::EntityFetcherImpl),
+            }
+        })
+        .collect();
+
     let client_code = quote! {
         use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
-        use caustics::{QueryError, SortOrder};
+        use std::sync::Arc;
 
         pub struct CausticsClient {
-            db: std::sync::Arc<DatabaseConnection>,
+            db: Arc<DatabaseConnection>,
         }
 
         pub struct TransactionCausticsClient {
-            tx: std::sync::Arc<DatabaseTransaction>,
+            tx: Arc<DatabaseTransaction>,
         }
 
         pub struct TransactionBuilder {
-            db: std::sync::Arc<DatabaseConnection>,
+            db: Arc<DatabaseConnection>,
+        }
+
+        // Composite Entity Registry for relation fetching
+        pub struct CompositeEntityRegistry;
+
+        impl<C: sea_orm::ConnectionTrait> crate::EntityRegistry<C> for CompositeEntityRegistry {
+            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn crate::EntityFetcher<C>> {
+                match entity_name {
+                    #(#registry_match_arms)*
+                    _ => None,
+                }
+            }
+        }
+
+        pub fn get_registry() -> CompositeEntityRegistry {
+            CompositeEntityRegistry
         }
 
         impl CausticsClient {
             pub fn new(db: DatabaseConnection) -> Self {
-                Self { db: std::sync::Arc::new(db) }
+                Self { db: Arc::new(db) }
             }
 
-            pub fn db(&self) -> std::sync::Arc<DatabaseConnection> {
+            pub fn db(&self) -> Arc<DatabaseConnection> {
                 self.db.clone()
             }
 
@@ -230,7 +258,7 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
         }
 
         impl TransactionCausticsClient {
-            pub fn new(tx: std::sync::Arc<DatabaseTransaction>) -> Self {
+            pub fn new(tx: Arc<DatabaseTransaction>) -> Self {
                 Self { tx }
             }
 

@@ -221,6 +221,21 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         })
         .collect::<Vec<_>>();
 
+    // Generate unique field names as string literals for match arms
+    let unique_field_names: Vec<_> = unique_fields.iter().map(|field| {
+        let field_name = field.ident.as_ref().unwrap().to_string();
+        syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+    }).collect();
+
+    // Generate unique field identifiers for column access (PascalCase for SeaORM)
+    let unique_field_idents: Vec<_> = unique_fields.iter().map(|field| {
+        let field_name = field.ident.as_ref().unwrap().to_string();
+        // Convert to PascalCase for SeaORM Column enum
+        let pascal_case = field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
+            + &field_name[1..];
+        syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+    }).collect();
+
     // Generate foreign key assignments (convert UniqueWhereParam to foreign key value)
     let foreign_key_assigns = relations
         .iter()
@@ -747,6 +762,92 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         }
     };
 
+    // --- Begin relation metadata generation ---
+    let relation_descriptors = relations.iter().map(|relation| {
+        let rel_field = format_ident!("{}", relation.name.to_snake_case());
+        let name_str = relation.name.to_string();
+        let name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
+        let target = &relation.target;
+        let rel_type = match relation.kind {
+            RelationKind::HasMany => quote! { Option<Vec<#target::ModelWithRelations>> },
+            RelationKind::BelongsTo => {
+                // Check if this is an optional relation by looking at the foreign key field
+                let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                    if let Some(field) = fields.iter().find(|f| {
+                        f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                    }) {
+                        is_option(&field.ty)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                
+                if is_optional {
+                    // For optional relations: Option<Option<ModelWithRelations>>
+                    quote! { Option<Option<#target::ModelWithRelations>> }
+                } else {
+                    // For required relations: Option<ModelWithRelations>
+                    quote! { Option<#target::ModelWithRelations> }
+                }
+            }
+        };
+        // Determine foreign key field and column based on relation type
+        let (foreign_key_field, foreign_key_column, get_foreign_key_closure) = match relation.kind {
+            RelationKind::HasMany => {
+                let id_field = format_ident!("id");
+                (quote! { model.#id_field }, "id", quote! { |model| Some(model.id) })
+            },
+            RelationKind::BelongsTo => {
+                // Use the foreign key field from the relation definition
+                let foreign_key_field_name = relation.foreign_key_field.as_ref()
+                    .expect("BelongsTo relation must have foreign_key_field defined");
+                let foreign_key_field = format_ident!("{}", foreign_key_field_name);
+                let is_optional = if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *foreign_key_field_name
+                }) {
+                    is_option(&field.ty)
+                } else {
+                    false
+                };
+                let get_fk = if is_optional {
+                    quote! { |model| model.#foreign_key_field }
+                } else {
+                    quote! { |model| Some(model.#foreign_key_field) }
+                };
+                (quote! { model.#foreign_key_field }, foreign_key_field_name.as_str(), get_fk)
+            },
+        };
+        
+        let target_entity = syn::LitStr::new(&format!("{:?}", relation.target), proc_macro2::Span::call_site());
+        let foreign_key_column = syn::LitStr::new(foreign_key_column, proc_macro2::Span::call_site());
+        
+        quote! {
+            caustics::RelationDescriptor::<ModelWithRelations> {
+                name: #name,
+                set_field: |model, value| {
+                    let value = value.downcast::<#rel_type>().expect("Type mismatch in set_field");
+                    model.#rel_field = *value;
+                },
+                get_foreign_key: #get_foreign_key_closure,
+                target_entity: #target_entity,
+                foreign_key_column: #foreign_key_column,
+            }
+        }
+    });
+
+    let relation_metadata_impl = quote! {
+        static RELATION_DESCRIPTORS: &[caustics::RelationDescriptor<ModelWithRelations>] = &[
+            #(#relation_descriptors,)*
+        ];
+        impl caustics::HasRelationMetadata<ModelWithRelations> for ModelWithRelations {
+            fn relation_descriptors() -> &'static [caustics::RelationDescriptor<ModelWithRelations>] {
+                RELATION_DESCRIPTORS
+            }
+        }
+    };
+
     // Generate relation connection match arms for SetParam (for deferred lookups)
     let relation_connect_deferred_match_arms = relations
         .iter()
@@ -909,6 +1010,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         #(#relation_disconnect_match_arms,)*
     };
 
+    let entity_name_lit = syn::LitStr::new(&model_ast.ident.to_string(), model_ast.ident.span());
     let expanded = {
         let required_struct_fields = required_struct_fields.clone();
         let required_fn_args = required_fn_args.clone();
@@ -1016,7 +1118,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                             other => {
                                 // For non-relation SetParam values, use the normal merge_into
                                 other.merge_into(&mut model);
-                            }
+                    }
                         }
                     }
                     (model, deferred_lookups)
@@ -1024,6 +1126,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             }
 
             #model_with_relations_impl
+            #relation_metadata_impl
 
             impl<'a, C: ConnectionTrait> EntityClient<'a, C> {
                 pub fn new(conn: &'a C) -> Self {
@@ -1113,6 +1216,75 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
 
             // Include the generated relation submodules
             #relation_submodules
+
+            // --- Begin entity fetcher and registry generation ---
+            // For this entity, generate a fetcher struct and implement EntityFetcher
+            pub struct EntityFetcherImpl;
+
+            // Generate a function to map column names to Column enum variants
+            fn column_from_str(col: &str) -> Option<<Entity as sea_orm::EntityTrait>::Column> {
+                match col {
+                    #(
+                        #unique_field_names => Some(<Entity as sea_orm::EntityTrait>::Column::#unique_field_idents),
+                    )*
+                    _ => None,
+                }
+            }
+
+            impl<C: sea_orm::ConnectionTrait> caustics::EntityFetcher<C> for EntityFetcherImpl {
+                fn fetch_by_foreign_key<'a>(
+                    &'a self,
+                    conn: &'a C,
+                    foreign_key_value: Option<i32>,
+                    foreign_key_column: &'a str,
+                    target_entity: &'a str,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn std::any::Any + Send>, sea_orm::DbErr>> + Send + 'a>> {
+                    Box::pin(async move {
+                        if let Some(fk_value) = foreign_key_value {
+                            if target_entity == #entity_name_lit {
+                                if let Some(col) = column_from_str(foreign_key_column) {
+                                    let condition = sea_orm::Condition::all().add(col.eq(fk_value));
+                                    let result = <Entity as sea_orm::EntityTrait>::find()
+                                        .filter(condition)
+                                        .one(conn)
+                                        .await?
+                                        .map(|model| Box::new(model) as Box<dyn std::any::Any + Send>);
+                                    return result.ok_or_else(|| sea_orm::DbErr::Custom("No entity found".to_string()));
+                                } else {
+                                    return Err(sea_orm::DbErr::Custom(format!("Unknown column: {}", foreign_key_column)));
+                                }
+                            }
+                            Err(sea_orm::DbErr::Custom(format!("Unknown entity: {}", target_entity)))
+                        } else {
+                            Ok(Box::new(()) as Box<dyn std::any::Any + Send>)
+                        }
+                    })
+                }
+            }
+
+            // Generate the registry for this entity
+            pub struct EntityRegistryImpl<C: sea_orm::ConnectionTrait> {
+                pub fetcher: EntityFetcherImpl,
+                pub _phantom: std::marker::PhantomData<C>,
+            }
+
+            impl<C: sea_orm::ConnectionTrait> EntityRegistryImpl<C> {
+                pub fn new() -> Self {
+                    Self {
+                        fetcher: EntityFetcherImpl,
+                        _phantom: std::marker::PhantomData,
+                    }
+                }
+            }
+
+            impl<C: sea_orm::ConnectionTrait> caustics::EntityRegistry<C> for EntityRegistryImpl<C> {
+                fn get_fetcher(&self, entity_name: &str) -> Option<&dyn caustics::EntityFetcher<C>> {
+                    match entity_name {
+                        #entity_name_lit => Some(&self.fetcher),
+                        _ => None,
+                    }
+                }
+            }
         }
     };
 

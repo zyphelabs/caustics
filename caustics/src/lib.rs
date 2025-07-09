@@ -1,3 +1,6 @@
+// Include generated code with composite registry
+include!(concat!(env!("OUT_DIR"), "/caustics_client.rs"));
+
 pub mod query_builders;
 pub mod types;
 
