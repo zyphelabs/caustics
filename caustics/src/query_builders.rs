@@ -1,5 +1,5 @@
-use sea_orm::{ConnectionTrait, EntityTrait, Select, Condition, QuerySelect, QueryOrder, QueryTrait, ColumnTrait, IntoSimpleExpr, IntoActiveModel, ActiveModelTrait, ActiveModelBehavior, QueryFilter};
-use crate::{EntityRegistry, EntityFetcher, RelationFetcher, RelationFilterTrait, Filter, FromModel, HasRelationMetadata, MergeInto, RelationFilter};
+use sea_orm::{ConnectionTrait, EntityTrait, Select, QuerySelect, QueryOrder, IntoActiveModel, QueryFilter};
+use crate::{EntityRegistry, RelationFetcher, FromModel, HasRelationMetadata, MergeInto, RelationFilter};
 
 use std::any::Any;
 
@@ -64,7 +64,7 @@ where
         conn: &C,
         model_with_relations: &mut ModelWithRelations,
         relation_name: &str,
-        filters: &[crate::types::Filter],
+        _filters: &[crate::types::Filter],
         registry: &dyn EntityRegistry<C>,
     ) -> Result<(), sea_orm::DbErr> {
         // Convert relation_name to snake_case for lookup
@@ -75,10 +75,9 @@ where
         // Always use the current entity's name for the fetcher
         let type_name = std::any::type_name::<ModelWithRelations>();
         let fetcher_entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
-        println!("DEBUG: fetch_relation_for_model - ModelWithRelations type: {} | relation_name: {} | fetcher_entity_name: {}", type_name, relation_name, fetcher_entity_name);
-        println!("DEBUG: About to call get_fetcher with entity name: '{}'", fetcher_entity_name);
         let fetcher = registry.get_fetcher(&fetcher_entity_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", fetcher_entity_name)))?;
+        
         // Fetch the relation data
         let fetched_result = fetcher.fetch_by_foreign_key(
             conn, 
@@ -87,24 +86,13 @@ where
             &fetcher_entity_name,
             relation_name
         ).await?;
+        
+        // The fetcher already returns the correct type, just pass it directly
         (descriptor.set_field)(model_with_relations, fetched_result);
-        Ok(())
-    }
-
-    /// Fetch relations for the model
-    async fn fetch_relations(
-        conn: &C,
-        model_with_relations: &mut ModelWithRelations,
-        relations_to_fetch: &[RelationFilter],
-        registry: &dyn EntityRegistry<C>,
-    ) -> Result<(), sea_orm::DbErr> {
-        // Fetch relations for the main model
-        for relation_filter in relations_to_fetch {
-            Self::fetch_relation_for_model(conn, model_with_relations, relation_filter.relation, &relation_filter.filters, registry).await?;
-        }
         
         Ok(())
     }
+
 }
 
 /// Query builder for finding the first entity record matching conditions
@@ -168,7 +156,7 @@ where
         conn: &C,
         model_with_relations: &mut ModelWithRelations,
         relation_name: &str,
-        filters: &[crate::types::Filter],
+        _filters: &[crate::types::Filter],
         registry: &dyn EntityRegistry<C>,
     ) -> Result<(), sea_orm::DbErr> {
         // Use the actual relation fetcher implementation
@@ -195,7 +183,6 @@ where
         } else {
             extracted_entity_name.clone()
         };
-        println!("DEBUG: About to call get_fetcher with entity name: '{}'", fetcher_entity_name);
         let fetcher = registry.get_fetcher(&fetcher_entity_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", fetcher_entity_name)))?;
         
@@ -209,29 +196,11 @@ where
         ).await?;
         
         // The fetcher already returns the correct type, just pass it directly
-        println!("DEBUG: fetched_result is_some: {}", fetched_result.is::<Option<Vec<()>>>());
-        println!("DEBUG: fetched_result is_unit: {}", fetched_result.is::<()>());
-        println!("DEBUG: relation_name: {}", relation_name);
-        println!("DEBUG: target_entity_name: {}", extracted_entity_name);
         (descriptor.set_field)(model_with_relations, fetched_result);
         
         Ok(())
     }
 
-    /// Fetch relations for the model
-    async fn fetch_relations(
-        conn: &C,
-        model_with_relations: &mut ModelWithRelations,
-        relations_to_fetch: &[RelationFilter],
-        registry: &dyn EntityRegistry<C>,
-    ) -> Result<(), sea_orm::DbErr> {
-        // Fetch relations for the main model
-        for relation_filter in relations_to_fetch {
-            Self::fetch_relation_for_model(conn, model_with_relations, relation_filter.relation, &relation_filter.filters, registry).await?;
-        }
-        
-        Ok(())
-    }
 }
 
 /// Query builder for finding multiple entity records matching conditions
@@ -318,7 +287,7 @@ where
         conn: &C,
         model_with_relations: &mut ModelWithRelations,
         relation_name: &str,
-        filters: &[crate::types::Filter],
+        _filters: &[crate::types::Filter],
         registry: &dyn EntityRegistry<C>,
     ) -> Result<(), sea_orm::DbErr> {
         // Use the actual relation fetcher implementation
@@ -345,7 +314,6 @@ where
         } else {
             extracted_entity_name.clone()
         };
-        println!("DEBUG: About to call get_fetcher with entity name: '{}'", fetcher_entity_name);
         let fetcher = registry.get_fetcher(&fetcher_entity_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", fetcher_entity_name)))?;
         
@@ -359,26 +327,7 @@ where
         ).await?;
         
         // The fetcher already returns the correct type, just pass it directly
-        println!("DEBUG: fetched_result is_some: {}", fetched_result.is::<Option<Vec<()>>>());
-        println!("DEBUG: fetched_result is_unit: {}", fetched_result.is::<()>());
-        println!("DEBUG: relation_name: {}", relation_name);
-        println!("DEBUG: target_entity_name: {}", extracted_entity_name);
         (descriptor.set_field)(model_with_relations, fetched_result);
-        
-        Ok(())
-    }
-
-    /// Fetch relations for the model
-    async fn fetch_relations(
-        conn: &C,
-        model_with_relations: &mut ModelWithRelations,
-        relations_to_fetch: &[RelationFilter],
-        registry: &dyn EntityRegistry<C>,
-    ) -> Result<(), sea_orm::DbErr> {
-        // Fetch relations for the main model
-        for relation_filter in relations_to_fetch {
-            Self::fetch_relation_for_model(conn, model_with_relations, relation_filter.relation, &relation_filter.filters, registry).await?;
-        }
         
         Ok(())
     }
@@ -547,7 +496,7 @@ where
         conn: &C,
         model_with_relations: &mut ModelWithRelations,
         relation_name: &str,
-        filters: &[crate::types::Filter],
+        _filters: &[crate::types::Filter],
     ) -> Result<(), sea_orm::DbErr> {
         // Look up the descriptor for this relation
         let descriptor = ModelWithRelations::get_relation_descriptor(relation_name)
@@ -556,7 +505,6 @@ where
         // Always use the current entity's name for the fetcher
         let type_name = std::any::type_name::<ModelWithRelations>();
         let fetcher_entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
-        println!("DEBUG: ModelWithRelations type_name: {} | fetcher_entity_name: {}", type_name, fetcher_entity_name);
 
         // Use the entity registry to fetch the related entity
         if let Some(fetcher) = self.entity_registry.get_fetcher(&fetcher_entity_name) {

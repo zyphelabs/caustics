@@ -33,6 +33,7 @@ pub struct Relation {
     pub target_unique_param: Option<syn::Path>,
     pub is_nullable: bool,
     pub foreign_key_column: Option<String>,
+    pub primary_key_field: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,8 +76,6 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                     .map(|model| #target::ModelWithRelations::from_model(model))
                     .collect::<Vec<_>>();
                 
-                println!("DEBUG: HasMany fetcher for '{}' returning Some(vec) with {} items", #relation_name_str, vec_with_rel.len());
-                println!("DEBUG: Type of vec_with_rel: {:?}", std::any::type_name::<Vec<#target::ModelWithRelations>>());
                 Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>)
             }
         } else {
@@ -86,25 +85,33 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let target_entity_type = quote! { #target_entity::Entity };
             let target_model_with_rel = quote! { #target_entity::ModelWithRelations };
             let target_unique_param = quote! { #target_entity::UniqueWhereParam };
+            
+            // Get the primary key field name from the relation definition or default to 'id'
+            let primary_key_field_name = if let Some(pk) = &rel.primary_key_field {
+                pk.as_str()
+            } else {
+                "id"
+            };
+            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
+                + &primary_key_field_name[1..];
+            let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
+            
             if is_nullable_fk {
                 quote! {
                     if let Some(fk_value) = foreign_key_value {
-                        let condition = #target_unique_param::IdEquals(fk_value);
+                        let condition = #target_unique_param::#primary_key_variant(fk_value);
                         let opt_model = <#target_entity_type as sea_orm::EntityTrait>::find().filter::<sea_orm::Condition>(condition.into()).one(conn).await?;
                         let with_rel = opt_model.map(#target_model_with_rel::from_model);
                         let result: Option<Option<#target_model_with_rel>> = Some(with_rel);
-                        println!("DEBUG: reviewer fetcher returning value of type: {}", std::any::type_name::<Option<Option<#target_model_with_rel>>>());
-                        println!("DEBUG: reviewer fetcher value: {:?}", result);
                         return Ok(Box::new(result) as Box<dyn std::any::Any + Send>);
                     } else {
-                        println!("DEBUG: reviewer fetcher returning None (foreign key is None)");
                         return Ok(Box::new(None::<Option<#target_model_with_rel>>) as Box<dyn std::any::Any + Send>);
                     }
                 }
             } else {
                 quote! {
                     if let Some(fk_value) = foreign_key_value {
-                        let condition = #target_unique_param::IdEquals(fk_value);
+                        let condition = #target_unique_param::#primary_key_variant(fk_value);
                         let opt_model = <#target_entity_type as sea_orm::EntityTrait>::find().filter::<sea_orm::Condition>(condition.into()).one(conn).await?;
                         let with_rel = opt_model.map(#target_model_with_rel::from_model);
                         return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
@@ -333,10 +340,22 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let fk_field_ident = format_ident!("{}", fk_field);
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             let target_module = &relation.target;
+            
+            // Get the primary key field name from the relation definition or default to 'id'
+            let primary_key_field_name = if let Some(pk) = &relation.primary_key_field {
+                pk.as_str()
+            } else {
+                "id"
+            };
+            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
+                + &primary_key_field_name[1..];
+            let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
+            let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
+            
             quote! {
                 // Handle foreign key value from UniqueWhereParam
                 match self.#relation_name {
-                    #target_module::UniqueWhereParam::IdEquals(id) => {
+                    #target_module::UniqueWhereParam::#primary_key_variant(id) => {
                         model.#fk_field_ident = sea_orm::ActiveValue::Set(id.clone());
                     }
                     other => {
@@ -355,7 +374,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                                         .filter::<sea_orm::Condition>(condition)
                                         .one(conn)
                                         .await?;
-                                    result.map(|entity| entity.id).ok_or_else(|| {
+                                    result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
                                         sea_orm::DbErr::Custom(format!(
                                             "No {} found for condition: {:?}",
                                             stringify!(#target_module),
@@ -898,10 +917,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             caustics::RelationDescriptor::<ModelWithRelations> {
                 name: #name,
                 set_field: |model, value| {
-                    println!("DEBUG: set_field for '{}' called with value type: {:?}", #debug_name, std::any::type_name_of_val(&*value));
-                    println!("DEBUG: Expected type: {:?}", std::any::type_name::<#rel_type>());
                     let value = value.downcast::<#rel_type>().expect("Type mismatch in set_field");
-                    println!("DEBUG: Successfully downcast to expected type");
                     model.#rel_field = *value;
                 },
                 get_foreign_key: #get_foreign_key_closure,
@@ -937,7 +953,16 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
             let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
             let target_entity_name = relation.target.segments.last().unwrap().ident.to_string().to_lowercase();
             
-
+            // Get the primary key field name from the relation definition or default to 'id'
+            let primary_key_field_name = if let Some(pk) = &relation.primary_key_field {
+                pk.as_str()
+            } else {
+                "id"
+            };
+            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
+                + &primary_key_field_name[1..];
+            let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
+            let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
             
             // Check if this is an optional relation
             let is_optional = if let Some(field) = fields.iter().find(|f| {
@@ -954,7 +979,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                         match where_param_opt {
                             Some(where_param) => {
                                 match where_param {
-                                    #target_module::UniqueWhereParam::IdEquals(id) => {
+                                    #target_module::UniqueWhereParam::#primary_key_variant(id) => {
                                         model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(id.clone()));
                                     }
                                     other => {
@@ -973,7 +998,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                                                         .filter::<sea_orm::Condition>(condition)
                                                         .one(conn)
                                                         .await?;
-                                                    result.map(|entity| entity.id).ok_or_else(|| {
+                                                    result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
                                                         sea_orm::DbErr::Custom(format!(
                                                             "No {} found for condition: {:?}",
                                                             stringify!(#target_module),
@@ -996,7 +1021,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                 quote! {
                     SetParam::#relation_name(where_param) => {
                         match where_param {
-                            #target_module::UniqueWhereParam::IdEquals(id) => {
+                            #target_module::UniqueWhereParam::#primary_key_variant(id) => {
                                 model.#foreign_key_field = sea_orm::ActiveValue::Set(id.clone());
                             }
                             other => {
@@ -1015,7 +1040,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
                                                 .filter::<sea_orm::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
-                                            result.map(|entity| entity.id).ok_or_else(|| {
+                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
                                                     "No {} found for condition: {:?}",
                                                     stringify!(#target_module),
@@ -1361,10 +1386,6 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         // Remove individual entity registry - the composite registry is used instead
     };
 
-    // Debug print the generated code
-    let module_path = model_ast.ident.span().source_text().unwrap_or_default();
-    eprintln!("Generated code for {}:\n{}", module_path, expanded);
-
     TokenStream::from(expanded)
 }
 
@@ -1380,6 +1401,7 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
             let mut relation_kind = None;
             let mut is_nullable = false;
             let mut foreign_key_column = None;
+            let mut primary_key_field = None;
             
             for attr in &variant.attrs {
                 if let syn::Meta::List(meta) = &attr.meta {
@@ -1466,6 +1488,14 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
                                         {
                                             foreign_key_column = Some(lit.value());
                                         }
+                                    } else if nv.path.is_ident("primary_key") {
+                                        if let syn::Expr::Lit(syn::ExprLit {
+                                            lit: syn::Lit::Str(lit),
+                                            ..
+                                        }) = &nv.value
+                                        {
+                                            primary_key_field = Some(lit.value());
+                                        }
                                     }
                                 }
                             }
@@ -1508,6 +1538,7 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
                     target_unique_param,
                     is_nullable,
                     foreign_key_column,
+                    primary_key_field,
                 });
             }
         }

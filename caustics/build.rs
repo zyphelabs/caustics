@@ -217,6 +217,7 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
             db: std::sync::Arc<DatabaseConnection>,
         }
 
+        #[allow(dead_code)]
         pub struct TransactionCausticsClient {
             tx: std::sync::Arc<DatabaseTransaction>,
         }
