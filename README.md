@@ -2,7 +2,7 @@
 
 A Prisma-like DSL for SeaORM that provides a type-safe and ergonomic way to build database queries.
 
-> Caustics are the shimmering patterns of light that form when sunlight passes through water and reflects off the sea bed. Similarly, this crate bends and focuses SeaORM's query interface into a more ergonomic shape, offering an alternative to SeaORM's native DSL with a familiar Prisma-like syntax.
+> Caustics are the shimmering patterns of light that form when sunlight passes through water and reflects off the sea bed. Similarly, this crate bends and focuses SeaORM's query interface into a more ergonomic shape, offering an alternative to SeaORM's native DSL with a familiar Prisma-like syntax deduced by reflection on SeaORM's datamodel.
 
 ## Features
 
@@ -11,7 +11,7 @@ A Prisma-like DSL for SeaORM that provides a type-safe and ergonomic way to buil
 - Support for complex queries and relations
 - Automatic SQL generation
 - Transaction support
-- Raw query support
+- Batch operations
 
 ## Installation
 
@@ -41,46 +41,88 @@ let client = db.caustics();
 ### Basic Entity Definition
 
 ```rust
-use caustics::Caustics;
-use sea_orm::entity::prelude::*;
-use chrono::{DateTime, FixedOffset};
-use serde_json::Value as Json;
-use uuid::Uuid;
+use caustics_macros::caustics;
 
-#[derive(Caustics)]
-#[sea_orm(table_name = "users")]
-#[sea_orm(primary_key = "id")]
-#[sea_orm(has_many = "Post")]
-struct User {
-    #[sea_orm(primary_key)]
-    id: i32,
-    #[sea_orm(unique)]
-    email: String,
-    name: String,
-    age: i32,
-    #[sea_orm(created_at)]
-    created_at: DateTime<FixedOffset>,
-    #[sea_orm(updated_at)]
-    updated_at: DateTime<FixedOffset>,
-    #[sea_orm(nullable)]
-    deleted_at: Option<DateTime<FixedOffset>>,
+#[caustics]
+pub mod user {
+    use caustics_macros::Caustics;
+    use chrono::{DateTime, FixedOffset};
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "users")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i32,
+        #[sea_orm(unique)]
+        pub email: String,
+        pub name: String,
+        #[sea_orm(nullable)]
+        pub age: Option<i32>,
+        pub created_at: DateTime<FixedOffset>,
+        pub updated_at: DateTime<FixedOffset>,
+        #[sea_orm(nullable)]
+        pub deleted_at: Option<DateTime<FixedOffset>>,
+    }
+
+    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            has_many = "super::post::Entity",
+            from = "Column::Id",
+            to = "super::post::Column::UserId"
+        )]
+        Posts,
+    }
+
+    impl sea_orm::ActiveModelBehavior for ActiveModel {}
 }
 
-#[derive(Caustics)]
-#[sea_orm(table_name = "posts")]
-#[sea_orm(primary_key = "id")]
-#[sea_orm(belongs_to = "User")]
-struct Post {
-    #[sea_orm(primary_key)]
-    id: i32,
-    title: String,
-    content: String,
-    #[sea_orm(created_at)]
-    created_at: DateTime<FixedOffset>,
-    #[sea_orm(updated_at)]
-    updated_at: DateTime<FixedOffset>,
-    #[sea_orm(column_name = "user_id")]
-    user_id: i32,
+#[caustics]
+pub mod post {
+    use caustics_macros::Caustics;
+    use chrono::{DateTime, FixedOffset};
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "posts")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i32,
+        pub title: String,
+        #[sea_orm(nullable)]
+        pub content: Option<String>,
+        #[sea_orm(created_at)]
+        pub created_at: DateTime<FixedOffset>,
+        #[sea_orm(updated_at)]
+        pub updated_at: DateTime<FixedOffset>,
+        #[sea_orm(column_name = "user_id")]
+        pub user_id: i32,
+        #[sea_orm(column_name = "reviewer_user_id", nullable)]
+        pub reviewer_user_id: Option<i32>,
+    }
+
+    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::user::Entity",
+            from = "Column::UserId",
+            to = "super::user::Column::Id",
+            on_update = "NoAction",
+            on_delete = "NoAction"
+        )]
+        User,
+        #[sea_orm(
+            belongs_to = "super::user::Entity",
+            from = "Column::ReviewerUserId",
+            to = "super::user::Column::Id",
+            on_update = "NoAction",
+            on_delete = "NoAction"
+        )]
+        Reviewer,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 ```
 
@@ -93,6 +135,7 @@ struct Post {
 let user = client
     .user()
     .find_unique(user::id::equals(1))
+    .exec()
     .await?;
 
 // Find first record
@@ -100,17 +143,18 @@ let user = client
     .user()
     .find_first(vec![
         user::name::equals("John"),
-        user::age::greater_than(18),
+        user::age::gt(18),
     ])
+    .exec()
     .await?;
 
 // Find many records
 let users = client
     .user()
     .find_many(vec![
-        user::age::greater_than(18),
-        user::created_at::less_than(now),
+        user::age::gt(18),
     ])
+    .exec()
     .await?;
 
 // Find with relations
@@ -118,6 +162,7 @@ let user = client
     .user()
     .find_unique(user::id::equals(1))
     .with(user::posts::fetch(vec![]))
+    .exec()
     .await?;
 
 // Find posts with user
@@ -127,6 +172,7 @@ let posts = client
         post::user_id::equals(1),
     ])
     .with(post::user::fetch(vec![]))
+    .exec()
     .await?;
 ```
 
@@ -137,23 +183,26 @@ let posts = client
 let user = client
     .user()
     .create(
-            user::name::set("John"),
-            user::email::set("john@example.com"),
-        vec![
-            user::age::set(25),
-        ],
+        "john@example.com".to_string(),
+        "John".to_string(),
+        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+        vec![user::age::set(Some(25))],
     )
+    .exec()
     .await?;
 
 // Create a post with user relation
 let post = client
     .post()
     .create(
-            post::title::set("Hello World"),
-            post::content::set("This is my first post"),
-            post::user_id::set(1),
-        vec![],
+        "Hello World".to_string(),
+        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+        user::id::equals(1),
+        vec![post::content::set(Some("This is my first post".to_string()))],
     )
+    .exec()
     .await?;
 ```
 
@@ -167,9 +216,10 @@ let user = client
         user::id::equals(1),
         vec![
             user::name::set("John Doe"),
-            user::age::set(26),
+            user::age::set(Some(26)),
         ],
     )
+    .exec()
     .await?;
 
 // Update a post
@@ -179,9 +229,10 @@ let post = client
         post::id::equals(1),
         vec![
             post::title::set("Updated Title"),
-            post::content::set("Updated content"),
+            post::content::set(Some("Updated content".to_string())),
         ],
     )
+    .exec()
     .await?;
 ```
 
@@ -191,13 +242,15 @@ let post = client
 // Delete a record
 client
     .user()
-    .delete(1)
+    .delete(user::id::equals(1))
+    .exec()
     .await?;
 
 // Delete a post
 client
     .post()
-    .delete(1)
+    .delete(post::id::equals(1))
+    .exec()
     .await?;
 ```
 
@@ -210,22 +263,39 @@ let user = client
     .user()
     .upsert(
         user::email::equals("john@example.com"),
-        user::name::set("John"),
-        user::age::set(25),
-        vec![],
+        user::Create {
+            name: "John".to_string(),
+            email: "john@example.com".to_string(),
+            created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+            updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+            _params: vec![],
+        },
+        vec![user::name::set("John"), user::age::set(25)],
     )
+    .exec()
     .await?;
 ```
 
 #### Batch Operations
 
 ```rust
-let results = client
-    .user()
-    ._batch(vec![
-        |client| async move { client.user().find_unique(user::id::equals(1)).await },
-        |client| async move { client.user().find_unique(user::id::equals(2)).await },
-    ])
+let (user1, user2) = client
+    ._batch((
+        client.user().create(
+            "john@example.com".to_string(),
+            "John".to_string(),
+            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+            vec![user::age::set(Some(25))],
+        ),
+        client.user().create(
+            "jane@example.com".to_string(),
+            "Jane".to_string(),
+            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+            DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+            vec![user::age::set(Some(30))],
+        ),
+    ))
     .await?;
 ```
 
@@ -233,29 +303,37 @@ let results = client
 
 ```rust
 let result = client
-    ._transaction(|tx| async move {
-        // Create user
-        let user = tx
-            .user()
-            .create(
-                user::name::set("John"),
-                user::email::set("john@example.com"),
-                vec![],
-            )
-            .await?;
+    ._transaction()
+    .run(|tx| {
+        Box::pin(async move {
+            // Create user
+            let user = tx
+                .user()
+                .create(
+                    "john@example.com".to_string(),
+                    "John".to_string(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    vec![],
+                )
+                .exec()
+                .await?;
 
-        // Create post
-        let post = tx
-            .post()
-            .create(
-                post::title::set("Hello World"),
-                post::content::set("This is my first post"),
-                post::user_id::set(user.id),
-                vec![],
-            )
-            .await?;
+            // Create post
+            let post = tx
+                .post()
+                .create(
+                    "Hello World".to_string(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    user::id::equals(user.id),
+                    vec![post::content::set(Some("This is my first post".to_string()))],
+                )
+                .exec()
+                .await?;
 
-        Ok((user, post))
+            Ok((user, post))
+        })
     })
     .await?;
 ```
@@ -272,16 +350,16 @@ user::id::equals(1)
 user::id::not_equals(1)
 
 // Greater Than
-user::age::greater_than(18)
+user::age::gt(18)
 
 // Greater Than or Equal
-user::age::greater_than_or_equals(18)
+user::age::gte(18)
 
 // Less Than
-user::age::less_than(18)
+user::age::lt(18)
 
 // Less Than or Equal
-user::age::less_than_or_equals(18)
+user::age::lte(18)
 
 // In
 user::id::in_vec(vec![1, 2, 3])
@@ -290,107 +368,70 @@ user::id::in_vec(vec![1, 2, 3])
 user::id::not_in_vec(vec![1, 2, 3])
 ```
 
-#### String Operators
-
-```rust
-// Contains
-user::name::contains("John")
-
-// Starts With
-user::name::starts_with("John")
-
-// Ends With
-user::name::ends_with("Doe")
-```
-
-#### Null Operators
-
-```rust
-// Is Null
-user::deleted_at::is_null()
-
-// Is Not Null
-user::deleted_at::is_not_null()
-```
-
-#### JSON Operators
-
-```rust
-// JSON Path
-user::data::json_path(vec!["address", "city"], "New York", FieldType::String)
-
-// JSON Contains
-user::data::json_contains("address")
-```
-
-#### Logical Operators
-
-```rust
-// AND
-Condition::and(vec![
-    user::age::greater_than(18),
-    user::name::equals("John"),
-])
-
-// OR
-Condition::or(vec![
-    user::age::greater_than(18),
-    user::name::equals("John"),
-])
-
-// NOT
-Condition::not(user::age::less_than(18))
-```
-
-#### Relation Operators
-
-```rust
-// Some
-Condition::some(vec![
-    user::posts::title::equals("Hello"),
-])
-
-// Every
-Condition::every(vec![
-    user::posts::title::equals("Hello"),
-])
-
-// None
-Condition::none(vec![
-    user::posts::title::equals("Hello"),
-])
-```
-
 ### Pagination and Sorting
 
 ```rust
-let users = User::db(&db)
-    .find_many(vec![user::age::greater_than(18)])
+let users = client
+    .user()
+    .find_many(vec![user::age::gt(18)])
     .take(10)
     .skip(0)
     .order_by(user::created_at::order(SortOrder::Desc))
+    .exec()
     .await?;
 
-let posts = Post::db(&db)
+let posts = client
+    .post()
     .find_many(vec![post::user_id::equals(1)])
     .take(10)
     .skip(0)
     .order_by(post::created_at::order(SortOrder::Desc))
+    .exec()
     .await?;
 ```
 
-### Raw Queries
+## TODO: Planned Features
 
-```rust
-let users = User::db(&db)
-    .raw("SELECT * FROM users WHERE age > 18")
-    .await?;
+The following features are planned but not yet implemented:
 
-let posts = Post::db(&db)
-    .raw("SELECT * FROM posts WHERE user_id = 1")
-    .await?;
-```
+### String Operators
+- `user::name::contains("John")`
+- `user::name::starts_with("John")`
+- `user::name::ends_with("Doe")`
+
+### Null Operators
+- `user::deleted_at::is_null()`
+- `user::deleted_at::is_not_null()`
+
+### JSON Operators
+- `user::data::json_path(vec!["address", "city"], "New York", FieldType::String)`
+- `user::data::json_contains("address")`
+
+### Logical Operators
+- `Condition::and(vec![user::age::gt(18), user::name::equals("John")])`
+- `Condition::or(vec![user::age::gt(18), user::name::equals("John")])`
+- `Condition::not(user::age::lt(18))`
+
+### Relation Operators
+- `Condition::some(vec![user::posts::title::equals("Hello")])`
+- `Condition::every(vec![user::posts::title::equals("Hello")])`
+- `Condition::none(vec![user::posts::title::equals("Hello")])`
+
+### Additional Features
+- Create many operations
+- Update many operations
+- Delete many operations
+- Aggregation functions (count, sum, avg, etc.)
+- Raw SQL queries
+- Database migrations
+- Connection pooling
+- Query optimization
+
+## Acknowledgments
+
+This project is inspired by the excellent work done on [Prisma Client Rust](https://github.com/Brendonovich/prisma-client-rust), which provides a type-safe database client for Rust. While Caustics is not derived from Prisma Client Rust, it shares similar design goals of providing an ergonomic, type-safe database interface and is intended to be a drop-in replacement for most of the features.
 
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details. 
+
