@@ -1,7 +1,37 @@
-use sea_orm::{ConnectionTrait, EntityTrait, Select, QuerySelect, QueryOrder, IntoActiveModel, QueryFilter};
+use sea_orm::{ConnectionTrait, EntityTrait, Select, QuerySelect, QueryOrder, IntoActiveModel, QueryFilter, DatabaseTransaction};
 use crate::{EntityRegistry, RelationFetcher, FromModel, HasRelationMetadata, MergeInto, RelationFilter};
 
 use std::any::Any;
+
+
+/// Trait to make DeferredLookup work with both regular connections and transactions
+pub trait ConnectionLike: ConnectionTrait {}
+
+impl<T: ConnectionTrait> ConnectionLike for T {}
+
+/// Internal structure for storing deferred foreign key lookups
+pub struct DeferredLookup<C: ConnectionTrait> {
+    pub unique_param: Box<dyn Any + Send>,
+    pub assign: fn(&mut (dyn Any + 'static), i32),
+    pub entity_resolver: Box<
+        dyn for<'a> Fn(&'a C, &dyn Any) -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<i32, sea_orm::DbErr>> + Send + 'a>>
+        + Send
+    >,
+}
+
+impl<C: ConnectionTrait> DeferredLookup<C> {
+    pub fn new(
+        unique_param: Box<dyn Any + Send>,
+        assign: fn(&mut (dyn Any + 'static), i32),
+        entity_resolver: impl for<'a> Fn(&'a C, &dyn Any) -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<i32, sea_orm::DbErr>> + Send + 'a>> + Send + 'static,
+    ) -> Self {
+        Self {
+            unique_param,
+            assign,
+            entity_resolver: Box::new(entity_resolver),
+        }
+    }
+}
 
 /// Query builder for finding a unique entity record
 pub struct UniqueQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
@@ -71,24 +101,24 @@ where
         let relation_name_snake = heck::ToSnakeCase::to_snake_case(relation_name);
         let descriptor = ModelWithRelations::get_relation_descriptor(&relation_name_snake)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("Relation '{}' not found", relation_name)))?;
-        
+            
         // Always use the current entity's name for the fetcher
         let type_name = std::any::type_name::<ModelWithRelations>();
         let fetcher_entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
         let fetcher = registry.get_fetcher(&fetcher_entity_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", fetcher_entity_name)))?;
-        
-        // Fetch the relation data
-        let fetched_result = fetcher.fetch_by_foreign_key(
-            conn, 
+            
+            // Fetch the relation data
+            let fetched_result = fetcher.fetch_by_foreign_key(
+                conn, 
             (descriptor.get_foreign_key)(model_with_relations), 
             descriptor.foreign_key_column, 
             &fetcher_entity_name,
             relation_name
-        ).await?;
-        
-        // The fetcher already returns the correct type, just pass it directly
-        (descriptor.set_field)(model_with_relations, fetched_result);
+            ).await?;
+            
+            // The fetcher already returns the correct type, just pass it directly
+            (descriptor.set_field)(model_with_relations, fetched_result);
         
         Ok(())
     }
@@ -159,21 +189,21 @@ where
         _filters: &[crate::types::Filter],
         registry: &dyn EntityRegistry<C>,
     ) -> Result<(), sea_orm::DbErr> {
-        // Use the actual relation fetcher implementation
+            // Use the actual relation fetcher implementation
         let descriptor = ModelWithRelations::get_relation_descriptor(relation_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("Relation '{}' not found", relation_name)))?;
-        
-        // Get the foreign key value from the model
-        let foreign_key_value = (descriptor.get_foreign_key)(model_with_relations);
-        
-        // Get the target entity name from the descriptor
-        let extracted_entity_name = extract_entity_name_from_path(&descriptor.target_entity);
+            
+            // Get the foreign key value from the model
+            let foreign_key_value = (descriptor.get_foreign_key)(model_with_relations);
+            
+            // Get the target entity name from the descriptor
+            let extracted_entity_name = extract_entity_name_from_path(&descriptor.target_entity);
         // Clone for use in fetcher_entity_name
         let extracted_entity_name = extracted_entity_name.clone();
-        
-        // Get the foreign key column name from the descriptor
-        let foreign_key_column = descriptor.foreign_key_column;
-        
+            
+            // Get the foreign key column name from the descriptor
+            let foreign_key_column = descriptor.foreign_key_column;
+            
         // Determine which entity's fetcher to use
         let is_has_many = foreign_key_column == "id";
         let fetcher_entity_name = if is_has_many {
@@ -185,18 +215,18 @@ where
         };
         let fetcher = registry.get_fetcher(&fetcher_entity_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", fetcher_entity_name)))?;
-        
-        // Fetch the relation data
-        let fetched_result = fetcher.fetch_by_foreign_key(
-            conn, 
-            foreign_key_value, 
-            foreign_key_column, 
+            
+            // Fetch the relation data
+            let fetched_result = fetcher.fetch_by_foreign_key(
+                conn, 
+                foreign_key_value, 
+                foreign_key_column, 
             &fetcher_entity_name,
             relation_name
-        ).await?;
-        
-        // The fetcher already returns the correct type, just pass it directly
-        (descriptor.set_field)(model_with_relations, fetched_result);
+            ).await?;
+            
+            // The fetcher already returns the correct type, just pass it directly
+            (descriptor.set_field)(model_with_relations, fetched_result);
         
         Ok(())
     }
@@ -290,21 +320,21 @@ where
         _filters: &[crate::types::Filter],
         registry: &dyn EntityRegistry<C>,
     ) -> Result<(), sea_orm::DbErr> {
-        // Use the actual relation fetcher implementation
+            // Use the actual relation fetcher implementation
         let descriptor = ModelWithRelations::get_relation_descriptor(relation_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("Relation '{}' not found", relation_name)))?;
-        
-        // Get the foreign key value from the model
-        let foreign_key_value = (descriptor.get_foreign_key)(model_with_relations);
-        
-        // Get the target entity name from the descriptor
-        let extracted_entity_name = extract_entity_name_from_path(&descriptor.target_entity);
+            
+            // Get the foreign key value from the model
+            let foreign_key_value = (descriptor.get_foreign_key)(model_with_relations);
+            
+            // Get the target entity name from the descriptor
+            let extracted_entity_name = extract_entity_name_from_path(&descriptor.target_entity);
         // Clone for use in fetcher_entity_name
         let extracted_entity_name = extracted_entity_name.clone();
-        
-        // Get the foreign key column name from the descriptor
-        let foreign_key_column = descriptor.foreign_key_column;
-        
+            
+            // Get the foreign key column name from the descriptor
+            let foreign_key_column = descriptor.foreign_key_column;
+            
         // Determine which entity's fetcher to use
         let is_has_many = foreign_key_column == "id";
         let fetcher_entity_name = if is_has_many {
@@ -316,31 +346,21 @@ where
         };
         let fetcher = registry.get_fetcher(&fetcher_entity_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", fetcher_entity_name)))?;
-        
-        // Fetch the relation data
-        let fetched_result = fetcher.fetch_by_foreign_key(
-            conn, 
-            foreign_key_value, 
-            foreign_key_column, 
+            
+            // Fetch the relation data
+            let fetched_result = fetcher.fetch_by_foreign_key(
+                conn, 
+                foreign_key_value, 
+                foreign_key_column, 
             &fetcher_entity_name,
             relation_name
-        ).await?;
-        
-        // The fetcher already returns the correct type, just pass it directly
-        (descriptor.set_field)(model_with_relations, fetched_result);
+            ).await?;
+            
+            // The fetcher already returns the correct type, just pass it directly
+            (descriptor.set_field)(model_with_relations, fetched_result);
         
         Ok(())
     }
-}
-
-/// Internal structure for storing deferred foreign key lookups
-pub struct DeferredLookup<C: ConnectionTrait> {
-    pub unique_param: Box<dyn Any + Send>,
-    pub assign: fn(&mut (dyn Any + 'static), i32),
-    pub entity_resolver: Box<
-        dyn for<'a> Fn(&'a C, &dyn Any) -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<i32, sea_orm::DbErr>> + Send + 'a>>
-        + Send
-    >,
 }
 
 /// Query builder for creating a new entity record
@@ -392,6 +412,15 @@ where
         Entity::delete_many()
             .filter::<sea_orm::Condition>(self.condition)
             .exec(self.conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Execute the query within a transaction
+    pub async fn exec_in_txn(self, txn: &DatabaseTransaction) -> Result<(), sea_orm::DbErr> {
+        Entity::delete_many()
+            .filter::<sea_orm::Condition>(self.condition)
+            .exec(txn)
             .await?;
         Ok(())
     }
@@ -476,6 +505,20 @@ where
             Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
         }
     }
+
+    /// Execute the query within a transaction
+    pub async fn exec_in_txn(self, txn: &DatabaseTransaction) -> Result<ModelWithRelations, sea_orm::DbErr> {
+        let entity = <Entity as EntityTrait>::find().filter::<sea_orm::Condition>(self.condition).one(txn).await?;
+        if let Some(entity) = entity {
+            let mut active_model = entity.into_active_model();
+            for change in self.changes {
+                change.merge_into(&mut active_model);
+            }
+            active_model.update(txn).await.map(ModelWithRelations::from_model)
+        } else {
+            Err(sea_orm::DbErr::RecordNotFound("No record found to update".to_string()))
+        }
+    }
 }
 
 /// SeaORM-specific relation fetcher implementation
@@ -501,11 +544,11 @@ where
         // Look up the descriptor for this relation
         let descriptor = ModelWithRelations::get_relation_descriptor(relation_name)
             .ok_or_else(|| sea_orm::DbErr::Custom(format!("Relation '{}' not found", relation_name)))?;
-
+        
         // Always use the current entity's name for the fetcher
         let type_name = std::any::type_name::<ModelWithRelations>();
         let fetcher_entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
-
+        
         // Use the entity registry to fetch the related entity
         if let Some(fetcher) = self.entity_registry.get_fetcher(&fetcher_entity_name) {
             // Create a runtime to execute the async operation
@@ -520,6 +563,22 @@ where
             Err(sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", fetcher_entity_name)))
         }
     }
+}
+
+/// Batch query types that can be executed in a transaction
+pub enum BatchQuery<'a, C: ConnectionTrait, Entity: EntityTrait, ActiveModel: sea_orm::ActiveModelTrait<Entity=Entity> + sea_orm::ActiveModelBehavior + Send + 'static, ModelWithRelations, T: MergeInto<ActiveModel>> {
+    Insert(CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations>),
+    Update(UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>),
+    Delete(DeleteQueryBuilder<'a, C, Entity>),
+    Upsert(UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>),
+}
+
+/// Result types for batch operations
+pub enum BatchResult<ModelWithRelations> {
+    Insert(ModelWithRelations),
+    Update(ModelWithRelations),
+    Delete(()),
+    Upsert(ModelWithRelations),
 }
 
 /// Extract entity name from a path string representation

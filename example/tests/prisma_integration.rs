@@ -689,6 +689,9 @@ mod query_builder_tests {
         assert_eq!(user1.name, "John");
         assert_eq!(user2.name, "Jane");
 
+        let found_users = client.user().find_many(vec![]).exec().await.unwrap();
+        assert_eq!(found_users.len(), 2);
+
         teardown_test_db(client, container).await?;
 
         Ok(())

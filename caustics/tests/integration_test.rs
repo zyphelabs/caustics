@@ -605,47 +605,38 @@ mod query_builder_tests {
             .unwrap();
         assert!(post_without_reviewer.reviewer.is_none() || post_without_reviewer.reviewer.as_ref().unwrap().is_none());
     }
-    /*
-        #[tokio::test]
-        async fn test_batch_operations() {
-            let db = setup_test_db().await;
-            let client = CausticsClient::new(db.clone());
 
-            let timestamp = chrono::Utc::now().timestamp();
-            // Create multiple users in a batch
-            let users = vec![
-                user::Create {
-                    email: format!("john_{}@example.com", timestamp),
-                    name: "John".to_string(),
-                    created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    _params: vec![
-                        user::age::set(Some(25)),
-                        user::deleted_at::set(None),
-                    ],
-                },
-                user::Create {
-                    email: format!("jane_{}@example.com", timestamp),
-                    name: "Jane".to_string(),
-                    created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    _params: vec![
-                        user::age::set(Some(30)),
-                        user::deleted_at::set(None),
-                    ],
-                },
-            ];
-            for u in &users {
+    #[tokio::test]
+    async fn test_batch_operations() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create multiple users in a batch
+        let timestamp = chrono::Utc::now().timestamp();
+        let (user1, user2) = client
+            ._batch((
                 client.user().create(
-                    u.email.clone(),
-                    u.name.clone(),
-                    u.created_at,
-                    u.updated_at,
-                    u._params.clone(),
-                ).exec().await.unwrap();
-            }
-            let found_users = client.user().find_many(vec![]).exec().await.unwrap();
-            assert_eq!(found_users.len(), 2);
-        }
-    */
+                    format!("john_{}@example.com", timestamp),
+                    "John".to_string(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+                ),
+                client.user().create(
+                    format!("jane_{}@example.com", timestamp),
+                    "Jane".to_string(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    vec![user::age::set(Some(30))],
+                ),
+            ))
+            .await
+            .expect("Batch operation failed");
+
+        assert_eq!(user1.name, "John");
+        assert_eq!(user2.name, "Jane");
+        
+        let found_users = client.user().find_many(vec![]).exec().await.unwrap();
+        assert_eq!(found_users.len(), 2);
+    }
 }

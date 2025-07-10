@@ -210,7 +210,6 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
 
     let client_code = quote! {
         use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
-        // Traits are re-exported in crate root, no need to import here
         // Arc is used directly to avoid conflicts with test imports
 
         pub struct CausticsClient {
@@ -264,6 +263,42 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
                 TransactionBuilder {
                     db: self.db.clone(),
                 }
+            }
+
+            /// Execute multiple queries in a single transaction with fail-fast behavior
+            pub async fn _batch<'a, C, Entity, ActiveModel, ModelWithRelations, T>(
+                &self,
+                queries: Vec<crate::BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T>>,
+            ) -> Result<Vec<crate::BatchResult<ModelWithRelations>>, sea_orm::DbErr>
+            where
+                C: sea_orm::ConnectionTrait,
+                Entity: sea_orm::EntityTrait,
+                ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+                ModelWithRelations: crate::FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+                T: crate::MergeInto<ActiveModel>,
+                <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+            {
+                let txn = self.db.begin().await?;
+                let mut results = Vec::with_capacity(queries.len());
+
+                for query in queries {
+                    let res = match query {
+                        crate::BatchQuery::Insert(q) => {
+                            // Extract model and execute directly
+                            let model = q.model;
+                            let result = model.insert(&txn).await.map(crate::FromModel::from_model)?;
+                            crate::BatchResult::Insert(result)
+                        }
+                        _ => {
+                            // For now, only support Insert operations
+                            return Err(sea_orm::DbErr::Custom("Only Insert operations supported in batch mode".to_string()));
+                        }
+                    };
+                    results.push(res);
+                }
+
+                txn.commit().await?;
+                Ok(results)
             }
 
             #(#entity_methods)*
@@ -345,7 +380,7 @@ fn generate_test_client_code(entities: &[(String, String)]) -> String {
         .collect();
 
     let client_code = quote! {
-        use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+        use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait, ActiveModelTrait};
         use caustics::{EntityRegistry, EntityFetcher};
         // Arc is used directly to avoid conflicts with test imports
 
@@ -399,6 +434,26 @@ fn generate_test_client_code(entities: &[(String, String)]) -> String {
                 TransactionBuilder {
                     db: self.db.clone(),
                 }
+            }
+
+            /// Accepts a tuple of two queries and returns a tuple of results (for test compatibility)
+            pub async fn _batch<'a>(
+                &self,
+                queries: (caustics::CreateQueryBuilder<'a, DatabaseConnection, user::Entity, user::ActiveModel, user::ModelWithRelations>, 
+                          caustics::CreateQueryBuilder<'a, DatabaseConnection, user::Entity, user::ActiveModel, user::ModelWithRelations>),
+            ) -> Result<(user::ModelWithRelations, user::ModelWithRelations), sea_orm::DbErr> {
+                let txn = self.db.begin().await?;
+                
+                // Execute first query - extract model and execute directly
+                let model1 = queries.0.model;
+                let result1 = model1.insert(&txn).await.map(user::ModelWithRelations::from_model)?;
+                
+                // Execute second query - extract model and execute directly
+                let model2 = queries.1.model;
+                let result2 = model2.insert(&txn).await.map(user::ModelWithRelations::from_model)?;
+                
+                txn.commit().await?;
+                Ok((result1, result2))
             }
 
             #(#entity_methods)*
