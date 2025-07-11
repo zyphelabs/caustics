@@ -392,8 +392,24 @@ where
         
         model.insert(self.conn).await.map(ModelWithRelations::from_model)
     }
-    
 
+    /// Execute the query within a transaction
+    pub async fn exec_in_txn(self, txn: &DatabaseTransaction) -> Result<ModelWithRelations, sea_orm::DbErr>
+    where
+        <Entity as EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+    {
+        let mut model = self.model;
+        
+        // Execute all deferred lookups in batch using the transaction
+        for lookup in &self.deferred_lookups {
+            // Cast the transaction to the expected connection type
+            let conn_ref = unsafe { std::mem::transmute::<&DatabaseTransaction, &C>(txn) };
+            let lookup_result = (lookup.entity_resolver)(conn_ref, &*lookup.unique_param).await?;
+            (lookup.assign)(&mut model as &mut (dyn Any + 'static), lookup_result);
+        }
+        
+        model.insert(txn).await.map(ModelWithRelations::from_model)
+    }
 }
 
 /// Query builder for deleting entity records matching a condition
@@ -469,6 +485,38 @@ where
                     change.merge_into(&mut active_model);
                 }
                 active_model.insert(self.conn).await.map(ModelWithRelations::from_model)
+            }
+        }
+    }
+
+    /// Execute the query within a transaction
+    pub async fn exec_in_txn(self, txn: &DatabaseTransaction) -> Result<ModelWithRelations, sea_orm::DbErr> {
+        let existing = Entity::find()
+            .filter::<sea_orm::Condition>(self.condition.clone())
+            .one(txn)
+            .await?;
+
+        match existing {
+            Some(active_model) => {
+                let mut active_model = active_model.into_active_model();
+                for change in self.update {
+                    change.merge_into(&mut active_model);
+                }
+                active_model.update(txn).await.map(ModelWithRelations::from_model)
+            }
+            None => {
+                let (mut active_model, deferred_lookups) = self.create;
+                // Execute all deferred lookups in batch (if needed)
+                for lookup in &deferred_lookups {
+                    // Cast the transaction to the expected connection type
+                    let conn_ref = unsafe { std::mem::transmute::<&DatabaseTransaction, &C>(txn) };
+                    let lookup_result = (lookup.entity_resolver)(conn_ref, &*lookup.unique_param).await?;
+                    (lookup.assign)(&mut active_model as &mut (dyn Any + 'static), lookup_result);
+                }
+                for change in self.update {
+                    change.merge_into(&mut active_model);
+                }
+                active_model.insert(txn).await.map(ModelWithRelations::from_model)
             }
         }
     }

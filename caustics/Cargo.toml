@@ -22,6 +22,7 @@ sea-orm-migration = "0.12"
 sea-query = "0.30"
 tokio-test = "0.4"
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+tempfile = "3.8"
 
 [build-dependencies]
 quote = "1.0.40"

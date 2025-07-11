@@ -330,6 +330,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "syn 2.0.101",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",

@@ -106,7 +106,8 @@ pub mod helpers {
     pub async fn setup_test_db() -> DatabaseConnection {
         use sea_orm::ConnectionTrait;
 
-        let db = Database::connect("sqlite::memory:").await.unwrap();
+        // Use SQLite in-memory database with proper configuration
+        let db = Database::connect("sqlite::memory:?mode=rwc").await.unwrap();
 
         // Create schema
         let schema = Schema::new(db.get_database_backend());

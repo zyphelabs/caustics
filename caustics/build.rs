@@ -67,7 +67,7 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
         }
     }
 
-    let client_code = generate_client_code(&entities);
+    let client_code = generate_client_code(&entities, false);
     fs::write(out_path, client_code).unwrap();
 }
 
@@ -131,7 +131,7 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
     }
 
     // Use test-specific client code generation
-    let client_code = generate_test_client_code(&entities);
+    let client_code = generate_client_code(&entities, true);
     fs::write(out_path, client_code).unwrap();
 }
 
@@ -169,7 +169,7 @@ fn to_pascal_case(s: &str) -> String {
     out
 }
 
-fn generate_client_code(entities: &[(String, String)]) -> String {
+fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String {
     let entity_methods: Vec<_> = entities
         .iter()
         .map(|(name, module_path)| {
@@ -208,8 +208,38 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
         })
         .collect();
 
+    // Determine import statements and prefixes based on is_test
+    let (imports, registry_trait, fetcher_trait, batch_container, batch_query, batch_result, from_model, merge_into) = if is_test {
+        (
+            quote! {
+                use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+                use caustics::{EntityRegistry, EntityFetcher};
+            },
+            quote! { EntityRegistry<C> },
+            quote! { EntityFetcher },
+            quote! { caustics::BatchContainer },
+            quote! { caustics::BatchQuery },
+            quote! { caustics::BatchResult },
+            quote! { caustics::FromModel },
+            quote! { caustics::MergeInto }
+        )
+    } else {
+        (
+            quote! {
+                use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+            },
+            quote! { crate::EntityRegistry<C> },
+            quote! { crate::EntityFetcher },
+            quote! { crate::BatchContainer },
+            quote! { crate::BatchQuery },
+            quote! { crate::BatchResult },
+            quote! { crate::FromModel },
+            quote! { crate::MergeInto }
+        )
+    };
+
     let client_code = quote! {
-        use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+        #imports
         // Arc is used directly to avoid conflicts with test imports
 
         pub struct CausticsClient {
@@ -228,8 +258,8 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
         // Composite Entity Registry for relation fetching
         pub struct CompositeEntityRegistry;
 
-        impl<C: sea_orm::ConnectionTrait> crate::EntityRegistry<C> for CompositeEntityRegistry {
-            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn crate::EntityFetcher<C>> {
+        impl<C: sea_orm::ConnectionTrait> #registry_trait for CompositeEntityRegistry {
+            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn #fetcher_trait<C>> {
                 match entity_name {
                     #(#registry_match_arms)*
                     _ => None,
@@ -238,8 +268,8 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
         }
 
         // Implement for reference so &REGISTRY works as a trait object
-        impl<C: sea_orm::ConnectionTrait> crate::EntityRegistry<C> for &'static CompositeEntityRegistry {
-            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn crate::EntityFetcher<C>> {
+        impl<C: sea_orm::ConnectionTrait> #registry_trait for &'static CompositeEntityRegistry {
+            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn #fetcher_trait<C>> {
                 (**self).get_fetcher(entity_name)
             }
         }
@@ -266,194 +296,48 @@ fn generate_client_code(entities: &[(String, String)]) -> String {
             }
 
             /// Execute multiple queries in a single transaction with fail-fast behavior
-            pub async fn _batch<'a, C, Entity, ActiveModel, ModelWithRelations, T>(
+            pub async fn _batch<'a, Entity, ActiveModel, ModelWithRelations, T, Container>(
                 &self,
-                queries: Vec<crate::BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T>>,
-            ) -> Result<Vec<crate::BatchResult<ModelWithRelations>>, sea_orm::DbErr>
+                queries: Container,
+            ) -> Result<Container::ReturnType, sea_orm::DbErr>
             where
-                C: sea_orm::ConnectionTrait,
                 Entity: sea_orm::EntityTrait,
                 ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
-                ModelWithRelations: crate::FromModel<<Entity as sea_orm::EntityTrait>::Model>,
-                T: crate::MergeInto<ActiveModel>,
+                ModelWithRelations: #from_model<<Entity as sea_orm::EntityTrait>::Model>,
+                T: #merge_into<ActiveModel>,
                 <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+                Container: #batch_container<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, T>,
             {
                 let txn = self.db.begin().await?;
-                let mut results = Vec::with_capacity(queries.len());
+                let batch_queries = Container::into_queries(queries);
+                let mut results = Vec::with_capacity(batch_queries.len());
 
-                for query in queries {
+                for query in batch_queries {
                     let res = match query {
-                        crate::BatchQuery::Insert(q) => {
-                            // Extract model and execute directly
-                            let model = q.model;
-                            let result = model.insert(&txn).await.map(crate::FromModel::from_model)?;
-                            crate::BatchResult::Insert(result)
+                        #batch_query::Insert(q) => {
+                            // For Insert, use exec_in_txn to use the transaction
+                            let result = q.exec_in_txn(&txn).await?;
+                            #batch_result::Insert(result)
                         }
-                        _ => {
-                            // For now, only support Insert operations
-                            return Err(sea_orm::DbErr::Custom("Only Insert operations supported in batch mode".to_string()));
+                        #batch_query::Update(q) => {
+                            let result = q.exec_in_txn(&txn).await?;
+                            #batch_result::Update(result)
+                        }
+                        #batch_query::Delete(q) => {
+                            q.exec_in_txn(&txn).await?;
+                            #batch_result::Delete(())
+                        }
+                        #batch_query::Upsert(q) => {
+                            // For Upsert, use exec_in_txn to use the transaction
+                            let result = q.exec_in_txn(&txn).await?;
+                            #batch_result::Upsert(result)
                         }
                     };
                     results.push(res);
                 }
 
                 txn.commit().await?;
-                Ok(results)
-            }
-
-            #(#entity_methods)*
-        }
-
-        impl TransactionCausticsClient {
-            pub fn new(tx: std::sync::Arc<DatabaseTransaction>) -> Self {
-                Self { tx }
-            }
-
-            #(#tx_entity_methods)*
-        }
-
-        impl TransactionBuilder {
-            pub async fn run<F, Fut, T>(&self, f: F) -> Result<T, sea_orm::DbErr>
-            where
-                F: FnOnce(TransactionCausticsClient) -> Fut,
-                Fut: std::future::Future<Output = Result<T, sea_orm::DbErr>>,
-            {
-                let tx = self.db.begin().await?;
-                let tx_arc = std::sync::Arc::new(tx);
-                let tx_client = TransactionCausticsClient::new(tx_arc.clone());
-                let result = f(tx_client).await;
-                let tx = std::sync::Arc::try_unwrap(tx_arc).expect("Transaction Arc should be unique");
-                match result {
-                    Ok(val) => {
-                        tx.commit().await?;
-                        Ok(val)
-                    }
-                    Err(e) => {
-                        tx.rollback().await?;
-                        Err(e)
-                    }
-                }
-            }
-        }
-    };
-
-    client_code.to_string()
-}
-
-fn generate_test_client_code(entities: &[(String, String)]) -> String {
-    let entity_methods: Vec<_> = entities
-        .iter()
-        .map(|(name, module_path)| {
-            let method_name = format_ident!("{}", name.to_lowercase());
-            let module_path = format_ident!("{}", module_path);
-            quote! {
-                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseConnection> {
-                    #module_path::EntityClient::new(&*self.db)
-                }
-            }
-        })
-        .collect();
-
-    let tx_entity_methods: Vec<_> = entities
-        .iter()
-        .map(|(name, module_path)| {
-            let method_name = format_ident!("{}", name.to_lowercase());
-            let module_path = format_ident!("{}", module_path);
-            quote! {
-                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseTransaction> {
-                    #module_path::EntityClient::new(&*self.tx)
-                }
-            }
-        })
-        .collect();
-
-    // Generate the composite registry
-    let registry_match_arms: Vec<_> = entities
-        .iter()
-        .map(|(name, module_path)| {
-            let entity_name_lower = name.to_lowercase();
-            let module_path = format_ident!("{}", module_path);
-            quote! {
-                #entity_name_lower => Some(&#module_path::EntityFetcherImpl),
-            }
-        })
-        .collect();
-
-    let client_code = quote! {
-        use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait, ActiveModelTrait};
-        use caustics::{EntityRegistry, EntityFetcher};
-        // Arc is used directly to avoid conflicts with test imports
-
-        pub struct CausticsClient {
-            db: std::sync::Arc<DatabaseConnection>,
-        }
-
-        pub struct TransactionCausticsClient {
-            tx: std::sync::Arc<DatabaseTransaction>,
-        }
-
-        pub struct TransactionBuilder {
-            db: std::sync::Arc<DatabaseConnection>,
-        }
-
-        // Composite Entity Registry for relation fetching
-        pub struct CompositeEntityRegistry;
-
-        impl<C: sea_orm::ConnectionTrait> EntityRegistry<C> for CompositeEntityRegistry {
-            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>> {
-                match entity_name {
-                    #(#registry_match_arms)*
-                    _ => None,
-                }
-            }
-        }
-
-        // Implement for reference so &REGISTRY works as a trait object
-        impl<C: sea_orm::ConnectionTrait> EntityRegistry<C> for &'static CompositeEntityRegistry {
-            fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>> {
-                (**self).get_fetcher(entity_name)
-            }
-        }
-
-        // Use a static registry instance
-        static REGISTRY: CompositeEntityRegistry = CompositeEntityRegistry;
-        pub fn get_registry() -> &'static CompositeEntityRegistry {
-            &REGISTRY
-        }
-
-        impl CausticsClient {
-            pub fn new(db: DatabaseConnection) -> Self {
-                Self { db: std::sync::Arc::new(db) }
-            }
-
-            pub fn db(&self) -> std::sync::Arc<DatabaseConnection> {
-                self.db.clone()
-            }
-
-            pub fn _transaction(&self) -> TransactionBuilder {
-                TransactionBuilder {
-                    db: self.db.clone(),
-                }
-            }
-
-            /// Accepts a tuple of two queries and returns a tuple of results (for test compatibility)
-            pub async fn _batch<'a>(
-                &self,
-                queries: (caustics::CreateQueryBuilder<'a, DatabaseConnection, user::Entity, user::ActiveModel, user::ModelWithRelations>, 
-                          caustics::CreateQueryBuilder<'a, DatabaseConnection, user::Entity, user::ActiveModel, user::ModelWithRelations>),
-            ) -> Result<(user::ModelWithRelations, user::ModelWithRelations), sea_orm::DbErr> {
-                let txn = self.db.begin().await?;
-                
-                // Execute first query - extract model and execute directly
-                let model1 = queries.0.model;
-                let result1 = model1.insert(&txn).await.map(user::ModelWithRelations::from_model)?;
-                
-                // Execute second query - extract model and execute directly
-                let model2 = queries.1.model;
-                let result2 = model2.insert(&txn).await.map(user::ModelWithRelations::from_model)?;
-                
-                txn.commit().await?;
-                Ok((result1, result2))
+                Ok(Container::from_results(results))
             }
 
             #(#entity_methods)*

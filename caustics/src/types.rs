@@ -2,6 +2,9 @@ use std::any::Any;
 
 pub type QueryError = sea_orm::DbErr;
 
+// Import query builder types for batch operations
+use crate::query_builders::{BatchQuery, BatchResult};
+
 #[derive(Copy, Clone, Debug)]
 pub enum SortOrder {
     Asc,
@@ -16,6 +19,13 @@ pub trait FromModel<M> {
 /// Trait for merging values into an ActiveModel
 pub trait MergeInto<AM> {
     fn merge_into(&self, model: &mut AM);
+}
+
+// Default implementation for unit type
+impl<AM> MergeInto<AM> for () {
+    fn merge_into(&self, _model: &mut AM) {
+        // Unit type does nothing when merged
+    }
 }
 
 /// Trait for relation filters that can be used with .with()
@@ -135,5 +145,181 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
         } else {
             Err(sea_orm::DbErr::Custom(format!("No fetcher found for entity: {}", target_entity)))
         }
+    }
+}
+
+/// Trait for batch containers that can hold multiple queries (like Prisma Client Rust)
+pub trait BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+where
+    C: sea_orm::ConnectionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    T: MergeInto<ActiveModel>,
+{
+    type ReturnType;
+    fn into_queries(self) -> Vec<BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T>>;
+    fn from_results(results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType;
+}
+
+/// Helper function to create batch queries
+pub async fn batch<'a, C, Entity, ActiveModel, ModelWithRelations, T, Container>(
+    queries: Container,
+    conn: &'a C,
+) -> Result<Container::ReturnType, sea_orm::DbErr>
+where
+    C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    T: MergeInto<ActiveModel>,
+    Container: BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, T>,
+    <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+{
+    let txn = conn.begin().await?;
+    let batch_queries = Container::into_queries(queries);
+    let mut results = Vec::with_capacity(batch_queries.len());
+
+    for query in batch_queries {
+        let res = match query {
+            BatchQuery::Insert(q) => {
+                let model = q.model;
+                let result = model.insert(&txn).await.map(FromModel::from_model)?;
+                BatchResult::Insert(result)
+            }
+            BatchQuery::Update(_) => {
+                // For now, skip updates in batch mode
+                return Err(sea_orm::DbErr::Custom("Update operations not supported in batch mode".to_string()));
+            }
+            BatchQuery::Delete(_) => {
+                // For now, skip deletes in batch mode
+                return Err(sea_orm::DbErr::Custom("Delete operations not supported in batch mode".to_string()));
+            }
+            BatchQuery::Upsert(_) => {
+                // For now, skip upserts in batch mode
+                return Err(sea_orm::DbErr::Custom("Upsert operations not supported in batch mode".to_string()));
+            }
+        };
+        results.push(res);
+    }
+
+    txn.commit().await?;
+    Ok(Container::from_results(results))
+}
+
+// Implementation for Vec
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T> 
+BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, T> 
+for Vec<BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T>> 
+where
+    C: sea_orm::ConnectionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    T: MergeInto<ActiveModel>,
+{
+    type ReturnType = Vec<BatchResult<ModelWithRelations>>;
+    
+    fn into_queries(self) -> Vec<BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T>> {
+        self
+    }
+    
+    fn from_results(results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        results
+    }
+}
+
+// Implementation for tuples of CreateQueryBuilder (up to 4 elements for DatabaseConnection)
+impl<'a, Entity, ActiveModel, ModelWithRelations>
+BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
+for (crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,)
+where
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    (): MergeInto<ActiveModel>,
+{
+    type ReturnType = (ModelWithRelations,);
+    fn into_queries(self) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>> {
+        vec![BatchQuery::Insert(self.0)]
+    }
+    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        let result1 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        (result1,)
+    }
+}
+
+impl<'a, Entity, ActiveModel, ModelWithRelations>
+BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
+for (
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+)
+where
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    (): MergeInto<ActiveModel>,
+{
+    type ReturnType = (ModelWithRelations, ModelWithRelations);
+    fn into_queries(self) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>> {
+        vec![BatchQuery::Insert(self.0), BatchQuery::Insert(self.1)]
+    }
+    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        let result1 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        let result2 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        (result1, result2)
+    }
+}
+
+impl<'a, Entity, ActiveModel, ModelWithRelations>
+BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
+for (
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+)
+where
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    (): MergeInto<ActiveModel>,
+{
+    type ReturnType = (ModelWithRelations, ModelWithRelations, ModelWithRelations);
+    fn into_queries(self) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>> {
+        vec![BatchQuery::Insert(self.0), BatchQuery::Insert(self.1), BatchQuery::Insert(self.2)]
+    }
+    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        let result1 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        let result2 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        let result3 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        (result1, result2, result3)
+    }
+}
+
+impl<'a, Entity, ActiveModel, ModelWithRelations>
+BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
+for (
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+    crate::query_builders::CreateQueryBuilder<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations>,
+)
+where
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    (): MergeInto<ActiveModel>,
+{
+    type ReturnType = (ModelWithRelations, ModelWithRelations, ModelWithRelations, ModelWithRelations);
+    fn into_queries(self) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>> {
+        vec![BatchQuery::Insert(self.0), BatchQuery::Insert(self.1), BatchQuery::Insert(self.2), BatchQuery::Insert(self.3)]
+    }
+    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        let result1 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        let result2 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        let result3 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        let result4 = match results.remove(0) { BatchResult::Insert(model) => model, _ => panic!("Expected Insert result") };
+        (result1, result2, result3, result4)
     }
 } 
