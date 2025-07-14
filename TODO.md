@@ -11,12 +11,12 @@
 - [x] Add string operators to nullable string fields
 
 ### 2. Comparison Operators
-- [ ] `lt` (less than) for all comparable types
-- [ ] `lte` (less than or equal) for all comparable types
-- [ ] `gt` (greater than) for all comparable types
-- [ ] `gte` (greater than or equal) for all comparable types
-- [ ] Ensure operators work with nullable fields
-- [ ] Add operators for DateTime, Int, String types
+- [x] `lt` (less than) for all comparable types
+- [x] `lte` (less than or equal) for all comparable types
+- [x] `gt` (greater than) for all comparable types
+- [x] `gte` (greater than or equal) for all comparable types
+- [x] Ensure operators work with nullable fields
+- [x] Add operators for DateTime, Int, String types
 
 ### 3. Collection Operators
 - [ ] `in_vec` operator for all types
