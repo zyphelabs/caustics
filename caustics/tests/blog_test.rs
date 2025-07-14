@@ -634,4 +634,80 @@ mod query_builder_tests {
         let found_users = client.user().find_many(vec![]).exec().await.unwrap();
         assert_eq!(found_users.len(), 2);
     }
+
+    #[tokio::test]
+    async fn test_string_operators() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+
+        // Create test users
+        let _user1 = client.user().create(
+            "john.doe@example.com".to_string(),
+            "John Doe".to_string(),
+            now,
+            now,
+            vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+        ).exec().await.unwrap();
+
+        let _user2 = client.user().create(
+            "jane.smith@example.com".to_string(),
+            "Jane Smith".to_string(),
+            now,
+            now,
+            vec![user::age::set(Some(28)), user::deleted_at::set(None)],
+        ).exec().await.unwrap();
+
+        let _user3 = client.user().create(
+            "bob.johnson@test.org".to_string(),
+            "Bob Johnson".to_string(),
+            now,
+            now,
+            vec![user::age::set(Some(40)), user::deleted_at::set(None)],
+        ).exec().await.unwrap();
+
+        // Test contains operator
+        let users_with_doe = client.user()
+            .find_many(vec![user::name::contains("Doe")])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_with_doe.len(), 1);
+        assert_eq!(users_with_doe[0].name, "John Doe");
+
+        // Test starts_with operator
+        let users_starting_with_j = client.user()
+            .find_many(vec![user::name::starts_with("J")])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_starting_with_j.len(), 2);
+        assert!(users_starting_with_j.iter().all(|u| u.name.starts_with("J")));
+
+        // Test ends_with operator
+        let users_ending_with_son = client.user()
+            .find_many(vec![user::name::ends_with("son")])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_ending_with_son.len(), 1);
+        assert_eq!(users_ending_with_son[0].name, "Bob Johnson");
+
+        // Test email contains
+        let users_with_example_email = client.user()
+            .find_many(vec![user::email::contains("example.com")])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_with_example_email.len(), 2);
+
+        let users_with_test_email = client.user()
+            .find_many(vec![user::email::ends_with("test.org")])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_with_test_email.len(), 1);
+        assert_eq!(users_with_test_email[0].email, "bob.johnson@test.org");
+    }
 }

@@ -341,6 +341,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         #imports
         // Arc is used directly to avoid conflicts with test imports
 
+        #[allow(dead_code)]
         pub struct CausticsClient {
             db: std::sync::Arc<DatabaseConnection>,
         }
@@ -379,6 +380,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             &REGISTRY
         }
 
+        #[allow(dead_code)]
         impl CausticsClient {
             pub fn new(db: DatabaseConnection) -> Self {
                 Self { db: std::sync::Arc::new(db) }
@@ -394,7 +396,6 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
                 }
             }
 
-            /// Execute multiple queries in a single transaction with fail-fast behavior
             pub async fn _batch<'a, Entity, ActiveModel, ModelWithRelations, T, Container>(
                 &self,
                 queries: Container,
@@ -442,6 +443,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             #(#entity_methods)*
         }
 
+        #[allow(dead_code)]
         impl TransactionCausticsClient {
             pub fn new(tx: std::sync::Arc<DatabaseTransaction>) -> Self {
                 Self { tx }
