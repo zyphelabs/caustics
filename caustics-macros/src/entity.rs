@@ -42,7 +42,7 @@ pub enum RelationKind {
     BelongsTo,
 }
 
-pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> TokenStream {
+pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namespace: String) -> TokenStream {
     // Extract fields
     let fields = match &model_ast.data {
         Data::Struct(data_struct) => match &data_struct.fields {
@@ -1121,301 +1121,306 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput) -> Tok
         }
     };
     
+    let namespace_ident = format_ident!("{}", namespace);
+    
     let expanded = quote! {
-            use sea_orm::{
-                DatabaseConnection,
-                Condition,
-                EntityTrait,
-                ActiveValue,
-                QuerySelect,
-                QueryOrder,
-                QueryTrait,
-                Select,
-                ColumnTrait,
-                IntoSimpleExpr,
-                IntoActiveModel,
-                ConnectionTrait,
+        use sea_orm::{
+            DatabaseConnection,
+            Condition,
+            EntityTrait,
+            ActiveValue,
+            QuerySelect,
+            QueryOrder,
+            QueryTrait,
+            Select,
+            ColumnTrait,
+            IntoSimpleExpr,
+            IntoActiveModel,
+            ConnectionTrait,
             DatabaseTransaction,
-            };
-            use std::marker::PhantomData;
-            use std::default::Default;
-            use std::any::Any;
-            use caustics::{SortOrder, MergeInto};
+        };
+        use std::marker::PhantomData;
+        use std::default::Default;
+        use std::any::Any;
+        use caustics::{SortOrder, MergeInto};
         use caustics::FromModel;
 
-            pub struct EntityClient<'a, C: ConnectionTrait> {
-                conn: &'a C
-            }
-
-            pub enum SetParam {
-                #all_set_param_variants
-            }
-
-            pub enum WhereParam {
-                #(#where_field_variants,)*
-            }
-
-            pub enum OrderByParam {
-                #(#order_by_field_variants,)*
-            }
-
-            #[derive(Debug, Clone)]
-            pub enum UniqueWhereParam {
-                #(#unique_where_variants,)*
-            }
-
-
-            impl MergeInto<ActiveModel> for SetParam {
-                fn merge_into(&self, model: &mut ActiveModel) {
-                    match self {
-                        #(#match_arms,)*
-                        _ => {
-                            // Relation SetParam values are handled in into_active_model, not here
-                            // This prevents infinite recursion
-                        }
-                    }
-                }
-            }
-
-            impl From<WhereParam> for Condition {
-                fn from(param: WhereParam) -> Self {
-                    match param {
-                        #(#where_match_arms,)*
-                    }
-                }
-            }
-
-            impl From<UniqueWhereParam> for Condition {
-                fn from(param: UniqueWhereParam) -> Self {
-                    match param {
-                        #(#unique_where_match_arms,)*
-                    }
-                }
-            }
-
-            impl From<OrderByParam> for (<Entity as EntityTrait>::Column, sea_orm::Order) {
-                fn from(param: OrderByParam) -> Self {
-                    match param {
-                        #(#order_by_match_arms,)*
-                    }
-                }
-            }
-
-            pub struct Create {
-                #(#required_struct_fields,)*
-                #(#foreign_key_relation_fields,)*
-                pub _params: Vec<SetParam>,
-            }
-
-            impl Create {
-            fn into_active_model<C: ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
-                    let mut model = ActiveModel::new();
-                    let mut deferred_lookups = Vec::new();
-                    
-                    #(#required_assigns)*
-                    #(#foreign_key_assigns)*
-                    
-                    // Process SetParam values
-                    for param in self._params {
-                        match param {
-                            #(#relation_connect_deferred_match_arms,)*
-                            #(#relation_disconnect_match_arms,)*
-                            other => {
-                                // For non-relation SetParam values, use the normal merge_into
-                                other.merge_into(&mut model);
-                    }
-                        }
-                    }
-                    (model, deferred_lookups)
-                }
-            }
-
-            #model_with_relations_impl
-            #relation_metadata_impl
-
-        impl<'a, C: ConnectionTrait + sea_orm::TransactionTrait> EntityClient<'a, C> {
-                pub fn new(conn: &'a C) -> Self {
-                    Self { conn }
-                }
-
-                pub fn find_unique(&self, condition: UniqueWhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                    #[cfg(test)]
-                    let registry = super::get_registry();
-                    #[cfg(not(test))]
-                    let registry = crate::get_registry();
-                    caustics::UniqueQueryBuilder {
-                        query: <Entity as EntityTrait>::find().filter::<Condition>(condition.clone().into()),
-                        conn: self.conn,
-                        relations_to_fetch: vec![],
-                        registry,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn find_first(&self, conditions: Vec<WhereParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                    #[cfg(test)]
-                    let registry = super::get_registry();
-                    #[cfg(not(test))]
-                    let registry = crate::get_registry();
-                    let mut query = <Entity as EntityTrait>::find();
-                    for cond in conditions {
-                        query = query.filter::<Condition>(cond.into());
-                    }
-                    caustics::FirstQueryBuilder {
-                        query,
-                        conn: self.conn,
-                        relations_to_fetch: vec![],
-                        registry,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn find_many(&self, conditions: Vec<WhereParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                    #[cfg(test)]
-                    let registry = super::get_registry();
-                    #[cfg(not(test))]
-                    let registry = crate::get_registry();
-                    let mut query = <Entity as EntityTrait>::find();
-                    for cond in conditions {
-                        query = query.filter::<Condition>(cond.into());
-                    }
-                    caustics::ManyQueryBuilder {
-                        query,
-                        conn: self.conn,
-                        relations_to_fetch: vec![],
-                        registry,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn create(&self, #(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
-                    let create = Create {
-                        #(#required_inits,)* 
-                        #(#foreign_key_relation_inits,)* 
-                        _params,
-                    };
-                    let (model, deferred_lookups) = create.into_active_model::<C>();
-                    caustics::CreateQueryBuilder {
-                        model,
-                        conn: self.conn,
-                        deferred_lookups,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
-                    caustics::UpdateQueryBuilder {
-                        condition: condition.into(),
-                        changes,
-                        conn: self.conn,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
-                    caustics::DeleteQueryBuilder {
-                        condition: condition.into(),
-                        conn: self.conn,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-                pub fn upsert(&self, condition: UniqueWhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
-                    let (model, deferred_lookups) = create.into_active_model::<C>();
-                    caustics::UpsertQueryBuilder {
-                        condition: condition.into(),
-                        create: (model, deferred_lookups),
-                        update,
-                        conn: self.conn,
-                        _phantom: std::marker::PhantomData,
-                    }
-                }
-
-            /// Execute multiple queries in a single transaction with fail-fast behavior
-            pub async fn _batch(
-                &self,
-                queries: Vec<caustics::BatchQuery<'a, DatabaseTransaction, Entity, ActiveModel, ModelWithRelations, SetParam>>,
-            ) -> Result<Vec<caustics::BatchResult<ModelWithRelations>>, sea_orm::DbErr>
-            where
-                Entity: sea_orm::EntityTrait,
-                ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
-                ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model>,
-                SetParam: caustics::MergeInto<ActiveModel>,
-                <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
-            {
-                let txn = self.conn.begin().await?;
-                let mut results = Vec::with_capacity(queries.len());
-
-                for query in queries {
-                    let res = match query {
-                        caustics::BatchQuery::Insert(q) => {
-                            // Extract model and execute directly
-                            let model = q.model;
-                            let result = model.insert(&txn).await.map(ModelWithRelations::from_model)?;
-                            caustics::BatchResult::Insert(result)
-                        }
-                        caustics::BatchQuery::Update(q) => {
-                            // For now, skip updates in batch mode
-                            caustics::BatchResult::Update(ModelWithRelations::default())
-                        }
-                        caustics::BatchQuery::Delete(q) => {
-                            // For now, skip deletes in batch mode
-                            caustics::BatchResult::Delete(())
-                        }
-                        caustics::BatchQuery::Upsert(q) => {
-                            // For now, skip upserts in batch mode
-                            caustics::BatchResult::Upsert(ModelWithRelations::default())
-                        }
-                    };
-                    results.push(res);
-                }
-
-                txn.commit().await?;
-                Ok(results)
-            }
-
-
-            }
-
-            #(#field_ops)*
-
-            // Include the generated relation submodules
-            #relation_submodules
-
-        // Generate column_from_str function
-        #column_from_str_fn
-
-            // --- Begin entity fetcher and registry generation ---
-            pub struct EntityFetcherImpl;
-
-            impl<C: sea_orm::ConnectionTrait> caustics::EntityFetcher<C> for EntityFetcherImpl {
-                fn fetch_by_foreign_key<'a>(
-                    &'a self,
-                    conn: &'a C,
-                    foreign_key_value: Option<i32>,
-                    foreign_key_column: &'a str,
-                    target_entity: &'a str,
-                    relation_name: &'a str,
-                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn std::any::Any + Send>, sea_orm::DbErr>> + Send + 'a>> {
-                    Box::pin(async move {
-                        match relation_name {
-                            #(
-                            #relation_names => { #relation_fetcher_bodies }
-                            )*
-                            _ => Err(sea_orm::DbErr::Custom(format!("Unknown relation: {}", relation_name))),
-                        }
-                    })
-                }
-            }
-
-        // Implement FromModel<Model> for Model
-        impl FromModel<Model> for Model {
-            fn from_model(m: Model) -> Self {
-                m
-        }
+        pub struct EntityClient<'a, C: ConnectionTrait> {
+            conn: &'a C
         }
 
-        // Remove individual entity registry - the composite registry is used instead
+        pub enum SetParam {
+            #all_set_param_variants
+        }
+
+        pub enum WhereParam {
+            #(#where_field_variants,)*
+        }
+
+        pub enum OrderByParam {
+            #(#order_by_field_variants,)*
+        }
+
+        #[derive(Debug, Clone)]
+        pub enum UniqueWhereParam {
+            #(#unique_where_variants,)*
+        }
+
+
+        impl MergeInto<ActiveModel> for SetParam {
+            fn merge_into(&self, model: &mut ActiveModel) {
+                match self {
+                    #(#match_arms,)*
+                    _ => {
+                        // Relation SetParam values are handled in into_active_model, not here
+                        // This prevents infinite recursion
+                    }
+                }
+            }
+        }
+
+        impl From<WhereParam> for Condition {
+            fn from(param: WhereParam) -> Self {
+                match param {
+                    #(#where_match_arms,)*
+                }
+            }
+        }
+
+        impl From<UniqueWhereParam> for Condition {
+            fn from(param: UniqueWhereParam) -> Self {
+                match param {
+                    #(#unique_where_match_arms,)*
+                }
+            }
+        }
+
+        impl From<OrderByParam> for (<Entity as EntityTrait>::Column, sea_orm::Order) {
+            fn from(param: OrderByParam) -> Self {
+                match param {
+                    #(#order_by_match_arms,)*
+                }
+            }
+        }
+
+        pub struct Create {
+            #(#required_struct_fields,)*
+            #(#foreign_key_relation_fields,)*
+            pub _params: Vec<SetParam>,
+        }
+
+        impl Create {
+        fn into_active_model<C: ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
+                let mut model = ActiveModel::new();
+                let mut deferred_lookups = Vec::new();
+                
+                #(#required_assigns)*
+                #(#foreign_key_assigns)*
+                
+                // Process SetParam values
+                for param in self._params {
+                    match param {
+                        #(#relation_connect_deferred_match_arms,)*
+                        #(#relation_disconnect_match_arms,)*
+                        other => {
+                            // For non-relation SetParam values, use the normal merge_into
+                            other.merge_into(&mut model);
+                }
+                    }
+                }
+                (model, deferred_lookups)
+            }
+        }
+
+        #model_with_relations_impl
+        #relation_metadata_impl
+
+    impl<'a, C: ConnectionTrait + sea_orm::TransactionTrait> EntityClient<'a, C> {
+            pub fn new(conn: &'a C) -> Self {
+                Self { conn }
+            }
+
+            pub fn find_unique(&self, condition: UniqueWhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                #[cfg(test)]
+                let registry = super::get_registry();
+                #[cfg(not(test))]
+                let registry = crate::get_registry();
+                caustics::UniqueQueryBuilder {
+                    query: <Entity as EntityTrait>::find().filter::<Condition>(condition.clone().into()),
+                    conn: self.conn,
+                    relations_to_fetch: vec![],
+                    registry,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn find_first(&self, conditions: Vec<WhereParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                #[cfg(test)]
+                let registry = super::get_registry();
+                #[cfg(not(test))]
+                let registry = crate::get_registry();
+                let mut query = <Entity as EntityTrait>::find();
+                for cond in conditions {
+                    query = query.filter::<Condition>(cond.into());
+                }
+                caustics::FirstQueryBuilder {
+                    query,
+                    conn: self.conn,
+                    relations_to_fetch: vec![],
+                    registry,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn find_many(&self, conditions: Vec<WhereParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                #[cfg(test)]
+                let registry = super::get_registry();
+                #[cfg(not(test))]
+                let registry = crate::get_registry();
+                let mut query = <Entity as EntityTrait>::find();
+                for cond in conditions {
+                    query = query.filter::<Condition>(cond.into());
+                }
+                caustics::ManyQueryBuilder {
+                    query,
+                    conn: self.conn,
+                    relations_to_fetch: vec![],
+                    registry,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn create(&self, #(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
+                let create = Create {
+                    #(#required_inits,)* 
+                    #(#foreign_key_relation_inits,)* 
+                    _params,
+                };
+                let (model, deferred_lookups) = create.into_active_model::<C>();
+                caustics::CreateQueryBuilder {
+                    model,
+                    conn: self.conn,
+                    deferred_lookups,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                caustics::UpdateQueryBuilder {
+                    condition: condition.into(),
+                    changes,
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
+                caustics::DeleteQueryBuilder {
+                    condition: condition.into(),
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn upsert(&self, condition: UniqueWhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                let (model, deferred_lookups) = create.into_active_model::<C>();
+                caustics::UpsertQueryBuilder {
+                    condition: condition.into(),
+                    create: (model, deferred_lookups),
+                    update,
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+        /// Execute multiple queries in a single transaction with fail-fast behavior
+        pub async fn _batch(
+            &self,
+            queries: Vec<caustics::BatchQuery<'a, DatabaseTransaction, Entity, ActiveModel, ModelWithRelations, SetParam>>,
+        ) -> Result<Vec<caustics::BatchResult<ModelWithRelations>>, sea_orm::DbErr>
+        where
+            Entity: sea_orm::EntityTrait,
+            ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+            SetParam: caustics::MergeInto<ActiveModel>,
+            <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+        {
+            let txn = self.conn.begin().await?;
+            let mut results = Vec::with_capacity(queries.len());
+
+            for query in queries {
+                let res = match query {
+                    caustics::BatchQuery::Insert(q) => {
+                        // Extract model and execute directly
+                        let model = q.model;
+                        let result = model.insert(&txn).await.map(ModelWithRelations::from_model)?;
+                        caustics::BatchResult::Insert(result)
+                    }
+                    caustics::BatchQuery::Update(q) => {
+                        // For now, skip updates in batch mode
+                        caustics::BatchResult::Update(ModelWithRelations::default())
+                    }
+                    caustics::BatchQuery::Delete(q) => {
+                        // For now, skip deletes in batch mode
+                        caustics::BatchResult::Delete(())
+                    }
+                    caustics::BatchQuery::Upsert(q) => {
+                        // For now, skip upserts in batch mode
+                        caustics::BatchResult::Upsert(ModelWithRelations::default())
+                    }
+                };
+                results.push(res);
+            }
+
+            txn.commit().await?;
+            Ok(results)
+        }
+
+
+        }
+
+        #(#field_ops)*
+
+        // Include the generated relation submodules
+        #relation_submodules
+
+    // Generate column_from_str function
+    #column_from_str_fn
+
+        // --- Begin entity fetcher and registry generation ---
+        pub struct EntityFetcherImpl;
+
+        impl<C: sea_orm::ConnectionTrait> caustics::EntityFetcher<C> for EntityFetcherImpl {
+            fn fetch_by_foreign_key<'a>(
+                &'a self,
+                conn: &'a C,
+                foreign_key_value: Option<i32>,
+                foreign_key_column: &'a str,
+                target_entity: &'a str,
+                relation_name: &'a str,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn std::any::Any + Send>, sea_orm::DbErr>> + Send + 'a>> {
+                Box::pin(async move {
+                    match relation_name {
+                        #(
+                        #relation_names => { #relation_fetcher_bodies }
+                        )*
+                        _ => Err(sea_orm::DbErr::Custom(format!("Unknown relation: {}", relation_name))),
+                    }
+                })
+            }
+        }
+
+    // Implement FromModel<Model> for Model
+    impl FromModel<Model> for Model {
+        fn from_model(m: Model) -> Self {
+            m
+    }
+    }
+
+    // Implement ActiveModelBehavior for ActiveModel
+    impl sea_orm::ActiveModelBehavior for ActiveModel {}
+
+    // Remove individual entity registry - the composite registry is used instead
     };
 
     TokenStream::from(expanded)

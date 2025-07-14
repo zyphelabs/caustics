@@ -9,8 +9,9 @@ fn main() {
     // Main client (for src/)
     generate_client_for_dir("src", "caustics_client.rs");
 
-    // Test client (for src/ and tests/)
+    // Test client (for src/ and tests/) - also generate per-namespace files
     generate_client_for_dir_multi(&["src", "tests"], "caustics_client_test.rs");
+    generate_per_namespace_files(&["src", "tests"]);
 }
 
 fn generate_client_for_dir(dir: &str, out_file: &str) {
@@ -133,6 +134,104 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
     // Use test-specific client code generation
     let client_code = generate_client_code(&entities, true);
     fs::write(out_path, client_code).unwrap();
+}
+
+fn generate_per_namespace_files(dirs: &[&str]) {
+    for dir in dirs {
+        println!("cargo:rerun-if-changed={}/", dir);
+    }
+
+    let out_dir = env::var("OUT_DIR").unwrap();
+    
+    // Group entities by namespace
+    let mut namespace_entities: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
+    
+    for dir in dirs {
+        for entry in WalkDir::new(dir) {
+            let entry = entry.unwrap();
+            if entry.path().extension().map_or(false, |ext| ext == "rs") {
+                let content = fs::read_to_string(entry.path()).unwrap();
+                let file = parse_file(&content).unwrap();
+
+                for item in file.items {
+                    if let Item::Mod(module) = &item {
+                        let module_name = module.ident.to_string();
+                        if let Some((_, items)) = &module.content {
+                            let namespace = extract_namespace_from_attrs(&module.attrs);
+                            let has_caustics_attr = has_caustics_attribute(&module.attrs);
+                            let mut model_found = false;
+                            let mut relation_found = false;
+
+                            for item in items {
+                                if let Item::Struct(struct_item) = item {
+                                    if struct_item.ident == "Model" {
+                                        model_found = true;
+                                        if has_caustics_attr || has_caustics_derive(&struct_item.attrs) {
+                                            let entity_name = to_pascal_case(&module_name);
+                                            let module_path = module_name.clone();
+                                            namespace_entities.entry(namespace.clone()).or_insert_with(Vec::new).push((entity_name, module_path));
+                                        }
+                                    }
+                                } else if let Item::Enum(enum_item) = item {
+                                    if enum_item.ident == "Relation" {
+                                        relation_found = true;
+                                    }
+                                }
+                            }
+
+                            // If we found both Model and Relation in a caustics module, ensure the entity is added
+                            if has_caustics_attr && model_found && relation_found {
+                                let entity_name = to_pascal_case(&module_name);
+                                let module_path = module_name.clone();
+                                let entities = namespace_entities.entry(namespace.clone()).or_insert_with(Vec::new);
+                                if !entities.iter().any(|(name, _)| name == &entity_name) {
+                                    entities.push((entity_name, module_path));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate a separate file for each namespace
+    for (namespace, entities) in namespace_entities {
+        if !entities.is_empty() {
+            // Check if we're in a test directory by looking at the current directory
+            let is_test = dirs.iter().any(|dir| *dir == "tests");
+            let out_file = if is_test {
+                format!("caustics_client_{}_test.rs", namespace)
+            } else {
+                format!("caustics_client_{}.rs", namespace)
+            };
+            let out_path = Path::new(&out_dir).join(out_file);
+            let client_code = generate_client_code(&entities, true);
+            fs::write(out_path, client_code).unwrap();
+        }
+    }
+}
+
+fn extract_namespace_from_attrs(attrs: &[Attribute]) -> String {
+    for attr in attrs {
+        if attr.path().is_ident("caustics") {
+            // Convert the attribute to a string and parse it manually
+            let attr_str = quote! { #attr }.to_string();
+            if attr_str.contains("namespace") {
+                // Extract namespace from the attribute string
+                if let Some(start) = attr_str.find("namespace = ") {
+                    let after_namespace = &attr_str[start + 12..];
+                    if let Some(end) = after_namespace.find('"') {
+                        let after_quote = &after_namespace[end + 1..];
+                        if let Some(end_quote) = after_quote.find('"') {
+                            return after_quote[..end_quote].to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "default".to_string()
 }
 
 fn has_caustics_attribute(attrs: &[Attribute]) -> bool {

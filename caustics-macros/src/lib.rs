@@ -11,6 +11,35 @@ mod entity;
 
 #[proc_macro_attribute]
 pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // Parse the namespace parameter from the attribute arguments
+    let namespace = if let Ok(args_str) = syn::parse::<syn::LitStr>(_args.clone()) {
+        // Simple case: just a string literal
+        args_str.value()
+    } else {
+        // Try to parse as a more complex attribute structure
+        let args_str = _args.to_string();
+        if args_str.contains("namespace") {
+            // Extract namespace from the attribute string
+            if let Some(start) = args_str.find("namespace = ") {
+                let after_namespace = &args_str[start + 12..];
+                if let Some(end) = after_namespace.find('"') {
+                    let after_quote = &after_namespace[end + 1..];
+                    if let Some(end_quote) = after_quote.find('"') {
+                        after_quote[..end_quote].to_string()
+                    } else {
+                        "default".to_string()
+                    }
+                } else {
+                    "default".to_string()
+                }
+            } else {
+                "default".to_string()
+            }
+        } else {
+            "default".to_string()
+        }
+    };
+
     let mut ast = match syn::parse::<syn::ItemMod>(input.clone()) {
         Ok(ast) => ast,
         Err(e) => {
@@ -19,7 +48,7 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                 "The #[caustics] attribute must be placed on a module declaration",
             )
             .to_compile_error()
-            .into()
+            .into();
         }
     };
 
@@ -32,7 +61,7 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
         None => {
             return Error::new(ast.ident.span(), "Module must have a body")
                 .to_compile_error()
-                .into()
+                .into();
         }
     };
 
@@ -126,7 +155,7 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
     // If we found both struct and enum with #[derive(Caustics)], generate the entity code
     match (model_ast, relation_ast) {
         (Some(model_ast), Some(relation_ast)) => {
-            let generated = entity::generate_entity(model_ast, relation_ast);
+            let generated = entity::generate_entity(model_ast, relation_ast, namespace);
 
             // Parse the generated items into a File
             let generated_file = match syn::parse2::<File>(generated) {

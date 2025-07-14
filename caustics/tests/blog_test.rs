@@ -1,8 +1,8 @@
-include!(concat!(env!("OUT_DIR"), "/caustics_client_test.rs"));
+include!(concat!(env!("OUT_DIR"), "/caustics_client_blog_test.rs"));
 
 use caustics_macros::caustics;
 
-#[caustics]
+#[caustics(namespace = "blog")]
 pub mod user {
     use caustics_macros::Caustics;
     use chrono::{DateTime, FixedOffset};
@@ -34,8 +34,6 @@ pub mod user {
         Posts,
     }
 
-    impl sea_orm::ActiveModelBehavior for ActiveModel {}
-
     // Add Related trait implementation
     impl Related<super::user::Entity> for Entity {
         fn to() -> RelationDef {
@@ -44,7 +42,7 @@ pub mod user {
     }
 }
 
-#[caustics]
+#[caustics(namespace = "blog")]
 pub mod post {
     use caustics_macros::Caustics;
     use chrono::{DateTime, FixedOffset};
@@ -87,8 +85,6 @@ pub mod post {
         )]
         Reviewer,
     }
-
-    impl ActiveModelBehavior for ActiveModel {}
 
     // Add Related trait implementation
     impl Related<super::user::Entity> for Entity {
