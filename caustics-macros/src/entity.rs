@@ -100,7 +100,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             quote! {
                 if let Some(fk_value) = foreign_key_value {
                         let condition = #target_unique_param::#primary_key_variant(fk_value);
-                        let opt_model = <#target_entity_type as sea_orm::EntityTrait>::find().filter::<sea_orm::Condition>(condition.into()).one(conn).await?;
+                        let opt_model = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into()).one(conn).await?;
                         let with_rel = opt_model.map(#target_model_with_rel::from_model);
                         let result: Option<Option<#target_model_with_rel>> = Some(with_rel);
                         return Ok(Box::new(result) as Box<dyn std::any::Any + Send>);
@@ -112,7 +112,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             quote! {
                 if let Some(fk_value) = foreign_key_value {
                         let condition = #target_unique_param::#primary_key_variant(fk_value);
-                        let opt_model = <#target_entity_type as sea_orm::EntityTrait>::find().filter::<sea_orm::Condition>(condition.into()).one(conn).await?;
+                        let opt_model = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into()).one(conn).await?;
                         let with_rel = opt_model.map(#target_model_with_rel::from_model);
                         return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
                 } else {
@@ -370,9 +370,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                             |conn: &C, param| {
                                 let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
                                 Box::pin(async move {
-                                    let condition: sea_orm::Condition = param.clone().into();
+                                    let condition: sea_query::Condition = param.clone().into();
                                     let result = #target_module::Entity::find()
-                                        .filter::<sea_orm::Condition>(condition)
+                                        .filter::<sea_query::Condition>(condition)
                                         .one(conn)
                                         .await?;
                                     result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
@@ -472,24 +472,97 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         #(#relation_disconnect_variants,)*
     };
 
-    // Generate field variants for WhereParam enum (all fields)
-    let where_field_variants = fields.iter().map(|field| {
+    // Generate field variants for WhereParam enum (all fields, with string ops for string fields)
+    let mut where_field_variants = Vec::new();
+    let mut where_match_arms = Vec::new();
+    let mut field_ops = Vec::new();
+    for field in fields.iter() {
         let name = field.ident.as_ref().unwrap();
         let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
         let ty = &field.ty;
-        quote! {
-            #pascal_name(sea_orm::Condition)
+        if let syn::Type::Path(type_path) = ty {
+            let last = &type_path.path.segments.last().unwrap().ident;
+            if last == "String" {
+                // String field: add Equals, Contains, StartsWith
+                let contains_variant = format_ident!("{}Contains", pascal_name);
+                let starts_with_variant = format_ident!("{}StartsWith", pascal_name);
+                where_field_variants.push(quote! { #pascal_name(sea_query::Condition) });
+                where_field_variants.push(quote! { #contains_variant(String) });
+                where_field_variants.push(quote! { #starts_with_variant(String) });
+                where_match_arms.push(quote! { WhereParam::#pascal_name(condition) => condition.clone() });
+                where_match_arms.push(quote! { WhereParam::#contains_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<super::Entity as EntityTrait>::Column::#pascal_name).contains(val)) });
+                where_match_arms.push(quote! { WhereParam::#starts_with_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<super::Entity as EntityTrait>::Column::#pascal_name).starts_with(val)) });
+                // Generate field module with filter functions
+                field_ops.push(quote! {
+                    pub mod #name {
+                        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                        use uuid::Uuid;
+                        use std::vec::Vec;
+                        use sea_query::{Condition, Expr};
+                        use super::*;
+                        pub fn equals<T: Into<String>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                        }
+                        pub fn contains<T: Into<String>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#contains_variant(value.into())
+                        }
+                        pub fn starts_with<T: Into<String>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#starts_with_variant(value.into())
+                        }
+                        pub fn asc() -> super::OrderByParam {
+                            super::OrderByParam::#pascal_name(caustics::SortOrder::Asc)
+                        }
+                        pub fn desc() -> super::OrderByParam {
+                            super::OrderByParam::#pascal_name(caustics::SortOrder::Desc)
+                        }
+                    }
+                });
+            } else {
+                // Non-string field: only Condition, plus order-by
+                where_field_variants.push(quote! { #pascal_name(sea_query::Condition) });
+                where_match_arms.push(quote! { WhereParam::#pascal_name(condition) => condition.clone() });
+                field_ops.push(quote! {
+                    pub mod #name {
+                        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                        use uuid::Uuid;
+                        use std::vec::Vec;
+                        use sea_query::{Condition, Expr};
+                        use super::*;
+                        pub fn equals<T: Into<#ty>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                        }
+                        pub fn not_equals<T: Into<#ty>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.ne(value.into())))
+                        }
+                        pub fn gt<T: Into<#ty>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.gt(value.into())))
+                        }
+                        pub fn lt<T: Into<#ty>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.lt(value.into())))
+                        }
+                        pub fn gte<T: Into<#ty>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.gte(value.into())))
+                        }
+                        pub fn lte<T: Into<#ty>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.lte(value.into())))
+                        }
+                        pub fn in_vec<T: Into<#ty>>(values: Vec<T>) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.is_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
+                        }
+                        pub fn not_in_vec<T: Into<#ty>>(values: Vec<T>) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.is_not_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
+                        }
+                        pub fn asc() -> super::OrderByParam {
+                            super::OrderByParam::#pascal_name(caustics::SortOrder::Asc)
+                        }
+                        pub fn desc() -> super::OrderByParam {
+                            super::OrderByParam::#pascal_name(caustics::SortOrder::Desc)
+                        }
+                    }
+                });
+            }
         }
-    }).collect::<Vec<_>>();
-
-    // Generate field variants for OrderByParam enum (all fields)
-    let order_by_field_variants = fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-        quote! {
-            #pascal_name(caustics::SortOrder)
-        }
-    }).collect::<Vec<_>>();
+    }
 
     // Generate match arms for WhereParam
     let where_match_arms = fields.iter().map(|field| {
@@ -498,6 +571,80 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             WhereParam::#pascal_name(condition) => condition.clone()
         }
     }).collect::<Vec<_>>();
+
+    // Generate filter methods for all fields (only equals for string fields)
+    let field_ops: Vec<_> = fields.iter().map(|field| {
+        let field_name = &field.ident;
+        let field_type = &field.ty;
+        let pascal_name = format_ident!("{}", field_name.as_ref().unwrap().to_string().to_pascal_case());
+        if let syn::Type::Path(type_path) = field_type {
+            let last = &type_path.path.segments.last().unwrap().ident;
+            if last == "String" {
+                // Only equals for string fields
+                quote! {
+                    pub mod #field_name {
+                        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                        use uuid::Uuid;
+                        use std::vec::Vec;
+                        use sea_query::Expr;
+                        use super::*;
+                        pub fn equals<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                        }
+                    }
+                }
+            } else {
+                // All comparison ops for non-string fields
+                quote! {
+                    pub mod #field_name {
+                        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                        use uuid::Uuid;
+                        use std::vec::Vec;
+                        use sea_query::Expr;
+                        use super::*;
+                        pub fn equals<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                        }
+                        pub fn not_equals<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.ne(value.into())))
+                        }
+                        pub fn gt<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.gt(value.into())))
+                        }
+                        pub fn lt<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.lt(value.into())))
+                        }
+                        pub fn gte<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.gte(value.into())))
+                        }
+                        pub fn lte<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.lte(value.into())))
+                        }
+                        pub fn in_vec<T: Into<#field_type>>(values: Vec<T>) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.is_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
+                        }
+                        pub fn not_in_vec<T: Into<#field_type>>(values: Vec<T>) -> super::WhereParam {
+                            super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.is_not_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback: only equals
+            quote! {
+                pub mod #field_name {
+                    use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                    use uuid::Uuid;
+                    use std::vec::Vec;
+                    use sea_query::Expr;
+                    use super::*;
+                    pub fn equals<T: Into<#field_type>>(value: T) -> super::WhereParam {
+                        super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                    }
+                }
+            }
+        }
+    }).collect();
 
     // Generate match arms for UniqueWhereParam
     let unique_where_match_arms = unique_fields.iter().map(|field| {
@@ -508,6 +655,15 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             UniqueWhereParam::#equals_variant(value) => {
                 Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
             }
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate field variants for OrderByParam enum (all fields)
+    let order_by_field_variants = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+        quote! {
+            #pascal_name(caustics::SortOrder)
         }
     }).collect::<Vec<_>>();
 
@@ -621,10 +777,11 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         };
         quote! {
             pub mod #field_name {
-                use sea_orm::{Condition, ColumnTrait, EntityTrait, ActiveValue};
                 use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
                 use uuid::Uuid;
                 use std::vec::Vec;
+                use sea_query::Expr;
+                use super::*;
 
                 #set_fn
                 #unique_where_fn
@@ -654,6 +811,12 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                 }
                 pub fn not_in_vec<T: Into<#field_type>>(values: Vec<T>) -> super::WhereParam {
                     super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.is_not_in(values.into_iter().map(|v| v.into()).collect::<Vec<_>>())))
+                }
+                pub fn asc() -> super::OrderByParam {
+                    super::OrderByParam::#pascal_name(caustics::SortOrder::Asc)
+                }
+                pub fn desc() -> super::OrderByParam {
+                    super::OrderByParam::#pascal_name(caustics::SortOrder::Desc)
                 }
             }
         }
@@ -1013,9 +1176,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                                     |conn: &C, param| {
                                         let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
                                         Box::pin(async move {
-                                            let condition: sea_orm::Condition = param.clone().into();
+                                            let condition: sea_query::Condition = param.clone().into();
                                             let result = #target_module::Entity::find()
-                                                .filter::<sea_orm::Condition>(condition)
+                                                .filter::<sea_query::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
                                             result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
@@ -1124,28 +1287,14 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
     let namespace_ident = format_ident!("{}", namespace);
     
     let expanded = quote! {
-        use sea_orm::{
-            DatabaseConnection,
-            Condition,
-            EntityTrait,
-            ActiveValue,
-            QuerySelect,
-            QueryOrder,
-            QueryTrait,
-            Select,
-            ColumnTrait,
-            IntoSimpleExpr,
-            IntoActiveModel,
-            ConnectionTrait,
-            DatabaseTransaction,
-        };
-        use std::marker::PhantomData;
-        use std::default::Default;
-        use std::any::Any;
+        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+        use uuid::Uuid;
+        use std::vec::Vec;
         use caustics::{SortOrder, MergeInto};
         use caustics::FromModel;
+        use sea_query::{Condition, Expr};
 
-        pub struct EntityClient<'a, C: ConnectionTrait> {
+        pub struct EntityClient<'a, C: sea_orm::ConnectionTrait> {
             conn: &'a C
         }
 
@@ -1183,6 +1332,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             fn from(param: WhereParam) -> Self {
                 match param {
                     #(#where_match_arms,)*
+                    _ => todo!(),
                 }
             }
         }
@@ -1210,7 +1360,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         }
 
         impl Create {
-        fn into_active_model<C: ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
+        fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
                 let mut model = ActiveModel::new();
                 let mut deferred_lookups = Vec::new();
                 
@@ -1235,7 +1385,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         #model_with_relations_impl
         #relation_metadata_impl
 
-    impl<'a, C: ConnectionTrait + sea_orm::TransactionTrait> EntityClient<'a, C> {
+    impl<'a, C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait> EntityClient<'a, C> {
             pub fn new(conn: &'a C) -> Self {
                 Self { conn }
             }
@@ -1336,7 +1486,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         /// Execute multiple queries in a single transaction with fail-fast behavior
         pub async fn _batch(
             &self,
-            queries: Vec<caustics::BatchQuery<'a, DatabaseTransaction, Entity, ActiveModel, ModelWithRelations, SetParam>>,
+            queries: Vec<caustics::BatchQuery<'a, sea_orm::DatabaseTransaction, Entity, ActiveModel, ModelWithRelations, SetParam>>,
         ) -> Result<Vec<caustics::BatchResult<ModelWithRelations>>, sea_orm::DbErr>
         where
             Entity: sea_orm::EntityTrait,

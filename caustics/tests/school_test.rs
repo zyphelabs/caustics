@@ -5,7 +5,6 @@ use caustics_macros::caustics;
 #[caustics(namespace = "school")]
 pub mod student {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -64,7 +63,6 @@ pub mod student {
 #[caustics(namespace = "school")]
 pub mod teacher {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -126,7 +124,6 @@ pub mod teacher {
 #[caustics(namespace = "school")]
 pub mod department {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -177,7 +174,6 @@ pub mod department {
 #[caustics(namespace = "school")]
 pub mod course {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -279,7 +275,6 @@ pub mod course {
 #[caustics(namespace = "school")]
 pub mod enrollment {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -337,7 +332,6 @@ pub mod enrollment {
 #[caustics(namespace = "school")]
 pub mod grade {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -415,7 +409,6 @@ pub mod grade {
 #[caustics(namespace = "school")]
 pub mod semester {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -546,6 +539,13 @@ mod caustics_school_tests {
                 student::deleted_at::set(None),
             ],
         ).exec().await.unwrap();
+        assert_eq!(student.student_number, "S12345");
+        assert_eq!(student.first_name, "Alice");
+        assert_eq!(student.last_name, "Smith");
+        assert_eq!(student.email, Some("alice@example.com".to_string()));
+        assert_eq!(student.phone, Some("123456789".to_string()));
+        assert_eq!(student.graduation_date, None);
+        assert_eq!(student.deleted_at, None);
 
         // Query by unique student_number
         let found = client.student().find_unique(student::student_number::equals("S12345".to_string()))
@@ -675,6 +675,10 @@ mod caustics_school_tests {
                 enrollment::deleted_at::set(None),
             ],
         ).exec().await.unwrap();
+        assert_eq!(enrollment.student_id, student.id);
+        assert_eq!(enrollment.course_id, course.id);
+        assert_eq!(enrollment.withdrawal_date, None);
+        assert_eq!(enrollment.deleted_at, None);
 
         // Fetch all enrollments for student
         let enrollments = client.enrollment().find_many(vec![enrollment::student_id::equals(student.id)])
@@ -716,5 +720,185 @@ mod caustics_school_tests {
         let s3 = client.student().find_unique(student::student_number::equals("S3".to_string()))
             .exec().await.unwrap();
         assert!(s3.is_none());
+    }
+}
+
+#[cfg(test)]
+mod caustics_school_advanced_tests {
+    use super::helpers::setup_test_db;
+    use super::*;
+    use chrono::{DateTime, FixedOffset, TimeZone};
+    use caustics::QueryError;
+
+    fn fixed_now() -> DateTime<FixedOffset> {
+        FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_upsert_student() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        // Upsert (should update)
+        let upserted = client.student().upsert(
+            student::student_number::equals("U1".to_string()),
+            student::Create {
+                student_number: "U1".to_string(),
+                first_name: "Upsert".to_string(),
+                last_name: "Test".to_string(),
+                date_of_birth: fixed_now(),
+                enrollment_date: fixed_now(),
+                is_active: true,
+                created_at: fixed_now(),
+                updated_at: fixed_now(),
+                _params: vec![],
+            },
+            vec![
+                student::first_name::set("Updated".to_string()),
+            ]
+        ).exec().await.unwrap();
+        assert_eq!(upserted.first_name, "Updated");
+    }
+
+    #[tokio::test]
+    async fn test_filter_sort_paginate_students() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        // Insert multiple students
+        for i in 0..10 {
+            let s = client.student().create(
+                format!("S{:02}", i),
+                format!("Name{:02}", i),
+                "Test".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            ).exec().await.unwrap();
+            assert_eq!(s.student_number, format!("S{:02}", i));
+        }
+        // Filter: only students with S01 and S02
+        let filtered = client.student().find_many(vec![
+            student::student_number::equals("S01".to_string()),
+        ])
+        .order_by(student::student_number::asc())
+        .exec().await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].student_number, "S01");
+
+        let filtered2 = client.student().find_many(vec![
+            student::student_number::equals("S02".to_string()),
+        ])
+        .order_by(student::student_number::asc())
+        .exec().await.unwrap();
+        assert_eq!(filtered2.len(), 1);
+        assert_eq!(filtered2[0].student_number, "S02");
+    }
+
+    #[tokio::test]
+    async fn test_nested_relations_fetching() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        // Setup department, teacher, semester, course, student, enrollment
+        let dept = client.department().create(
+            "SCI".to_string(), "Science".to_string(), fixed_now(), fixed_now(), vec![]
+        ).exec().await.unwrap();
+        assert_eq!(dept.code, "SCI");
+        let semester = client.semester().create(
+            "2024S2".to_string(), "Summer 2024".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![]
+        ).exec().await.unwrap();
+        assert_eq!(semester.code, "2024S2");
+        let teacher = client.teacher().create(
+            "T002".to_string(), "Eve".to_string(), "Newton".to_string(), "eve@school.edu".to_string(), fixed_now(), true, fixed_now(), fixed_now(), department::id::equals(dept.id), vec![]
+        ).exec().await.unwrap();
+        assert_eq!(teacher.first_name, "Eve");
+        let course = client.course().create(
+            "SCI101".to_string(), "Physics".to_string(), 5, 40, true, fixed_now(), fixed_now(), teacher::id::equals(teacher.id), department::id::equals(dept.id), semester::id::equals(semester.id), vec![]
+        ).exec().await.unwrap();
+        assert_eq!(course.code, "SCI101");
+        let student = client.student().create(
+            "S100".to_string(), "Nested".to_string(), "Student".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![]
+        ).exec().await.unwrap();
+        assert_eq!(student.student_number, "S100");
+        let enrollment = client.enrollment().create(
+            fixed_now(), "enrolled".to_string(), fixed_now(), fixed_now(), student::id::equals(student.id), course::id::equals(course.id), vec![]
+        ).exec().await.unwrap();
+        assert_eq!(enrollment.status, "enrolled");
+        // Fetch course with teacher, department, and enrollments
+        let course_with_rel = client.course().find_unique(course::id::equals(course.id))
+            .with(course::teacher::fetch())
+            .with(course::department::fetch())
+            .with(course::enrollments::fetch(vec![]))
+            .exec().await.unwrap().unwrap();
+        assert_eq!(course_with_rel.teacher.unwrap().first_name, "Eve");
+        assert_eq!(course_with_rel.department.unwrap().name, "Science");
+        assert_eq!(course_with_rel.enrollments.as_ref().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_nullable_fields_update() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let student = client.student().create(
+            "S200".to_string(), "Nullable".to_string(), "Fields".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![student::email::set(None)]
+        ).exec().await.unwrap();
+        assert_eq!(student.email, None);
+        // Update email
+        let updated = client.student().update(student::id::equals(student.id), vec![student::email::set(Some("nullable@school.edu".to_string()))])
+            .exec().await.unwrap();
+        assert_eq!(updated.email, Some("nullable@school.edu".to_string()));
+        // Set email back to None
+        let updated2 = client.student().update(student::id::equals(student.id), vec![student::email::set(None)])
+            .exec().await.unwrap();
+        assert_eq!(updated2.email, None);
+    }
+
+    #[tokio::test]
+    async fn test_complex_transaction() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let result: Result<(), QueryError> = client._transaction().run(|tx| Box::pin(async move {
+            let student = tx.student().create(
+                "S300".to_string(), "Transact".to_string(), "Action".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![]
+            ).exec().await?;
+            assert_eq!(student.student_number, "S300");
+            let dept = tx.department().create(
+                "TXN".to_string(), "Transactional".to_string(), fixed_now(), fixed_now(), vec![]
+            ).exec().await?;
+            assert_eq!(dept.code, "TXN");
+            let semester = tx.semester().create(
+                "2024F".to_string(), "Fall 2024".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![]
+            ).exec().await?;
+            assert_eq!(semester.code, "2024F");
+            let teacher = tx.teacher().create(
+                "T003".to_string(), "Frank".to_string(), "Einstein".to_string(), "frank@school.edu".to_string(), fixed_now(), true, fixed_now(), fixed_now(), department::id::equals(dept.id), vec![]
+            ).exec().await?;
+            assert_eq!(teacher.first_name, "Frank");
+            let course = tx.course().create(
+                "TXN101".to_string(), "Quantum".to_string(), 4, 20, true, fixed_now(), fixed_now(), teacher::id::equals(teacher.id), department::id::equals(dept.id), semester::id::equals(semester.id), vec![]
+            ).exec().await?;
+            assert_eq!(course.code, "TXN101");
+            let enrollment = tx.enrollment().create(
+                fixed_now(), "enrolled".to_string(), fixed_now(), fixed_now(), student::id::equals(student.id), course::id::equals(course.id), vec![]
+            ).exec().await?;
+            assert_eq!(enrollment.status, "enrolled");
+            let grade = tx.grade().create(
+                95,
+                fixed_now(), // graded_at
+                fixed_now(), // created_at
+                fixed_now(), // updated_at
+                student::id::equals(student.id),
+                course::id::equals(course.id),
+                teacher::id::equals(teacher.id),
+                vec![grade::letter_grade::set(None), grade::comments::set(None), grade::deleted_at::set(None)]
+            ).exec().await?;
+            assert_eq!(grade.grade_value, 95);
+            Err(QueryError::Custom("force rollback".to_string()))
+        })).await;
+        assert!(result.is_err());
+        // Ensure nothing was persisted
+        let found = client.student().find_unique(student::student_number::equals("S300".to_string())).exec().await.unwrap();
+        assert!(found.is_none());
     }
 }

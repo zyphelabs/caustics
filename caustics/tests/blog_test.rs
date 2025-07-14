@@ -5,7 +5,6 @@ use caustics_macros::caustics;
 #[caustics(namespace = "blog")]
 pub mod user {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -45,7 +44,6 @@ pub mod user {
 #[caustics(namespace = "blog")]
 pub mod post {
     use caustics_macros::Caustics;
-    use chrono::{DateTime, FixedOffset};
     use sea_orm::entity::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
