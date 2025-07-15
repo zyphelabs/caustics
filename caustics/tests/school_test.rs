@@ -721,6 +721,41 @@ mod caustics_school_tests {
             .exec().await.unwrap();
         assert!(s3.is_none());
     }
+
+    #[tokio::test]
+    async fn test_case_insensitive_search_student_first_name() {
+        use super::student;
+        use caustics::QueryMode;
+        let db = setup_test_db().await;
+        let now = chrono::FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2022, 1, 1, 12, 0, 0).unwrap();
+        // Insert a student with mixed-case first_name
+        let _student = student::EntityClient::new(&db)
+            .create(
+                "S12345".to_string(), // student_number
+                "Alice".to_string(), // first_name (mixed case)
+                "Smith".to_string(), // last_name
+                now,
+                now,
+                true,
+                now,
+                now,
+                vec![],
+            )
+            .exec()
+            .await
+            .expect("insert student");
+        // Query with different case and QueryMode::Insensitive
+        let found = student::EntityClient::new(&db)
+            .find_many(vec![
+                student::first_name::contains("alice"),
+                student::WhereParam::FirstNameMode(QueryMode::Insensitive),
+            ])
+            .exec()
+            .await
+            .expect("query student");
+        assert!(!found.is_empty(), "Should find student with case-insensitive search");
+        assert_eq!(found[0].first_name, "Alice");
+    }
 }
 
 #[cfg(test)]

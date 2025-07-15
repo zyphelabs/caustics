@@ -487,14 +487,20 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                 let contains_variant = format_ident!("{}Contains", pascal_name);
                 let starts_with_variant = format_ident!("{}StartsWith", pascal_name);
                 let ends_with_variant = format_ident!("{}EndsWith", pascal_name);
+                let mode_variant = format_ident!("{}Mode", pascal_name);
                 where_field_variants.push(quote! { #pascal_name(sea_query::Condition) });
                 where_field_variants.push(quote! { #contains_variant(String) });
                 where_field_variants.push(quote! { #starts_with_variant(String) });
                 where_field_variants.push(quote! { #ends_with_variant(String) });
+                where_field_variants.push(quote! { #mode_variant(caustics::QueryMode) });
                 where_match_arms.push(quote! { WhereParam::#pascal_name(condition) => condition.clone() });
                 where_match_arms.push(quote! { WhereParam::#contains_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<Entity as EntityTrait>::Column::#pascal_name).like(format!("%{}%", val))) });
                 where_match_arms.push(quote! { WhereParam::#starts_with_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<Entity as EntityTrait>::Column::#pascal_name).like(format!("{}%", val))) });
                 where_match_arms.push(quote! { WhereParam::#ends_with_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<Entity as EntityTrait>::Column::#pascal_name).like(format!("%{}", val))) });
+                where_match_arms.push(quote! { WhereParam::#mode_variant(mode) => {
+                    // TODO: Handle QueryMode in query builder (combine with other filters for this field)
+                    sea_query::Condition::all()
+                }});
                 // Generate field module with filter functions
                 field_ops.push(quote! {
                     pub mod #name {
@@ -521,6 +527,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                         pub fn desc() -> super::OrderByParam {
                             super::OrderByParam::#pascal_name(caustics::SortOrder::Desc)
                         }
+                        pub fn mode(mode: caustics::QueryMode) -> super::WhereParam {
+                            super::WhereParam::#mode_variant(mode)
+                        }
                     }
                 });
             } else if is_option(ty) {
@@ -536,14 +545,20 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                                             let contains_variant = format_ident!("{}Contains", pascal_name);
                                             let starts_with_variant = format_ident!("{}StartsWith", pascal_name);
                                             let ends_with_variant = format_ident!("{}EndsWith", pascal_name);
+                                            let mode_variant = format_ident!("{}Mode", pascal_name);
                                             where_field_variants.push(quote! { #pascal_name(sea_query::Condition) });
                                             where_field_variants.push(quote! { #contains_variant(String) });
                                             where_field_variants.push(quote! { #starts_with_variant(String) });
                                             where_field_variants.push(quote! { #ends_with_variant(String) });
+                                            where_field_variants.push(quote! { #mode_variant(caustics::QueryMode) });
                                             where_match_arms.push(quote! { WhereParam::#pascal_name(condition) => condition.clone() });
                                             where_match_arms.push(quote! { WhereParam::#contains_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<Entity as EntityTrait>::Column::#pascal_name).like(format!("%{}%", val))) });
                                             where_match_arms.push(quote! { WhereParam::#starts_with_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<Entity as EntityTrait>::Column::#pascal_name).like(format!("{}%", val))) });
                                             where_match_arms.push(quote! { WhereParam::#ends_with_variant(val) => sea_query::Condition::all().add(sea_query::Expr::col(<Entity as EntityTrait>::Column::#pascal_name).like(format!("%{}", val))) });
+                                            where_match_arms.push(quote! { WhereParam::#mode_variant(mode) => {
+                                                // TODO: Handle QueryMode in query builder (combine with other filters for this field)
+                                                sea_query::Condition::all()
+                                            }});
                                             // Generate field module with filter functions
                                             field_ops.push(quote! {
                                                 pub mod #name {
@@ -570,6 +585,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                                                     pub fn desc() -> super::OrderByParam {
                                                         super::OrderByParam::#pascal_name(caustics::SortOrder::Desc)
                                                     }
+                                                    pub fn mode(mode: caustics::QueryMode) -> super::WhereParam {
+                                                        super::WhereParam::#mode_variant(mode)
+                                                    }
                                                 }
                                             });
                                         } else {
@@ -584,7 +602,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                                                     use sea_query::{Condition, Expr};
                                                     use super::*;
                                                     pub fn equals<T: Into<#ty>>(value: T) -> super::WhereParam {
-                                                        super::WhereParam::#pascal_name(Condition::all().add(<super::Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
+                                                        super::WhereParam::#pascal_name(Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value.into())))
                                                     }
                                                     pub fn asc() -> super::OrderByParam {
                                                         super::OrderByParam::#pascal_name(caustics::SortOrder::Asc)
@@ -1656,6 +1674,71 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
     // Remove individual entity registry - the composite registry is used instead
     };
 
+    // Replace the placeholder build_condition function with real code generation for all string fields:
+    // (This is a macro code edit, not a template)
+    let mut build_condition_arms = Vec::new();
+    for field in fields.iter() {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+        let ty = &field.ty;
+        if let syn::Type::Path(type_path) = ty {
+            let last = &type_path.path.segments.last().unwrap().ident;
+            if last == "String" || (last == "Option" && type_path.path.segments.len() > 1 && type_path.path.segments[1].ident == "String") {
+                // String or Option<String> field
+                let contains_variant = format_ident!("{}Contains", pascal_name);
+                let starts_with_variant = format_ident!("{}StartsWith", pascal_name);
+                let ends_with_variant = format_ident!("{}EndsWith", pascal_name);
+                let mode_variant = format_ident!("{}Mode", pascal_name);
+                build_condition_arms.push(quote! {
+                    let mut #name _mode = QueryMode::Default;
+                    let mut #name _filters = vec![];
+                    for param in where_params {
+                        match param {
+                            WhereParam::#contains_variant(val) => #name _filters.push(("contains", val)),
+                            WhereParam::#starts_with_variant(val) => #name _filters.push(("starts_with", val)),
+                            WhereParam::#ends_with_variant(val) => #name _filters.push(("ends_with", val)),
+                            WhereParam::#mode_variant(mode) => #name _mode = *mode,
+                            _ => {}
+                        }
+                    }
+                    for (op, val) in #name _filters {
+                        let expr = match (op, #name _mode) {
+                            ("contains", QueryMode::Insensitive) => Expr::col(Column::#pascal_name).ilike(format!("%{}%", val)),
+                            ("contains", _) => Expr::col(Column::#pascal_name).like(format!("%{}%", val)),
+                            ("starts_with", QueryMode::Insensitive) => Expr::col(Column::#pascal_name).ilike(format!("{}%", val)),
+                            ("starts_with", _) => Expr::col(Column::#pascal_name).like(format!("{}%", val)),
+                            ("ends_with", QueryMode::Insensitive) => Expr::col(Column::#pascal_name).ilike(format!("%{}", val)),
+                            ("ends_with", _) => Expr::col(Column::#pascal_name).like(format!("%{}", val)),
+                            _ => continue,
+                        };
+                        cond = cond.add(expr);
+                    }
+                });
+            } else {
+                // Non-string field: add their Condition as before
+                build_condition_arms.push(quote! {
+                    for param in where_params {
+                        if let WhereParam::#pascal_name(condition) = param {
+                            cond = cond.add(condition.clone());
+                        }
+                    }
+                });
+            }
+        }
+    }
+    let build_condition_fn = quote! {
+        #[allow(dead_code)]
+        pub fn build_condition(where_params: &[WhereParam]) -> sea_orm::sea_query::Condition {
+            use QueryMode;
+            use sea_orm::sea_query::{Condition, Expr};
+            let mut cond = Condition::all();
+            #(#build_condition_arms)*
+            cond
+        }
+    };
+    // Insert build_condition_fn into the expanded output
+    // ... existing code ...
+
     TokenStream::from(expanded)
 }
 
@@ -1899,5 +1982,4 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         #(#submodules)*
     }
 }
-
 

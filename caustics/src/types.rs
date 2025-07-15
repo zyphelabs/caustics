@@ -11,6 +11,12 @@ pub enum SortOrder {
     Desc,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum QueryMode {
+    Default,
+    Insensitive,
+}
+
 /// Trait for converting a model to a model with relations
 pub trait FromModel<M> {
     fn from_model(model: M) -> Self;

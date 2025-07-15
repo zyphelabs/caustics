@@ -2,7 +2,8 @@ use sea_orm::{ConnectionTrait, EntityTrait, Select, QuerySelect, QueryOrder, Int
 use crate::{EntityRegistry, RelationFetcher, FromModel, HasRelationMetadata, MergeInto, RelationFilter};
 
 use std::any::Any;
-
+// Remove: use caustics::QueryMode;
+// Use crate::QueryMode instead in the function if needed.
 
 /// Trait to make DeferredLookup work with both regular connections and transactions
 pub trait ConnectionLike: ConnectionTrait {}

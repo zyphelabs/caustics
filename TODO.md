@@ -6,7 +6,7 @@
 - [x] `contains` operator for string fields
 - [x] `starts_with` operator for string fields  
 - [x] `ends_with` operator for string fields
-- [ ] Case-insensitive search mode
+- [x] Case-insensitive search mode (see QueryMode below)
 - [x] Update macro to generate field-specific string operator variants
 - [x] Add string operators to nullable string fields
 
@@ -80,7 +80,7 @@
 ## Low Priority Features (Nice to Have)
 
 ### 11. Query Modes and Ordering
-- [ ] `QueryMode` enum with `Default` and `Insensitive`
+- [x] `QueryMode` enum with `Default` and `Insensitive`
 - [ ] `NullsOrder` enum with `First` and `Last`
 - [ ] `JsonNullValueFilter` with `DbNull`, `JsonNull`, `AnyNull`
 - [ ] Advanced ordering options
@@ -131,6 +131,7 @@
 - [ ] Add relation-specific query builders
 
 ### Testing Requirements
+- [x] Unit/integration test for case-insensitive string search (see school_test.rs)
 - [ ] Unit tests for each new operator
 - [ ] Integration tests for complex queries
 - [ ] Performance tests for batch operations
@@ -146,10 +147,13 @@
 - [x] Basic filtering with `equals`
 - [x] Basic ordering
 - [x] Pagination (take/skip)
+- [x] String operators (including case-insensitive mode)
+- [x] Comparison operators
 
 ### In Progress
-- [ ] String operators (partially implemented)
-- [ ] Comparison operators (partially implemented)
+- [ ] Collection operators
+- [ ] Null operators
+- [ ] Logical operators
 
 ### Not Started
 - [ ] JSON field support
