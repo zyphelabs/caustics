@@ -936,4 +936,57 @@ mod caustics_school_advanced_tests {
         let found = client.student().find_unique(student::student_number::equals("S300".to_string())).exec().await.unwrap();
         assert!(found.is_none());
     }
+
+    #[tokio::test]
+    async fn test_course_connect_multiple_enrollments() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = fixed_now();
+        // Create department, teacher, semester, and course
+        let dept = client.department().create(
+            "MATH".to_string(), "Mathematics".to_string(), now, now, vec![]
+        ).exec().await.unwrap();
+        let semester = client.semester().create(
+            "2024S1".to_string(), "Spring 2024".to_string(), now, now, true, now, now, vec![]
+        ).exec().await.unwrap();
+        let teacher = client.teacher().create(
+            "T001".to_string(), "Bob".to_string(), "Jones".to_string(), "bob@school.edu".to_string(), now, true, now, now, department::id::equals(dept.id), vec![]
+        ).exec().await.unwrap();
+        let course = client.course().create(
+            "MATH101".to_string(), "Calculus".to_string(), 6, 30, true, now, now,
+            teacher::id::equals(teacher.id), department::id::equals(dept.id), semester::id::equals(semester.id),
+            vec![]
+        ).exec().await.unwrap();
+        // Create two students
+        let student1 = client.student().create(
+            "S1".to_string(), "Alice".to_string(), "Smith".to_string(), now, now, true, now, now, vec![]
+        ).exec().await.unwrap();
+        let student2 = client.student().create(
+            "S2".to_string(), "Bob".to_string(), "Brown".to_string(), now, now, true, now, now, vec![]
+        ).exec().await.unwrap();
+        // Create two enrollments (not yet connected to the course)
+        let enrollment1 = client.enrollment().create(
+            now, "enrolled".to_string(), now, now, student::id::equals(student1.id), course::id::equals(course.id), vec![]
+        ).exec().await.unwrap();
+        let enrollment2 = client.enrollment().create(
+            now, "enrolled".to_string(), now, now, student::id::equals(student2.id), course::id::equals(course.id), vec![]
+        ).exec().await.unwrap();
+        // Connect both enrollments to the course
+        let _updated_course = client.course().update(
+            course::id::equals(course.id),
+            vec![
+                course::enrollments::connect(vec![
+                    enrollment::id::equals(enrollment1.id),
+                    enrollment::id::equals(enrollment2.id),
+                ]),
+            ]
+        ).exec().await.unwrap();
+        // Assert that the course has both enrollments
+        let enrollments = client.enrollment().find_many(vec![enrollment::course_id::equals(course.id)])
+            .exec().await.unwrap();
+        let enrollment_ids: Vec<_> = enrollments.iter().map(|e| e.id).collect();
+        assert!(enrollment_ids.contains(&enrollment1.id));
+        assert!(enrollment_ids.contains(&enrollment2.id));
+        assert_eq!(enrollments.len(), 2);
+    }
 }

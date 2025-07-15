@@ -408,32 +408,20 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
     // Generate relation connection variants for SetParam enum
     let relation_connect_variants = relations
         .iter()
-        .filter(|relation| {
-            // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
-            relation.foreign_key_field.is_some()
-        })
-        .map(|relation| {
+        .filter_map(|relation| {
             let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
             let target_module = &relation.target;
-            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-            
-            // Check if this is an optional relation
-            let is_optional = if let Some(field) = fields.iter().find(|f| {
-                f.ident.as_ref().unwrap().to_string() == *fk_field_name
-            }) {
-                is_option(&field.ty)
-            } else {
-                false
-            };
-            
-            if is_optional {
-                quote! {
-                    #relation_name(Option<#target_module::UniqueWhereParam>)
+            match relation.kind {
+                RelationKind::BelongsTo => {
+                    // Always take UniqueWhereParam, not Option<...>
+                    Some(quote! {
+                        #relation_name(#target_module::UniqueWhereParam)
+                    })
                 }
-            } else {
-                quote! {
-                    #relation_name(#target_module::UniqueWhereParam)
+                RelationKind::HasMany => {
+                    Some(quote! {
+                        #relation_name(Vec<#target_module::UniqueWhereParam>)
+                    })
                 }
             }
         })
@@ -1240,21 +1228,14 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             
             if is_optional {
                 quote! {
-                    SetParam::#relation_name(where_param_opt) => {
-                        match where_param_opt {
-                            Some(where_param) => {
-                                match where_param {
-                                    #target_module::UniqueWhereParam::#primary_key_variant(id) => {
-                                        model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(id.clone()));
-                                    }
-                                    other => {
-                                        // For now, we'll skip complex deferred lookups in batch mode
-                                        // This simplifies the implementation for the test case
-                                    }
-                                }
+                    SetParam::#relation_name(where_param) => {
+                        match where_param {
+                            #target_module::UniqueWhereParam::#primary_key_variant(id) => {
+                                model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(id.clone()));
                             }
-                            None => {
-                                model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
+                            other => {
+                                // For now, we'll skip complex deferred lookups in batch mode
+                                // This simplifies the implementation for the test case
                             }
                         }
                     }
@@ -1910,71 +1891,71 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         let relation_name_lower_ident = format_ident!("{}", relation_name_lower);
         let relation_name_str = relation_name.to_snake_case();
         let target = &relation.target;
+        let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
+        let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
 
-        let submodule = if matches!(relation.kind, RelationKind::BelongsTo) && relation.foreign_key_field.is_some() {
-            // Check if this is an optional relation
-            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-            let is_optional = if let Some(field) = fields.iter().find(|f| {
-                f.ident.as_ref().unwrap().to_string() == *fk_field_name
-            }) {
-                is_option(&field.ty)
-            } else {
-                false
-            };
-            
-            if is_optional {
-                
-                let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
-                let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
-                
-                quote! {
-                    #[allow(dead_code)]
-                    pub mod #relation_name_lower_ident {
-                        pub fn fetch() -> super::RelationFilter {
-                            super::RelationFilter {
-                                relation: #relation_name_str,
-                                filters: vec![],
+        let submodule = match relation.kind {
+            RelationKind::BelongsTo => {
+                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                let is_optional = if let Some(field) = fields.iter().find(|f| {
+                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
+                }) {
+                    is_option(&field.ty)
+                } else {
+                    false
+                };
+                if is_optional {
+                    quote! {
+                        #[allow(dead_code)]
+                        pub mod #relation_name_lower_ident {
+                            pub fn fetch() -> super::RelationFilter {
+                                super::RelationFilter {
+                                    relation: #relation_name_str,
+                                    filters: vec![],
+                                }
+                            }
+                            pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
+                                super::SetParam::#connect_variant(where_param)
+                            }
+                            pub fn disconnect() -> super::SetParam {
+                                super::SetParam::#disconnect_variant
                             }
                         }
-                        
-                        pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
-                            super::SetParam::#connect_variant(Some(where_param))
-                        }
-                        
-                        pub fn disconnect() -> super::SetParam {
-                            super::SetParam::#disconnect_variant
-                        }
                     }
-                }
-            } else {
-                // For required relations, only include fetch functionality (no connect/disconnect)
-                quote! {
-                    #[allow(dead_code)]
-                    pub mod #relation_name_lower_ident {
-                        pub fn fetch() -> super::RelationFilter {
-                            super::RelationFilter {
-                                relation: #relation_name_str,
-                                filters: vec![],
+                } else {
+                    quote! {
+                        #[allow(dead_code)]
+                        pub mod #relation_name_lower_ident {
+                            pub fn fetch() -> super::RelationFilter {
+                                super::RelationFilter {
+                                    relation: #relation_name_str,
+                                    filters: vec![],
+                                }
+                            }
+                            pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
+                                super::SetParam::#connect_variant(where_param)
                             }
                         }
                     }
                 }
             }
-        } else {
-            // For relations without foreign keys (has_many), generate fetch with filters
-            quote! {
-                #[allow(dead_code)]
-                pub mod #relation_name_lower_ident {
-                    pub fn fetch(filters: Vec<super::Filter>) -> super::RelationFilter {
-                        super::RelationFilter {
-                            relation: #relation_name_str,
-                            filters,
+            RelationKind::HasMany => {
+                quote! {
+                    #[allow(dead_code)]
+                    pub mod #relation_name_lower_ident {
+                        pub fn fetch(filters: Vec<super::Filter>) -> super::RelationFilter {
+                            super::RelationFilter {
+                                relation: #relation_name_str,
+                                filters,
+                            }
+                        }
+                        pub fn connect(params: Vec<super::#target::UniqueWhereParam>) -> super::SetParam {
+                            super::SetParam::#connect_variant(params)
                         }
                     }
                 }
             }
         };
-
         submodules.push(submodule);
     }
 
