@@ -817,7 +817,7 @@ mod caustics_school_advanced_tests {
         let filtered = client.student().find_many(vec![
             student::student_number::equals("S01".to_string()),
         ])
-        .order_by(student::student_number::asc())
+        .order_by(student::student_number::order(caustics::SortOrder::Asc))
         .exec().await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].student_number, "S01");
@@ -825,7 +825,7 @@ mod caustics_school_advanced_tests {
         let filtered2 = client.student().find_many(vec![
             student::student_number::equals("S02".to_string()),
         ])
-        .order_by(student::student_number::asc())
+        .order_by(student::student_number::order(caustics::SortOrder::Asc))
         .exec().await.unwrap();
         assert_eq!(filtered2.len(), 1);
         assert_eq!(filtered2[0].student_number, "S02");

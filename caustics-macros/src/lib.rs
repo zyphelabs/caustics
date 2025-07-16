@@ -8,6 +8,7 @@ use syn::{DeriveInput, Error, File};
 
 mod common;
 mod entity;
+mod where_param;
 
 #[proc_macro_attribute]
 pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
@@ -155,7 +156,10 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
     // If we found both struct and enum with #[derive(Caustics)], generate the entity code
     match (model_ast, relation_ast) {
         (Some(model_ast), Some(relation_ast)) => {
-            let generated = entity::generate_entity(model_ast, relation_ast, namespace);
+            // Use the module name for the path: crate::<mod_ident>
+            let mod_ident = &ast.ident;
+            let full_mod_path: syn::Path = syn::parse_str(&format!("crate::{}", mod_ident)).unwrap();
+            let generated = entity::generate_entity(model_ast, relation_ast, namespace, &full_mod_path);
 
             // Parse the generated items into a File
             let generated_file = match syn::parse2::<File>(generated) {
