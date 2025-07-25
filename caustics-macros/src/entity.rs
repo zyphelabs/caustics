@@ -535,6 +535,79 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         }
     }).collect::<Vec<_>>();
 
+    // Generate field operator modules
+    let field_ops = field_ops;
+
+    // Generate read_filters module (PCR-compatible)
+    let read_filters_types = fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+        let ty = &field.ty;
+        let type_str = quote!(#ty).to_string();
+        
+        if type_str.contains("Option") {
+            if type_str.contains("String") {
+                quote! { #pascal_name(caustics::read_filters::StringNullableFilter) }
+            } else if type_str.contains("i32") {
+                quote! { #pascal_name(caustics::read_filters::IntNullableFilter) }
+            } else if type_str.contains("DateTime") {
+                quote! { #pascal_name(caustics::read_filters::DateTimeNullableFilter) }
+            } else {
+                quote! { #pascal_name(caustics::read_filters::StringNullableFilter) }
+            }
+        } else {
+            if type_str.contains("String") {
+                quote! { #pascal_name(caustics::read_filters::StringFilter) }
+            } else if type_str.contains("i32") {
+                quote! { #pascal_name(caustics::read_filters::IntFilter) }
+            } else if type_str.contains("DateTime") {
+                quote! { #pascal_name(caustics::read_filters::DateTimeFilter) }
+            } else if type_str.contains("bool") {
+                quote! { #pascal_name(caustics::read_filters::BoolFilter) }
+            } else {
+                quote! { #pascal_name(caustics::read_filters::StringFilter) }
+            }
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate write_params module (PCR-compatible)
+    let write_params_types = fields.iter().filter(|field| {
+        // Exclude primary key fields from write_params
+        !field.attrs.iter().any(|attr| {
+            attr.path().is_ident("sea_orm") && 
+            attr.meta.to_token_stream().to_string().contains("primary_key")
+        })
+    }).map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+        let ty = &field.ty;
+        let type_str = quote!(#ty).to_string();
+        
+        if type_str.contains("Option") {
+            if type_str.contains("String") {
+                quote! { #pascal_name(caustics::write_params::StringNullableParam) }
+            } else if type_str.contains("i32") {
+                quote! { #pascal_name(caustics::write_params::IntNullableParam) }
+            } else if type_str.contains("DateTime") {
+                quote! { #pascal_name(caustics::write_params::DateTimeNullableParam) }
+            } else {
+                quote! { #pascal_name(caustics::write_params::StringNullableParam) }
+            }
+        } else {
+            if type_str.contains("String") {
+                quote! { #pascal_name(caustics::write_params::StringParam) }
+            } else if type_str.contains("i32") {
+                quote! { #pascal_name(caustics::write_params::IntParam) }
+            } else if type_str.contains("DateTime") {
+                quote! { #pascal_name(caustics::write_params::DateTimeParam) }
+            } else if type_str.contains("bool") {
+                quote! { #pascal_name(caustics::write_params::BoolParam) }
+            } else {
+                quote! { #pascal_name(caustics::write_params::StringParam) }
+            }
+        }
+    }).collect::<Vec<_>>();
+
     // Pass as slices directly
     // Remove any usage of generate_field_ops_and_logical_helpers (no longer needed)
 
@@ -1040,6 +1113,27 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
 
         #(#field_ops)*
 
+        // PCR-compatible read_filters module
+        pub mod read_filters {
+            #[derive(Debug, Clone)]
+            pub enum WhereParam {
+                #(#read_filters_types,)*
+            }
+        }
+
+        // PCR-compatible write_params module  
+        pub mod write_params {
+            #[derive(Debug, Clone)]
+            pub enum SetParam {
+                #(#write_params_types,)*
+            }
+            
+            #[derive(Debug, Clone)]
+            pub enum UncheckedSetParam {
+                #(#write_params_types,)*
+            }
+        }
+
         impl MergeInto<ActiveModel> for SetParam {
             fn merge_into(&self, model: &mut ActiveModel) {
                 match self {
@@ -1052,14 +1146,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             }
         }
 
-        impl From<WhereParam> for Condition {
-            fn from(param: WhereParam) -> Self {
-                match param {
-                    #(#where_match_arms,)*
-                    _ => todo!(),
-                }
-            }
-        }
+        #(#where_match_arms)*
 
         impl From<UniqueWhereParam> for Condition {
             fn from(param: UniqueWhereParam) -> Self {
@@ -1134,10 +1221,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                 let registry = super::get_registry();
                 #[cfg(not(test))]
                 let registry = crate::get_registry();
-                let mut query = <Entity as EntityTrait>::find();
-                for cond in conditions {
-                    query = query.filter::<Condition>(cond.into());
-                }
+                let query = <Entity as EntityTrait>::find().filter::<Condition>(where_params_to_condition(conditions));
                 caustics::FirstQueryBuilder {
                     query,
                     conn: self.conn,
@@ -1152,10 +1236,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                 let registry = super::get_registry();
                 #[cfg(not(test))]
                 let registry = crate::get_registry();
-                let mut query = <Entity as EntityTrait>::find();
-                for cond in conditions {
-                    query = query.filter::<Condition>(cond.into());
-                }
+                let query = <Entity as EntityTrait>::find().filter::<Condition>(where_params_to_condition(conditions));
                 caustics::ManyQueryBuilder {
                     query,
                     conn: self.conn,

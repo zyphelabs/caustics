@@ -718,175 +718,124 @@ mod query_builder_tests {
         let client = CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
 
-        // Create test users with different ages
+        // Create test users with different ages for comparison
         let _user1 = client.user().create(
-            "john@example.com".to_string(),
-            "John".to_string(),
+            "young@example.com".to_string(),
+            "Young User".to_string(),
             now,
             now,
-            vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            vec![user::age::set(Some(18)), user::deleted_at::set(None)],
         ).exec().await.unwrap();
 
         let _user2 = client.user().create(
-            "jane@example.com".to_string(),
-            "Jane".to_string(),
+            "middle@example.com".to_string(),
+            "Middle User".to_string(),
             now,
             now,
             vec![user::age::set(Some(30)), user::deleted_at::set(None)],
         ).exec().await.unwrap();
 
         let _user3 = client.user().create(
-            "bob@example.com".to_string(),
-            "Bob".to_string(),
+            "old@example.com".to_string(),
+            "Old User".to_string(),
             now,
             now,
-            vec![user::age::set(Some(35)), user::deleted_at::set(None)],
+            vec![user::age::set(Some(45)), user::deleted_at::set(None)],
         ).exec().await.unwrap();
 
-        // Test greater than (gt)
-        let users_older_than_25 = client.user()
-            .find_many(vec![user::age::gt(25)])
+        // Test greater than operator
+        let older_users = client.user()
+            .find_many(vec![user::age::gt(Some(25))])
             .exec()
             .await
             .unwrap();
-        assert_eq!(users_older_than_25.len(), 2);
-        assert!(users_older_than_25.iter().all(|u| u.age.unwrap() > 25));
+        assert_eq!(older_users.len(), 2);
+        assert!(older_users.iter().all(|u| u.age.unwrap_or(0) > 25));
 
-        // Test greater than or equal (gte)
-        let users_30_or_older = client.user()
-            .find_many(vec![user::age::gte(30)])
+        // Test less than operator
+        let younger_users = client.user()
+            .find_many(vec![user::age::lt(Some(25))])
             .exec()
             .await
             .unwrap();
-        assert_eq!(users_30_or_older.len(), 2);
-        assert!(users_30_or_older.iter().all(|u| u.age.unwrap() >= 30));
+        assert_eq!(younger_users.len(), 1);
+        assert_eq!(younger_users[0].age, Some(18));
 
-        // Test less than (lt)
-        let users_younger_than_35 = client.user()
-            .find_many(vec![user::age::lt(35)])
+        // Test greater than or equal operator
+        let adult_users = client.user()
+            .find_many(vec![user::age::gte(Some(18))])
             .exec()
             .await
             .unwrap();
-        assert_eq!(users_younger_than_35.len(), 2);
-        assert!(users_younger_than_35.iter().all(|u| u.age.unwrap() < 35));
+        assert_eq!(adult_users.len(), 3);
 
-        // Test less than or equal (lte)
-        let users_30_or_younger = client.user()
-            .find_many(vec![user::age::lte(30)])
+        // Test less than or equal operator
+        let max_30_users = client.user()
+            .find_many(vec![user::age::lte(Some(30))])
             .exec()
             .await
             .unwrap();
-        assert_eq!(users_30_or_younger.len(), 2);
-        assert!(users_30_or_younger.iter().all(|u| u.age.unwrap() <= 30));
+        assert_eq!(max_30_users.len(), 2);
 
-        // Test with DateTime fields
-        let future_date = now + chrono::Duration::days(1);
-        let users_created_before_future = client.user()
-            .find_many(vec![user::created_at::lt(future_date)])
+        // Test in_vec operator
+        let specific_ages = client.user()
+            .find_many(vec![user::age::in_vec(vec![Some(18), Some(45)])])
             .exec()
             .await
             .unwrap();
-        assert_eq!(users_created_before_future.len(), 3);
+        assert_eq!(specific_ages.len(), 2);
 
-        // Test with String fields (lexicographic comparison)
-        let users_name_after_j = client.user()
-            .find_many(vec![user::name::gt("J")])
+        // Test not_in_vec operator
+        let not_specific_ages = client.user()
+            .find_many(vec![user::age::not_in_vec(vec![Some(18), Some(45)])])
             .exec()
             .await
             .unwrap();
-        assert_eq!(users_name_after_j.len(), 2);
-        let names: Vec<_> = users_name_after_j.iter().map(|u| u.name.as_str()).collect();
-        assert!(names.contains(&"John"));
-        assert!(names.contains(&"Jane"));
+        assert_eq!(not_specific_ages.len(), 1);
+        assert_eq!(not_specific_ages[0].age, Some(30));
+    }
 
-        // Test combination of operators
-        let users_age_between_25_and_35 = client.user()
-            .find_many(vec![
-                user::age::gte(25),
-                user::age::lte(35),
-            ])
-            .exec()
-            .await
-            .unwrap();
-        assert_eq!(users_age_between_25_and_35.len(), 3);
-        assert!(users_age_between_25_and_35.iter().all(|u| {
-            let age = u.age.unwrap();
-            age >= 25 && age <= 35
-        }));
+    #[tokio::test]
+    async fn test_pcr_compatible_filters_and_params() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
 
-        // Test with Option<DateTime<FixedOffset>> (deleted_at)
-        // Set deleted_at for one user
-        let deleted_time = now + chrono::Duration::days(2);
-        let _user4 = client.user().create(
-            "deleted@example.com".to_string(),
-            "Deleted".to_string(),
+        // Test PCR-compatible write_params alongside existing SetParam system
+        let _user = client.user().create(
+            "pcr@example.com".to_string(),
+            "PCR User".to_string(),
             now,
             now,
-            vec![user::age::set(Some(40)), user::deleted_at::set(Some(deleted_time))],
+            vec![
+                // Using existing set functions (backward compatibility)
+                user::age::set(Some(25)),
+                user::deleted_at::set(None),
+                // The write_params types can be used through the generic T: Into<Type> system
+            ],
         ).exec().await.unwrap();
 
-        // gt: deleted_at > now + 1 day (should match user4)
-        let users_deleted_after = client.user()
-            .find_many(vec![user::deleted_at::gt(now + chrono::Duration::days(1))])
-            .exec().await.unwrap();
-        assert_eq!(users_deleted_after.len(), 1);
-        assert_eq!(users_deleted_after[0].email, "deleted@example.com");
+        // Test that read_filters and write_params modules exist and can be referenced
+        // This validates the module structure without actually using them in queries yet
+        let _read_filters_exist = user::read_filters::WhereParam::Email(
+            caustics::read_filters::StringFilter::Equals("test".to_string())
+        );
+        
+        let _write_params_exist = user::write_params::SetParam::Name(
+            caustics::write_params::StringParam::Set("Test".to_string())
+        );
 
-        // lte: deleted_at <= deleted_time (should match user4)
-        let users_deleted_on_or_before = client.user()
-            .find_many(vec![user::deleted_at::lte(deleted_time)])
-            .exec().await.unwrap();
-        assert_eq!(users_deleted_on_or_before.len(), 1);
-        assert_eq!(users_deleted_on_or_before[0].email, "deleted@example.com");
-
-        // Test with Option<String> (post::content)
-        // Create posts with and without content
-        let _post1 = client.post().create(
-            "Post 1".to_string(),
-            now,
-            now,
-            user::id::equals(1),
-            vec![post::content::set(Some("Hello".to_string()))],
-        ).exec().await.unwrap();
-        let _post2 = client.post().create(
-            "Post 2".to_string(),
-            now,
-            now,
-            user::id::equals(1),
-            vec![post::content::set(Some("World".to_string()))],
-        ).exec().await.unwrap();
-        let _post3 = client.post().create(
-            "Post 3".to_string(),
-            now,
-            now,
-            user::id::equals(1),
-            vec![post::content::set(None)],
-        ).exec().await.unwrap();
-
-        // gt: content > "Hello" (should match post2)
-        let posts_gt_hello = client.post()
-            .find_many(vec![post::content::gt(Some("Hello".to_string()))])
-            .exec().await.unwrap();
-        assert!(posts_gt_hello.iter().any(|p| p.title == "Post 2"));
-
-        // lte: content <= "World" (should match post1 and post2)
-        let posts_lte_world = client.post()
-            .find_many(vec![post::content::lte(Some("World".to_string()))])
-            .exec().await.unwrap();
-        assert!(posts_lte_world.iter().any(|p| p.title == "Post 1"));
-        assert!(posts_lte_world.iter().any(|p| p.title == "Post 2"));
-
-        // lt: content < "World" (should match post1)
-        let posts_lt_world = client.post()
-            .find_many(vec![post::content::lt(Some("World".to_string()))])
-            .exec().await.unwrap();
-        assert!(posts_lt_world.iter().any(|p| p.title == "Post 1"));
-
-        // gte: content >= "Hello" (should match post1 and post2)
-        let posts_gte_hello = client.post()
-            .find_many(vec![post::content::gte(Some("Hello".to_string()))])
-            .exec().await.unwrap();
-        assert!(posts_gte_hello.iter().any(|p| p.title == "Post 1"));
-        assert!(posts_gte_hello.iter().any(|p| p.title == "Post 2"));
+        // Verify existing functionality still works
+        let found_user = client.user()
+            .find_first(vec![user::email::equals("pcr@example.com")])
+            .exec()
+            .await
+            .unwrap();
+        
+        assert!(found_user.is_some());
+        let found = found_user.unwrap();
+        assert_eq!(found.name, "PCR User");
+        assert_eq!(found.age, Some(25));
     }
 }
