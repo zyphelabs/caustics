@@ -9,6 +9,7 @@ A Prisma-like DSL for SeaORM that provides a type-safe and ergonomic way to buil
 - Type-safe query building
 - Prisma-like syntax
 - Support for complex queries and relations
+- Advanced filtering operators (comparison, string, collection, logical, and null operators)
 - Automatic SQL generation
 - Transaction support
 - Batch operations
@@ -423,8 +424,52 @@ let users = client
     ])
     .exec()
     .await?;
-
 ```
+
+#### Null Value Filtering
+
+```rust
+// Find users who haven't set their age
+let users_without_age = client
+    .user()
+    .find_many(vec![
+        user::age::is_null()
+    ])
+    .exec()
+    .await?;
+
+// Find active users (not deleted)
+let active_users = client
+    .user()
+    .find_many(vec![
+        user::deleted_at::is_null()
+    ])
+    .exec()
+    .await?;
+
+// Find posts with content
+let posts_with_content = client
+    .post()
+    .find_many(vec![
+        post::content::is_not_null()
+    ])
+    .exec()
+    .await?;
+
+// Complex query: Find adult users who are not deleted
+let active_adults = client
+    .user()
+    .find_many(vec![
+        user::and(vec![
+            user::age::is_not_null(),
+            user::age::gte(Some(18)),
+            user::deleted_at::is_null()
+        ])
+    ])
+    .exec()
+    .await?;
+```
+
 
 ### Available Operators
 
@@ -497,6 +542,33 @@ user::not(vec![
 ])
 ```
 
+#### Null Operators
+
+```rust
+// Is Null - check if a nullable field is null
+user::age::is_null()
+user::deleted_at::is_null()
+post::content::is_null()
+
+// Is Not Null - check if a nullable field has a value
+user::age::is_not_null()
+user::deleted_at::is_not_null()
+post::content::is_not_null()
+
+// Combining null operators with logical operators
+user::and(vec![
+    user::age::is_not_null(),
+    user::deleted_at::is_null()
+])
+
+user::or(vec![
+    user::age::is_null(),
+    user::deleted_at::is_not_null()
+])
+```
+
+> **Note**: Null operators are only available for nullable fields (marked with `#[sea_orm(nullable)]` or `Option<T>` types). Attempting to use null operators on non-nullable fields will result in a compile-time error.
+
 ### Pagination and Sorting
 
 ```rust
@@ -544,10 +616,6 @@ All features include comprehensive test coverage and are ready for production us
 ## TODO: Planned Features
 
 The following features are planned but not yet implemented:
-
-### Null Operators
-- `user::deleted_at::is_null()`
-- `user::deleted_at::is_not_null()`
 
 ### JSON Operators
 - `user::data::json_path(vec!["address", "city"], "New York", FieldType::String)`

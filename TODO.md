@@ -25,10 +25,10 @@
 - [x] Handle nullable field collections properly
 
 ### 4. Null Operators
-- [ ] `is_null` operator for nullable fields
-- [ ] `is_not_null` operator for nullable fields
-- [ ] Update macro to generate null-specific variants
-- [ ] Ensure proper type safety for null operations
+- [x] `is_null` operator for nullable fields
+- [x] `is_not_null` operator for nullable fields
+- [x] Update macro to generate null-specific variants
+- [x] Ensure proper type safety for null operations
 
 ### 5. Logical Operators
 - [x] `AND` operator for combining conditions
@@ -136,7 +136,7 @@
 - [x] Unit tests for comparison operators (gt, lt, gte, lte)
 - [x] Unit tests for collection operators (in_vec, not_in_vec) - includes README examples in test_collection_operators_readme_examples
 - [x] Unit tests for logical operators (and, or, not) - see test_logical_operators in blog_test.rs
-- [ ] Unit tests for null operators
+- [x] Unit tests for null operators
 - [ ] Integration tests for complex queries
 - [ ] Performance tests for batch operations
 - [ ] Error handling tests

@@ -1189,6 +1189,8 @@ pub fn generate_entity(
             Contains(String),
             StartsWith(String),
             EndsWith(String),
+            IsNull,
+            IsNotNull,
         }
 
         pub enum SetParam {

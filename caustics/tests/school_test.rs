@@ -1185,4 +1185,66 @@ mod caustics_school_advanced_tests {
         );
         assert_eq!(found[0].first_name, "Alice");
     }
+
+    #[tokio::test]
+    async fn test_null_operators_school() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create students with and without email
+        let student_with_email = client
+            .student()
+            .create(
+                "S100".to_string(),
+                "John".to_string(),
+                "Doe".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![student::email::set(Some("john@school.edu".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let student_without_email = client
+            .student()
+            .create(
+                "S101".to_string(),
+                "Jane".to_string(),
+                "Smith".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![student::email::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test is_null for email field
+        let students_without_email = client
+            .student()
+            .find_many(vec![student::email::is_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(students_without_email.len(), 1);
+        assert_eq!(students_without_email[0].id, student_without_email.id);
+
+        // Test is_not_null for email field
+        let students_with_email = client
+            .student()
+            .find_many(vec![student::email::is_not_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(students_with_email.len(), 1);
+        assert_eq!(students_with_email[0].id, student_with_email.id);
+        assert_eq!(students_with_email[0].email, Some("john@school.edu".to_string()));
+    }
 }

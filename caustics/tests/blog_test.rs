@@ -1152,4 +1152,225 @@ mod query_builder_tests {
         assert!(included_ages.contains(&Some(25)));
         assert!(included_ages.contains(&Some(30)));
     }
+
+    #[tokio::test]
+    async fn test_null_operators() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Create test users with various null combinations
+        let user_with_age = client
+            .user()
+            .create(
+                "with_age@example.com".to_string(),
+                "User With Age".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user_without_age = client
+            .user()
+            .create(
+                "without_age@example.com".to_string(),
+                "User Without Age".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user_deleted = client
+            .user()
+            .create(
+                "deleted@example.com".to_string(),
+                "Deleted User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(Some(now))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user_no_deletions = client
+            .user()
+            .create(
+                "no_deletions@example.com".to_string(),
+                "No Deletions User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(35)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create posts with various null combinations
+        let post_with_content = client
+            .post()
+            .create(
+                "Post with content".to_string(),
+                now,
+                now,
+                user::id::equals(user_with_age.id),
+                vec![
+                    post::content::set(Some("This post has content".to_string())),
+                    post::reviewer_user_id::set(None),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let post_without_content = client
+            .post()
+            .create(
+                "Post without content".to_string(),
+                now,
+                now,
+                user::id::equals(user_without_age.id),
+                vec![
+                    post::content::set(None),
+                    post::reviewer_user_id::set(Some(user_with_age.id)),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test is_null operator for age field
+        let users_without_age = client
+            .user()
+            .find_many(vec![user::age::is_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_without_age.len(), 1);
+        assert_eq!(users_without_age[0].id, user_without_age.id);
+        assert_eq!(users_without_age[0].age, None);
+
+        // Test is_not_null operator for age field
+        let users_with_age = client
+            .user()
+            .find_many(vec![user::age::is_not_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_with_age.len(), 3);
+        let user_ids_with_age: Vec<i32> = users_with_age.iter().map(|u| u.id).collect();
+        assert!(user_ids_with_age.contains(&user_with_age.id));
+        assert!(user_ids_with_age.contains(&user_deleted.id));
+        assert!(user_ids_with_age.contains(&user_no_deletions.id));
+        assert!(!user_ids_with_age.contains(&user_without_age.id));
+
+        // Test is_null operator for deleted_at field
+        let non_deleted_users = client
+            .user()
+            .find_many(vec![user::deleted_at::is_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(non_deleted_users.len(), 3);
+        let non_deleted_ids: Vec<i32> = non_deleted_users.iter().map(|u| u.id).collect();
+        assert!(non_deleted_ids.contains(&user_with_age.id));
+        assert!(non_deleted_ids.contains(&user_without_age.id));
+        assert!(non_deleted_ids.contains(&user_no_deletions.id));
+        assert!(!non_deleted_ids.contains(&user_deleted.id));
+
+        // Test is_not_null operator for deleted_at field
+        let deleted_users = client
+            .user()
+            .find_many(vec![user::deleted_at::is_not_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(deleted_users.len(), 1);
+        assert_eq!(deleted_users[0].id, user_deleted.id);
+        assert!(deleted_users[0].deleted_at.is_some());
+
+        // Test is_null operator for post content field
+        let posts_without_content = client
+            .post()
+            .find_many(vec![post::content::is_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_without_content.len(), 1);
+        assert_eq!(posts_without_content[0].id, post_without_content.id);
+        assert_eq!(posts_without_content[0].content, None);
+
+        // Test is_not_null operator for post content field
+        let posts_with_content = client
+            .post()
+            .find_many(vec![post::content::is_not_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_content.len(), 1);
+        assert_eq!(posts_with_content[0].id, post_with_content.id);
+        assert!(posts_with_content[0].content.is_some());
+
+        // Test is_null operator for reviewer_user_id field
+        let posts_without_reviewer = client
+            .post()
+            .find_many(vec![post::reviewer_user_id::is_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_without_reviewer.len(), 1);
+        assert_eq!(posts_without_reviewer[0].id, post_with_content.id);
+        assert_eq!(posts_without_reviewer[0].reviewer_user_id, None);
+
+        // Test is_not_null operator for reviewer_user_id field
+        let posts_with_reviewer = client
+            .post()
+            .find_many(vec![post::reviewer_user_id::is_not_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_reviewer.len(), 1);
+        assert_eq!(posts_with_reviewer[0].id, post_without_content.id);
+        assert!(posts_with_reviewer[0].reviewer_user_id.is_some());
+
+        // Test combining null operators with logical operators
+        let users_with_age_not_deleted = client
+            .user()
+            .find_many(vec![user::and(vec![
+                user::age::is_not_null(),
+                user::deleted_at::is_null(),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_with_age_not_deleted.len(), 2);
+        let filtered_ids: Vec<i32> = users_with_age_not_deleted.iter().map(|u| u.id).collect();
+        assert!(filtered_ids.contains(&user_with_age.id));
+        assert!(filtered_ids.contains(&user_no_deletions.id));
+
+        // Test combining null operators with OR
+        let users_missing_data = client
+            .user()
+            .find_many(vec![user::or(vec![
+                user::age::is_null(),
+                user::deleted_at::is_not_null(),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_missing_data.len(), 2);
+        let missing_data_ids: Vec<i32> = users_missing_data.iter().map(|u| u.id).collect();
+        assert!(missing_data_ids.contains(&user_without_age.id));
+        assert!(missing_data_ids.contains(&user_deleted.id));
+    }
 }

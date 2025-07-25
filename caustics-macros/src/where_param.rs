@@ -142,6 +142,27 @@ pub fn generate_where_param_logic(
             }
         };
 
+        // Null operations (only for nullable types)
+        let null_ops = match field_type {
+            FieldType::OptionString
+            | FieldType::OptionInteger
+            | FieldType::OptionFloat
+            | FieldType::OptionBoolean
+            | FieldType::OptionDateTime
+            | FieldType::OptionUuid
+            | FieldType::OptionJson => {
+                quote! {
+                    pub fn is_null() -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::IsNull)
+                    }
+                    pub fn is_not_null() -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::IsNotNull)
+                    }
+                }
+            }
+            _ => quote! {},
+        };
+
         let mut field_mod_items = vec![
             set_fn,
             unique_where_fn,
@@ -150,6 +171,7 @@ pub fn generate_where_param_logic(
             string_ops,
             comparison_ops,
             collection_ops,
+            null_ops,
         ];
 
         // If this is a string field, add a Mode variant and mode function
@@ -470,6 +492,8 @@ fn generate_string_field_handler(
                     },
                     FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
                     FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                    FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                 }
             }
         }
@@ -519,6 +543,8 @@ fn generate_string_field_handler(
                     FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
                     FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
                     FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                    FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
+                    FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
                 }
             }
         }
@@ -588,6 +614,8 @@ fn generate_numeric_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for numeric fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for numeric fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for numeric fields"),
+                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
             }
         }
     } else {
@@ -604,6 +632,8 @@ fn generate_numeric_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for numeric fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for numeric fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for numeric fields"),
+                FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
+                FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
             }
         }
     }
@@ -638,6 +668,8 @@ fn generate_boolean_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for boolean fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for boolean fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for boolean fields"),
+                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
             }
         }
     } else {
@@ -654,6 +686,8 @@ fn generate_boolean_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for boolean fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for boolean fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for boolean fields"),
+                FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
+                FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
             }
         }
     }
@@ -708,6 +742,8 @@ fn generate_datetime_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for DateTime fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for DateTime fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for DateTime fields"),
+                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
             }
         }
     } else {
@@ -724,6 +760,8 @@ fn generate_datetime_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for DateTime fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for DateTime fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for DateTime fields"),
+                FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
+                FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
             }
         }
     }
@@ -758,6 +796,8 @@ fn generate_uuid_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for UUID fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for UUID fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for UUID fields"),
+                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
             }
         }
     } else {
@@ -774,6 +814,8 @@ fn generate_uuid_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for UUID fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for UUID fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for UUID fields"),
+                FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
+                FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
             }
         }
     }
@@ -808,6 +850,8 @@ fn generate_json_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields"),
+                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
             }
         }
     } else {
@@ -824,6 +868,8 @@ fn generate_json_field_handler(
                 FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields"),
                 FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields"),
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields"),
+                FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
+                FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
             }
         }
     }
@@ -844,6 +890,8 @@ fn generate_generic_field_handler(pascal_name: &proc_macro2::Ident) -> proc_macr
             FieldOp::Contains(_) => panic!("Contains operation not supported for this field type"),
             FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for this field type"),
             FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for this field type"),
+            FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+            FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
         }
     }
 }
