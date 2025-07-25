@@ -134,8 +134,8 @@
 - [x] Unit/integration test for case-insensitive string search (see school_test.rs)
 - [x] Unit tests for string operators (contains, starts_with, ends_with)
 - [x] Unit tests for comparison operators (gt, lt, gte, lte)
-- [x] Unit tests for collection operators (in_vec, not_in_vec) 
-- [x] Unit tests for logical operators (and, or, not)
+- [x] Unit tests for collection operators (in_vec, not_in_vec) - includes README examples in test_collection_operators_readme_examples
+- [x] Unit tests for logical operators (and, or, not) - see test_logical_operators in blog_test.rs
 - [ ] Unit tests for null operators
 - [ ] Integration tests for complex queries
 - [ ] Performance tests for batch operations

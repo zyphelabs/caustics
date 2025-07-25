@@ -848,6 +848,146 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    async fn test_logical_operators() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Create test users with varied data for logical testing
+        let _user1 = client
+            .user()
+            .create(
+                "young.john@example.com".to_string(),
+                "John Young".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(16)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _user2 = client
+            .user()
+            .create(
+                "adult.jane@example.com".to_string(),
+                "Jane Adult".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _user3 = client
+            .user()
+            .create(
+                "senior.bob@test.org".to_string(),
+                "Bob Senior".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(70)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _user4 = client
+            .user()
+            .create(
+                "middle.alice@example.com".to_string(),
+                "Alice Middle".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(35)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test AND operator - users who are adults AND have "example.com" email
+        let adult_example_users = client
+            .user()
+            .find_many(vec![user::and(vec![
+                user::age::gte(Some(18)),
+                user::email::contains("example.com"),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(adult_example_users.len(), 2); // Jane and Alice
+        assert!(adult_example_users
+            .iter()
+            .all(|u| u.age.unwrap_or(0) >= 18 && u.email.contains("example.com")));
+
+        // Test OR operator - users who are either very young OR very old
+        let young_or_old_users = client
+            .user()
+            .find_many(vec![user::or(vec![
+                user::age::lt(Some(18)),
+                user::age::gt(Some(65)),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(young_or_old_users.len(), 2); // John (16) and Bob (70)
+        assert!(young_or_old_users.iter().all(|u| {
+            let age = u.age.unwrap_or(0);
+            age < 18 || age > 65
+        }));
+
+        // Test NOT operator - users who are NOT minors
+        let not_minors = client
+            .user()
+            .find_many(vec![user::not(vec![user::age::lt(Some(18))])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(not_minors.len(), 3); // Jane, Bob, and Alice
+        assert!(not_minors.iter().all(|u| u.age.unwrap_or(0) >= 18));
+
+        // Test complex nested logical operations - 
+        // (adults with example.com email) OR (seniors regardless of email)
+        let complex_query_users = client
+            .user()
+            .find_many(vec![user::or(vec![
+                user::and(vec![
+                    user::age::gte(Some(18)),
+                    user::age::lt(Some(65)),
+                    user::email::contains("example.com"),
+                ]),
+                user::age::gte(Some(65)),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(complex_query_users.len(), 3); // Jane, Alice (adults with example.com), and Bob (senior)
+
+        // Test NOT with AND - users who are NOT (young AND have example.com email)
+        let not_young_example = client
+            .user()
+            .find_many(vec![user::not(vec![user::and(vec![
+                user::age::lt(Some(25)),
+                user::email::contains("example.com"),
+            ])])])
+            .exec()
+            .await
+            .unwrap();
+        // Should exclude no one since John is young but has example.com, but John is <25 and doesn't have example.com
+        // Actually, John has example.com but is young, so NOT(young AND example.com) excludes John... wait let me think about this
+        // John: age=16, email="young.john@example.com" -> young=true, has_example=true -> AND=true -> NOT=false (excluded)
+        // Jane: age=25, email="adult.jane@example.com" -> young=false, has_example=true -> AND=false -> NOT=true (included)
+        // Bob: age=70, email="senior.bob@test.org" -> young=false, has_example=false -> AND=false -> NOT=true (included)  
+        // Alice: age=35, email="middle.alice@example.com" -> young=false, has_example=true -> AND=false -> NOT=true (included)
+        assert_eq!(not_young_example.len(), 3); // Jane, Bob, Alice (John is excluded)
+    }
+
+    #[tokio::test]
     async fn test_pcr_compatible_filters_and_params() {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;
@@ -898,5 +1038,118 @@ mod query_builder_tests {
         let found = found_user.unwrap();
         assert_eq!(found.name, "PCR User");
         assert_eq!(found.age, Some(25));
+    }
+
+    #[tokio::test]
+    async fn test_collection_operators_readme_examples() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Create test users to match README examples
+        let user1 = client
+            .user()
+            .create(
+                "user1@example.com".to_string(),
+                "User One".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(13)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user2 = client
+            .user()
+            .create(
+                "user2@example.com".to_string(),
+                "User Two".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(14)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user3 = client
+            .user()
+            .create(
+                "user3@example.com".to_string(),
+                "User Three".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user5 = client
+            .user()
+            .create(
+                "user5@example.com".to_string(),
+                "User Five".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(15)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user8 = client
+            .user()
+            .create(
+                "user8@example.com".to_string(),
+                "User Eight".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test README example: user::id::in_vec(vec![1, 2, 3, 5, 8])
+        // Using actual IDs from created users
+        let users_by_ids = client
+            .user()
+            .find_many(vec![user::id::in_vec(vec![
+                user1.id, user2.id, user3.id, user5.id, user8.id
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_by_ids.len(), 5);
+        let found_ids: Vec<i32> = users_by_ids.iter().map(|u| u.id).collect();
+        assert!(found_ids.contains(&user1.id));
+        assert!(found_ids.contains(&user2.id));
+        assert!(found_ids.contains(&user3.id));
+        assert!(found_ids.contains(&user5.id));
+        assert!(found_ids.contains(&user8.id));
+
+        // Test README example: user::age::not_in_vec(vec![Some(13), Some(14), Some(15)])
+        let users_excluding_young_ages = client
+            .user()
+            .find_many(vec![user::age::not_in_vec(vec![Some(13), Some(14), Some(15)])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users_excluding_young_ages.len(), 2); // user3 (25) and user8 (30)
+        assert!(users_excluding_young_ages.iter().all(|u| {
+            let age = u.age.unwrap_or(0);
+            age != 13 && age != 14 && age != 15
+        }));
+
+        // Verify the excluded users have the expected ages
+        let included_ages: Vec<Option<i32>> = users_excluding_young_ages.iter().map(|u| u.age).collect();
+        assert!(included_ages.contains(&Some(25)));
+        assert!(included_ages.contains(&Some(30)));
     }
 }

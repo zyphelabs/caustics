@@ -403,7 +403,7 @@ let users = client
     .await?;
 ```
 
-#### Collection and Range Queries
+#### Collection Queries
 
 ```rust
 // Find users with specific IDs
@@ -424,15 +424,6 @@ let users = client
     .exec()
     .await?;
 
-// Age range query
-let adults = client
-    .user()
-    .find_many(vec![
-        user::age::gte(Some(18)),
-        user::age::lte(Some(65))
-    ])
-    .exec()
-    .await?;
 ```
 
 ### Available Operators
