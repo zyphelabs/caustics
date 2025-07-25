@@ -546,7 +546,7 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        
+
         let post_without_reviewer = client
             .post()
             .create(
@@ -554,9 +554,9 @@ mod query_builder_tests {
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 user::id::equals(author.id),
-                vec![
-                    post::content::set("This post hasn't been reviewed yet".to_string()),
-                ],
+                vec![post::content::set(
+                    "This post hasn't been reviewed yet".to_string(),
+                )],
             )
             .exec()
             .await
@@ -598,7 +598,10 @@ mod query_builder_tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(post_without_reviewer.reviewer.is_none() || post_without_reviewer.reviewer.as_ref().unwrap().is_none());
+        assert!(
+            post_without_reviewer.reviewer.is_none()
+                || post_without_reviewer.reviewer.as_ref().unwrap().is_none()
+        );
     }
 
     #[tokio::test]
@@ -630,7 +633,7 @@ mod query_builder_tests {
 
         assert_eq!(user1.name, "John");
         assert_eq!(user2.name, "Jane");
-        
+
         let found_users = client.user().find_many(vec![]).exec().await.unwrap();
         assert_eq!(found_users.len(), 2);
     }
@@ -640,35 +643,54 @@ mod query_builder_tests {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;
         let client = CausticsClient::new(db.clone());
-        let now = chrono::FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
 
         // Create test users
-        let _user1 = client.user().create(
-            "john.doe@example.com".to_string(),
-            "John Doe".to_string(),
-            now,
-            now,
-            vec![user::age::set(Some(30)), user::deleted_at::set(None)],
-        ).exec().await.unwrap();
+        let _user1 = client
+            .user()
+            .create(
+                "john.doe@example.com".to_string(),
+                "John Doe".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
 
-        let _user2 = client.user().create(
-            "jane.smith@example.com".to_string(),
-            "Jane Smith".to_string(),
-            now,
-            now,
-            vec![user::age::set(Some(28)), user::deleted_at::set(None)],
-        ).exec().await.unwrap();
+        let _user2 = client
+            .user()
+            .create(
+                "jane.smith@example.com".to_string(),
+                "Jane Smith".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(28)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
 
-        let _user3 = client.user().create(
-            "bob.johnson@test.org".to_string(),
-            "Bob Johnson".to_string(),
-            now,
-            now,
-            vec![user::age::set(Some(40)), user::deleted_at::set(None)],
-        ).exec().await.unwrap();
+        let _user3 = client
+            .user()
+            .create(
+                "bob.johnson@test.org".to_string(),
+                "Bob Johnson".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(40)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
 
         // Test contains operator
-        let users_with_doe = client.user()
+        let users_with_doe = client
+            .user()
             .find_many(vec![user::name::contains("Doe")])
             .exec()
             .await
@@ -677,16 +699,20 @@ mod query_builder_tests {
         assert_eq!(users_with_doe[0].name, "John Doe");
 
         // Test starts_with operator
-        let users_starting_with_j = client.user()
+        let users_starting_with_j = client
+            .user()
             .find_many(vec![user::name::starts_with("J")])
             .exec()
             .await
             .unwrap();
         assert_eq!(users_starting_with_j.len(), 2);
-        assert!(users_starting_with_j.iter().all(|u| u.name.starts_with("J")));
+        assert!(users_starting_with_j
+            .iter()
+            .all(|u| u.name.starts_with("J")));
 
         // Test ends_with operator
-        let users_ending_with_son = client.user()
+        let users_ending_with_son = client
+            .user()
             .find_many(vec![user::name::ends_with("son")])
             .exec()
             .await
@@ -695,14 +721,16 @@ mod query_builder_tests {
         assert_eq!(users_ending_with_son[0].name, "Bob Johnson");
 
         // Test email contains
-        let users_with_example_email = client.user()
+        let users_with_example_email = client
+            .user()
             .find_many(vec![user::email::contains("example.com")])
             .exec()
             .await
             .unwrap();
         assert_eq!(users_with_example_email.len(), 2);
 
-        let users_with_test_email = client.user()
+        let users_with_test_email = client
+            .user()
             .find_many(vec![user::email::ends_with("test.org")])
             .exec()
             .await
@@ -716,35 +744,54 @@ mod query_builder_tests {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;
         let client = CausticsClient::new(db.clone());
-        let now = chrono::FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
 
         // Create test users with different ages for comparison
-        let _user1 = client.user().create(
-            "young@example.com".to_string(),
-            "Young User".to_string(),
-            now,
-            now,
-            vec![user::age::set(Some(18)), user::deleted_at::set(None)],
-        ).exec().await.unwrap();
+        let _user1 = client
+            .user()
+            .create(
+                "young@example.com".to_string(),
+                "Young User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(18)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
 
-        let _user2 = client.user().create(
-            "middle@example.com".to_string(),
-            "Middle User".to_string(),
-            now,
-            now,
-            vec![user::age::set(Some(30)), user::deleted_at::set(None)],
-        ).exec().await.unwrap();
+        let _user2 = client
+            .user()
+            .create(
+                "middle@example.com".to_string(),
+                "Middle User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
 
-        let _user3 = client.user().create(
-            "old@example.com".to_string(),
-            "Old User".to_string(),
-            now,
-            now,
-            vec![user::age::set(Some(45)), user::deleted_at::set(None)],
-        ).exec().await.unwrap();
+        let _user3 = client
+            .user()
+            .create(
+                "old@example.com".to_string(),
+                "Old User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(45)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
 
         // Test greater than operator
-        let older_users = client.user()
+        let older_users = client
+            .user()
             .find_many(vec![user::age::gt(Some(25))])
             .exec()
             .await
@@ -753,7 +800,8 @@ mod query_builder_tests {
         assert!(older_users.iter().all(|u| u.age.unwrap_or(0) > 25));
 
         // Test less than operator
-        let younger_users = client.user()
+        let younger_users = client
+            .user()
             .find_many(vec![user::age::lt(Some(25))])
             .exec()
             .await
@@ -762,7 +810,8 @@ mod query_builder_tests {
         assert_eq!(younger_users[0].age, Some(18));
 
         // Test greater than or equal operator
-        let adult_users = client.user()
+        let adult_users = client
+            .user()
             .find_many(vec![user::age::gte(Some(18))])
             .exec()
             .await
@@ -770,7 +819,8 @@ mod query_builder_tests {
         assert_eq!(adult_users.len(), 3);
 
         // Test less than or equal operator
-        let max_30_users = client.user()
+        let max_30_users = client
+            .user()
             .find_many(vec![user::age::lte(Some(30))])
             .exec()
             .await
@@ -778,7 +828,8 @@ mod query_builder_tests {
         assert_eq!(max_30_users.len(), 2);
 
         // Test in_vec operator
-        let specific_ages = client.user()
+        let specific_ages = client
+            .user()
             .find_many(vec![user::age::in_vec(vec![Some(18), Some(45)])])
             .exec()
             .await
@@ -786,7 +837,8 @@ mod query_builder_tests {
         assert_eq!(specific_ages.len(), 2);
 
         // Test not_in_vec operator
-        let not_specific_ages = client.user()
+        let not_specific_ages = client
+            .user()
             .find_many(vec![user::age::not_in_vec(vec![Some(18), Some(45)])])
             .exec()
             .await
@@ -800,39 +852,48 @@ mod query_builder_tests {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;
         let client = CausticsClient::new(db.clone());
-        let now = chrono::FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
 
         // Test PCR-compatible write_params alongside existing SetParam system
-        let _user = client.user().create(
-            "pcr@example.com".to_string(),
-            "PCR User".to_string(),
-            now,
-            now,
-            vec![
-                // Using existing set functions (backward compatibility)
-                user::age::set(Some(25)),
-                user::deleted_at::set(None),
-                // The write_params types can be used through the generic T: Into<Type> system
-            ],
-        ).exec().await.unwrap();
+        let _user = client
+            .user()
+            .create(
+                "pcr@example.com".to_string(),
+                "PCR User".to_string(),
+                now,
+                now,
+                vec![
+                    // Using existing set functions (backward compatibility)
+                    user::age::set(Some(25)),
+                    user::deleted_at::set(None),
+                    // The write_params types can be used through the generic T: Into<Type> system
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
 
         // Test that read_filters and write_params modules exist and can be referenced
         // This validates the module structure without actually using them in queries yet
         let _read_filters_exist = user::read_filters::WhereParam::Email(
-            caustics::read_filters::StringFilter::Equals("test".to_string())
+            caustics::read_filters::StringFilter::Equals("test".to_string()),
         );
-        
+
         let _write_params_exist = user::write_params::SetParam::Name(
-            caustics::write_params::StringParam::Set("Test".to_string())
+            caustics::write_params::StringParam::Set("Test".to_string()),
         );
 
         // Verify existing functionality still works
-        let found_user = client.user()
+        let found_user = client
+            .user()
             .find_first(vec![user::email::equals("pcr@example.com")])
             .exec()
             .await
             .unwrap();
-        
+
         assert!(found_user.is_some());
         let found = found_user.unwrap();
         assert_eq!(found.name, "PCR User");

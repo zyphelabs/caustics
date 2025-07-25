@@ -158,8 +158,10 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
         (Some(model_ast), Some(relation_ast)) => {
             // Use the module name for the path: crate::<mod_ident>
             let mod_ident = &ast.ident;
-            let full_mod_path: syn::Path = syn::parse_str(&format!("crate::{}", mod_ident)).unwrap();
-            let generated = entity::generate_entity(model_ast, relation_ast, namespace, &full_mod_path);
+            let full_mod_path: syn::Path =
+                syn::parse_str(&format!("crate::{}", mod_ident)).unwrap();
+            let generated =
+                entity::generate_entity(model_ast, relation_ast, namespace, &full_mod_path);
 
             // Parse the generated items into a File
             let generated_file = match syn::parse2::<File>(generated) {

@@ -1,9 +1,9 @@
 use crate::common::is_option;
+use crate::where_param::generate_where_param_logic;
 use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::{Data, DeriveInput, Fields};
-use crate::where_param::generate_where_param_logic;
 
 #[derive(Debug, Clone)]
 pub struct Field {
@@ -43,7 +43,12 @@ pub enum RelationKind {
     BelongsTo,
 }
 
-pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namespace: String, full_mod_path: &syn::Path) -> TokenStream {
+pub fn generate_entity(
+    model_ast: DeriveInput,
+    relation_ast: DeriveInput,
+    namespace: String,
+    full_mod_path: &syn::Path,
+) -> TokenStream {
     // Extract fields
     let fields = match &model_ast.data {
         Data::Struct(data_struct) => match &data_struct.fields {
@@ -66,51 +71,56 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         let foreign_key_column = rel.foreign_key_column.as_ref().map_or("Id", |v| v);
         let foreign_key_column_ident = format_ident!("{}", foreign_key_column);
         let relation_name_str = rel.name.to_snake_case();
-        
+
         let fetcher_body = if matches!(rel.kind, RelationKind::HasMany) {
             quote! {
-                let query = #target::Entity::find()
-                    .filter(#target::Column::#foreign_key_column_ident.eq(foreign_key_value.unwrap_or_default()));
-                
-                let vec_with_rel = query.all(conn).await?
-                            .into_iter()
-                    .map(|model| #target::ModelWithRelations::from_model(model))
-                    .collect::<Vec<_>>();
-                
-                Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>)
-                    }
-                } else {
+            let query = #target::Entity::find()
+                .filter(#target::Column::#foreign_key_column_ident.eq(foreign_key_value.unwrap_or_default()));
+
+            let vec_with_rel = query.all(conn).await?
+                        .into_iter()
+                .map(|model| #target::ModelWithRelations::from_model(model))
+                .collect::<Vec<_>>();
+
+            Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>)
+                }
+        } else {
             // belongs_to relation - query the TARGET entity by its primary key, using the current entity's foreign key value
             let is_nullable_fk = rel.is_nullable;
             let target_entity = &rel.target;
             let target_entity_type = quote! { #target_entity::Entity };
             let target_model_with_rel = quote! { #target_entity::ModelWithRelations };
             let target_unique_param = quote! { #target_entity::UniqueWhereParam };
-            
+
             // Get the primary key field name from the relation definition or default to 'id'
             let primary_key_field_name = if let Some(pk) = &rel.primary_key_field {
                 pk.as_str()
             } else {
                 "id"
             };
-            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
+            let primary_key_pascal = primary_key_field_name
+                .chars()
+                .next()
+                .unwrap()
+                .to_uppercase()
+                .collect::<String>()
                 + &primary_key_field_name[1..];
             let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
-            
+
             if is_nullable_fk {
-            quote! {
-                if let Some(fk_value) = foreign_key_value {
-                        let condition = #target_unique_param::#primary_key_variant(fk_value);
-                        let opt_model = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into()).one(conn).await?;
-                        let with_rel = opt_model.map(#target_model_with_rel::from_model);
-                        let result: Option<Option<#target_model_with_rel>> = Some(with_rel);
-                        return Ok(Box::new(result) as Box<dyn std::any::Any + Send>);
-                    } else {
-                        return Ok(Box::new(None::<Option<#target_model_with_rel>>) as Box<dyn std::any::Any + Send>);
+                quote! {
+                    if let Some(fk_value) = foreign_key_value {
+                            let condition = #target_unique_param::#primary_key_variant(fk_value);
+                            let opt_model = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into()).one(conn).await?;
+                            let with_rel = opt_model.map(#target_model_with_rel::from_model);
+                            let result: Option<Option<#target_model_with_rel>> = Some(with_rel);
+                            return Ok(Box::new(result) as Box<dyn std::any::Any + Send>);
+                        } else {
+                            return Ok(Box::new(None::<Option<#target_model_with_rel>>) as Box<dyn std::any::Any + Send>);
+                    }
                 }
-            }
-        } else {
-            quote! {
+            } else {
+                quote! {
                 if let Some(fk_value) = foreign_key_value {
                         let condition = #target_unique_param::#primary_key_variant(fk_value);
                         let opt_model = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into()).one(conn).await?;
@@ -126,11 +136,15 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
     }
 
     // Compute at codegen time if this entity is the target of a has_many relation
-    let is_has_many_target = relations.iter().any(|rel| matches!(rel.kind, RelationKind::HasMany));
-    
+    let is_has_many_target = relations
+        .iter()
+        .any(|rel| matches!(rel.kind, RelationKind::HasMany));
+
     // Compute if this entity has nullable foreign keys (for belongs_to relations)
     let has_nullable_foreign_keys = relations.iter().any(|rel| {
-        matches!(rel.kind, RelationKind::BelongsTo) && rel.foreign_key_column.is_some() && rel.is_nullable
+        matches!(rel.kind, RelationKind::BelongsTo)
+            && rel.foreign_key_column.is_some()
+            && rel.is_nullable
     });
 
     // Filter out primary key fields for set operations
@@ -157,7 +171,8 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             field.attrs.iter().any(|attr| {
                 if let syn::Meta::List(meta) = &attr.meta {
                     (meta.path.is_ident("sea_orm")
-                        && (meta.tokens.to_string().contains("primary_key") || meta.tokens.to_string().contains("unique")))
+                        && (meta.tokens.to_string().contains("primary_key")
+                            || meta.tokens.to_string().contains("unique")))
                         || meta.path.is_ident("primary_key")
                         || meta.path.is_ident("unique")
                 } else {
@@ -178,7 +193,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .iter()
         .filter(|field| {
             let field_name = field.ident.as_ref().unwrap().to_string();
-            !primary_key_fields.contains(field) 
+            !primary_key_fields.contains(field)
                 && !is_option(&field.ty)
                 && !foreign_key_fields.contains(&field_name)
         })
@@ -227,19 +242,21 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
-            relation.foreign_key_field.is_some() && {
-                // Check if the foreign key field is not nullable (not Option<T>)
-                // Only required relations should be in the Create struct
-                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                }) {
-                    !is_option(&field.ty)
-                } else {
-                    false
+            matches!(relation.kind, RelationKind::BelongsTo)
+                && relation.foreign_key_field.is_some()
+                && {
+                    // Check if the foreign key field is not nullable (not Option<T>)
+                    // Only required relations should be in the Create struct
+                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    if let Some(field) = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                    {
+                        !is_option(&field.ty)
+                    } else {
+                        false
+                    }
                 }
-            }
         })
         .map(|relation| {
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
@@ -255,19 +272,21 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
-            relation.foreign_key_field.is_some() && {
-                // Check if the foreign key field is not nullable (not Option<T>)
-                // Only required relations should be function arguments
-                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                }) {
-                    !is_option(&field.ty)
-                } else {
-                    false
+            matches!(relation.kind, RelationKind::BelongsTo)
+                && relation.foreign_key_field.is_some()
+                && {
+                    // Check if the foreign key field is not nullable (not Option<T>)
+                    // Only required relations should be function arguments
+                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    if let Some(field) = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                    {
+                        !is_option(&field.ty)
+                    } else {
+                        false
+                    }
                 }
-            }
         })
         .map(|relation| {
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
@@ -283,19 +302,21 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
-            relation.foreign_key_field.is_some() && {
-                // Check if the foreign key field is not nullable (not Option<T>)
-                // Only required relations should be initializers
-                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                }) {
-                    !is_option(&field.ty)
-                } else {
-                    false
+            matches!(relation.kind, RelationKind::BelongsTo)
+                && relation.foreign_key_field.is_some()
+                && {
+                    // Check if the foreign key field is not nullable (not Option<T>)
+                    // Only required relations should be initializers
+                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    if let Some(field) = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                    {
+                        !is_option(&field.ty)
+                    } else {
+                        false
+                    }
                 }
-            }
         })
         .map(|relation| {
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
@@ -304,26 +325,37 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .collect::<Vec<_>>();
 
     // Generate unique field names as string literals for match arms
-    let unique_field_names: Vec<_> = unique_fields.iter().map(|field| {
-        let field_name = field.ident.as_ref().unwrap().to_string();
-        syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
-    }).collect();
+    let unique_field_names: Vec<_> = unique_fields
+        .iter()
+        .map(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+        })
+        .collect();
 
     // Generate unique field identifiers for column access (PascalCase for SeaORM)
-    let unique_field_idents: Vec<_> = unique_fields.iter().map(|field| {
-        let field_name = field.ident.as_ref().unwrap().to_string();
-        // Convert to PascalCase for SeaORM Column enum
-        let pascal_case = field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
-            + &field_name[1..];
-        syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
-    }).collect();
+    let unique_field_idents: Vec<_> = unique_fields
+        .iter()
+        .map(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            // Convert to PascalCase for SeaORM Column enum
+            let pascal_case = field_name
+                .chars()
+                .next()
+                .unwrap()
+                .to_uppercase()
+                .collect::<String>()
+                + &field_name[1..];
+            syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+        })
+        .collect();
 
     // Generate foreign key assignments (convert UniqueWhereParam to foreign key value)
     let foreign_key_assigns = relations
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
+            matches!(relation.kind, RelationKind::BelongsTo) &&
             relation.foreign_key_field.is_some() && {
                 // Check if the foreign key field is not nullable (not Option<T>)
                 // Only required relations should be in foreign key assignments
@@ -342,18 +374,18 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             let fk_field_ident = format_ident!("{}", fk_field);
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             let target_module = &relation.target;
-            
+
             // Get the primary key field name from the relation definition or default to 'id'
             let primary_key_field_name = if let Some(pk) = &relation.primary_key_field {
                 pk.as_str()
             } else {
                 "id"
             };
-            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
+            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>()
                 + &primary_key_field_name[1..];
             let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
             let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
-            
+
             quote! {
                 // Handle foreign key value from UniqueWhereParam
                 match self.#relation_name {
@@ -420,11 +452,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                         #relation_name(#target_module::UniqueWhereParam)
                     })
                 }
-                RelationKind::HasMany => {
-                    Some(quote! {
-                        #relation_name(Vec<#target_module::UniqueWhereParam>)
-                    })
-                }
+                RelationKind::HasMany => Some(quote! {
+                    #relation_name(Vec<#target_module::UniqueWhereParam>)
+                }),
             }
         })
         .collect::<Vec<_>>();
@@ -434,18 +464,20 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
-            relation.foreign_key_field.is_some() && {
-                // Only optional relations can be disconnected (set to None)
-                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                }) {
-                    is_option(&field.ty)
-                } else {
-                    false
+            matches!(relation.kind, RelationKind::BelongsTo)
+                && relation.foreign_key_field.is_some()
+                && {
+                    // Only optional relations can be disconnected (set to None)
+                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    if let Some(field) = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                    {
+                        is_option(&field.ty)
+                    } else {
+                        false
+                    }
                 }
-            }
         })
         .map(|relation| {
             let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
@@ -463,150 +495,186 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
     };
 
     // Generate field variants and field operator modules for WhereParam enum (all fields, with string ops for string fields)
-    let (where_field_variants, where_match_arms, field_ops) = generate_where_param_logic(&fields, &unique_fields, full_mod_path);
+    let (where_field_variants, where_match_arms, field_ops) =
+        generate_where_param_logic(&fields, &unique_fields, full_mod_path);
 
     // Generate match arms for UniqueWhereParam
-    let unique_where_match_arms = unique_fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-        let equals_variant = format_ident!("{}Equals", pascal_name);
-        quote! {
-            UniqueWhereParam::#equals_variant(value) => {
-                Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+    let unique_where_match_arms = unique_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            let equals_variant = format_ident!("{}Equals", pascal_name);
+            quote! {
+                UniqueWhereParam::#equals_variant(value) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                }
             }
-        }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     // Generate field variants for OrderByParam enum (all fields)
-    let order_by_field_variants = fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-        quote! {
-            #pascal_name(caustics::SortOrder)
-        }
-    }).collect::<Vec<_>>();
+    let order_by_field_variants = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            quote! {
+                #pascal_name(caustics::SortOrder)
+            }
+        })
+        .collect::<Vec<_>>();
 
     // Generate match arms for OrderByParam
-    let order_by_match_arms = fields.iter().map(|field| {
-        let pascal_name = format_ident!("{}", field.ident.as_ref().unwrap().to_string().to_pascal_case());
-        quote! {
-            OrderByParam::#pascal_name(order) => {
-                let sea_order = match order {
-                    SortOrder::Asc => sea_orm::Order::Asc,
-                    SortOrder::Desc => sea_orm::Order::Desc,
-                };
-                (<Entity as EntityTrait>::Column::#pascal_name, sea_order)
+    let order_by_match_arms = fields
+        .iter()
+        .map(|field| {
+            let pascal_name = format_ident!(
+                "{}",
+                field.ident.as_ref().unwrap().to_string().to_pascal_case()
+            );
+            quote! {
+                OrderByParam::#pascal_name(order) => {
+                    let sea_order = match order {
+                        SortOrder::Asc => sea_orm::Order::Asc,
+                        SortOrder::Desc => sea_orm::Order::Desc,
+                    };
+                    (<Entity as EntityTrait>::Column::#pascal_name, sea_order)
+                }
             }
-        }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     // Generate UniqueWhereParam enum for unique fields
-    let unique_where_variants = unique_fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let pascal_name = name.to_string().to_pascal_case();
-        let equals_variant = format_ident!("{}Equals", pascal_name);
-        let ty = &field.ty;
-        quote! {
-            #equals_variant(#ty)
-        }
-    }).collect::<Vec<_>>();
+    let unique_where_variants = unique_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = name.to_string().to_pascal_case();
+            let equals_variant = format_ident!("{}Equals", pascal_name);
+            let ty = &field.ty;
+            quote! {
+                #equals_variant(#ty)
+            }
+        })
+        .collect::<Vec<_>>();
 
     // Generate all unique field variant id idents (e.g., IdEquals, EmailEquals)
-    let unique_where_variant_idents: Vec<_> = unique_fields.iter().map(|field| {
-        let pascal_name = field.ident.as_ref().unwrap().to_string().to_pascal_case();
-        format_ident!("{}Equals", pascal_name)
-    }).collect();
+    let unique_where_variant_idents: Vec<_> = unique_fields
+        .iter()
+        .map(|field| {
+            let pascal_name = field.ident.as_ref().unwrap().to_string().to_pascal_case();
+            format_ident!("{}Equals", pascal_name)
+        })
+        .collect();
     // Filter out the primary key variant (IdEquals)
-    let other_unique_variants: Vec<_> = unique_where_variant_idents.iter().filter(|ident| ident.to_string() != "IdEquals").collect();
+    let other_unique_variants: Vec<_> = unique_where_variant_idents
+        .iter()
+        .filter(|ident| ident.to_string() != "IdEquals")
+        .collect();
 
     // Generate UniqueWhereParam serialize implementation
-    let unique_where_serialize_arms = unique_fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let pascal_name = name.to_string().to_pascal_case();
-        let equals_variant = format_ident!("{}Equals", pascal_name);
-        let field_name = name.to_string();
-        quote! {
-            UniqueWhereParam::#equals_variant(value) => (
-                #field_name,
-                ::prisma_client_rust::SerializedWhereValue::Value(
-                    ::prisma_client_rust::PrismaValue::Int(value),
+    let unique_where_serialize_arms = unique_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = name.to_string().to_pascal_case();
+            let equals_variant = format_ident!("{}Equals", pascal_name);
+            let field_name = name.to_string();
+            quote! {
+                UniqueWhereParam::#equals_variant(value) => (
+                    #field_name,
+                    ::prisma_client_rust::SerializedWhereValue::Value(
+                        ::prisma_client_rust::PrismaValue::Int(value),
+                    ),
                 ),
-            ),
-        }
-    }).collect::<Vec<_>>();
+            }
+        })
+        .collect::<Vec<_>>();
 
     // Generate field operator modules
     let field_ops = field_ops;
 
     // Generate read_filters module (PCR-compatible)
-    let read_filters_types = fields.iter().map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-        let ty = &field.ty;
-        let type_str = quote!(#ty).to_string();
-        
-        if type_str.contains("Option") {
-            if type_str.contains("String") {
-                quote! { #pascal_name(caustics::read_filters::StringNullableFilter) }
-            } else if type_str.contains("i32") {
-                quote! { #pascal_name(caustics::read_filters::IntNullableFilter) }
-            } else if type_str.contains("DateTime") {
-                quote! { #pascal_name(caustics::read_filters::DateTimeNullableFilter) }
+    let read_filters_types = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            let ty = &field.ty;
+            let type_str = quote!(#ty).to_string();
+
+            if type_str.contains("Option") {
+                if type_str.contains("String") {
+                    quote! { #pascal_name(caustics::read_filters::StringNullableFilter) }
+                } else if type_str.contains("i32") {
+                    quote! { #pascal_name(caustics::read_filters::IntNullableFilter) }
+                } else if type_str.contains("DateTime") {
+                    quote! { #pascal_name(caustics::read_filters::DateTimeNullableFilter) }
+                } else {
+                    quote! { #pascal_name(caustics::read_filters::StringNullableFilter) }
+                }
             } else {
-                quote! { #pascal_name(caustics::read_filters::StringNullableFilter) }
+                if type_str.contains("String") {
+                    quote! { #pascal_name(caustics::read_filters::StringFilter) }
+                } else if type_str.contains("i32") {
+                    quote! { #pascal_name(caustics::read_filters::IntFilter) }
+                } else if type_str.contains("DateTime") {
+                    quote! { #pascal_name(caustics::read_filters::DateTimeFilter) }
+                } else if type_str.contains("bool") {
+                    quote! { #pascal_name(caustics::read_filters::BoolFilter) }
+                } else {
+                    quote! { #pascal_name(caustics::read_filters::StringFilter) }
+                }
             }
-        } else {
-            if type_str.contains("String") {
-                quote! { #pascal_name(caustics::read_filters::StringFilter) }
-            } else if type_str.contains("i32") {
-                quote! { #pascal_name(caustics::read_filters::IntFilter) }
-            } else if type_str.contains("DateTime") {
-                quote! { #pascal_name(caustics::read_filters::DateTimeFilter) }
-            } else if type_str.contains("bool") {
-                quote! { #pascal_name(caustics::read_filters::BoolFilter) }
-            } else {
-                quote! { #pascal_name(caustics::read_filters::StringFilter) }
-            }
-        }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     // Generate write_params module (PCR-compatible)
-    let write_params_types = fields.iter().filter(|field| {
-        // Exclude primary key fields from write_params
-        !field.attrs.iter().any(|attr| {
-            attr.path().is_ident("sea_orm") && 
-            attr.meta.to_token_stream().to_string().contains("primary_key")
+    let write_params_types = fields
+        .iter()
+        .filter(|field| {
+            // Exclude primary key fields from write_params
+            !field.attrs.iter().any(|attr| {
+                attr.path().is_ident("sea_orm")
+                    && attr
+                        .meta
+                        .to_token_stream()
+                        .to_string()
+                        .contains("primary_key")
+            })
         })
-    }).map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
-        let ty = &field.ty;
-        let type_str = quote!(#ty).to_string();
-        
-        if type_str.contains("Option") {
-            if type_str.contains("String") {
-                quote! { #pascal_name(caustics::write_params::StringNullableParam) }
-            } else if type_str.contains("i32") {
-                quote! { #pascal_name(caustics::write_params::IntNullableParam) }
-            } else if type_str.contains("DateTime") {
-                quote! { #pascal_name(caustics::write_params::DateTimeNullableParam) }
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            let ty = &field.ty;
+            let type_str = quote!(#ty).to_string();
+
+            if type_str.contains("Option") {
+                if type_str.contains("String") {
+                    quote! { #pascal_name(caustics::write_params::StringNullableParam) }
+                } else if type_str.contains("i32") {
+                    quote! { #pascal_name(caustics::write_params::IntNullableParam) }
+                } else if type_str.contains("DateTime") {
+                    quote! { #pascal_name(caustics::write_params::DateTimeNullableParam) }
+                } else {
+                    quote! { #pascal_name(caustics::write_params::StringNullableParam) }
+                }
             } else {
-                quote! { #pascal_name(caustics::write_params::StringNullableParam) }
+                if type_str.contains("String") {
+                    quote! { #pascal_name(caustics::write_params::StringParam) }
+                } else if type_str.contains("i32") {
+                    quote! { #pascal_name(caustics::write_params::IntParam) }
+                } else if type_str.contains("DateTime") {
+                    quote! { #pascal_name(caustics::write_params::DateTimeParam) }
+                } else if type_str.contains("bool") {
+                    quote! { #pascal_name(caustics::write_params::BoolParam) }
+                } else {
+                    quote! { #pascal_name(caustics::write_params::StringParam) }
+                }
             }
-        } else {
-            if type_str.contains("String") {
-                quote! { #pascal_name(caustics::write_params::StringParam) }
-            } else if type_str.contains("i32") {
-                quote! { #pascal_name(caustics::write_params::IntParam) }
-            } else if type_str.contains("DateTime") {
-                quote! { #pascal_name(caustics::write_params::DateTimeParam) }
-            } else if type_str.contains("bool") {
-                quote! { #pascal_name(caustics::write_params::BoolParam) }
-            } else {
-                quote! { #pascal_name(caustics::write_params::StringParam) }
-            }
-        }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     // Pass as slices directly
     // Remove any usage of generate_field_ops_and_logical_helpers (no longer needed)
@@ -650,13 +718,16 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             let name = format_ident!("{}", relation.name.to_snake_case());
             let target = &relation.target;
             match relation.kind {
-                RelationKind::HasMany => quote! { pub #name: Option<Vec<#target::ModelWithRelations>> },
+                RelationKind::HasMany => {
+                    quote! { pub #name: Option<Vec<#target::ModelWithRelations>> }
+                }
                 RelationKind::BelongsTo => {
                     // Check if this is an optional relation by looking at the foreign key field
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
-                        if let Some(field) = fields.iter().find(|f| {
-                            f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                        }) {
+                        if let Some(field) = fields
+                            .iter()
+                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        {
                             is_option(&field.ty)
                         } else {
                             false
@@ -664,7 +735,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                     } else {
                         false
                     };
-                    
+
                     if is_optional {
                         // For optional relations: Option<Option<ModelWithRelations>>
                         // First Option: whether relation was fetched
@@ -691,9 +762,10 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                 RelationKind::BelongsTo => {
                     // Check if this is an optional relation by looking at the foreign key field
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
-                        if let Some(field) = fields.iter().find(|f| {
-                            f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                        }) {
+                        if let Some(field) = fields
+                            .iter()
+                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        {
                             is_option(&field.ty)
                         } else {
                             false
@@ -701,7 +773,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                     } else {
                         false
                     };
-                    
+
                     if is_optional {
                         // For optional relations: Option<Option<ModelWithRelations>>
                         quote! { #name: Option<Option<#target::ModelWithRelations>> }
@@ -735,7 +807,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
     // Generate Filter and RelationFilter types
     let filter_types = quote! {
         pub type Filter = caustics::Filter;
-        
+
         #[derive(Clone)]
         pub struct RelationFilter {
             pub relation: &'static str,
@@ -746,7 +818,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             fn relation_name(&self) -> &'static str {
                 self.relation
             }
-            
+
             fn filters(&self) -> &[caustics::Filter] {
                 &self.filters
             }
@@ -818,9 +890,10 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             RelationKind::BelongsTo => {
                 // Check if this is an optional relation by looking at the foreign key field
                 let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
-                    if let Some(field) = fields.iter().find(|f| {
-                        f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                    }) {
+                    if let Some(field) = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                    {
                         is_option(&field.ty)
                     } else {
                         false
@@ -841,16 +914,23 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         let (foreign_key_field, foreign_key_column, get_foreign_key_closure) = match relation.kind {
             RelationKind::HasMany => {
                 let id_field = format_ident!("id");
-                (quote! { model.#id_field }, "id", quote! { |model| Some(model.id) })
-            },
+                (
+                    quote! { model.#id_field },
+                    "id",
+                    quote! { |model| Some(model.id) },
+                )
+            }
             RelationKind::BelongsTo => {
                 // Use the foreign key field from the relation definition
-                let foreign_key_field_name = relation.foreign_key_field.as_ref()
+                let foreign_key_field_name = relation
+                    .foreign_key_field
+                    .as_ref()
                     .expect("BelongsTo relation must have foreign_key_field defined");
                 let foreign_key_field = format_ident!("{}", foreign_key_field_name);
-                let is_optional = if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *foreign_key_field_name
-                }) {
+                let is_optional = if let Some(field) = fields
+                    .iter()
+                    .find(|f| f.ident.as_ref().unwrap().to_string() == *foreign_key_field_name)
+                {
                     is_option(&field.ty)
                 } else {
                     false
@@ -860,11 +940,19 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
                 } else {
                     quote! { |model| Some(model.#foreign_key_field) }
                 };
-                (quote! { model.#foreign_key_field }, foreign_key_field_name.as_str(), get_fk)
-            },
+                (
+                    quote! { model.#foreign_key_field },
+                    foreign_key_field_name.as_str(),
+                    get_fk,
+                )
+            }
         };
-        let target_entity = syn::LitStr::new(&format!("{:?}", relation.target), proc_macro2::Span::call_site());
-        let foreign_key_column = syn::LitStr::new(foreign_key_column, proc_macro2::Span::call_site());
+        let target_entity = syn::LitStr::new(
+            &format!("{:?}", relation.target),
+            proc_macro2::Span::call_site(),
+        );
+        let foreign_key_column =
+            syn::LitStr::new(foreign_key_column, proc_macro2::Span::call_site());
         let debug_name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
         quote! {
             caustics::RelationDescriptor::<ModelWithRelations> {
@@ -896,7 +984,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
+            matches!(relation.kind, RelationKind::BelongsTo) &&
             relation.foreign_key_field.is_some()
         })
         .map(|relation| {
@@ -905,18 +993,18 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             let target_module = &relation.target;
             let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
             let target_entity_name = relation.target.segments.last().unwrap().ident.to_string().to_lowercase();
-            
+
             // Get the primary key field name from the relation definition or default to 'id'
             let primary_key_field_name = if let Some(pk) = &relation.primary_key_field {
                 pk.as_str()
             } else {
                 "id"
             };
-            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>() 
+            let primary_key_pascal = primary_key_field_name.chars().next().unwrap().to_uppercase().collect::<String>()
                 + &primary_key_field_name[1..];
             let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
             let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
-            
+
             // Check if this is an optional relation
             let is_optional = if let Some(field) = fields.iter().find(|f| {
                 f.ident.as_ref().unwrap().to_string() == *fk_field_name
@@ -925,7 +1013,7 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             } else {
                 false
             };
-            
+
             if is_optional {
                 quote! {
                     SetParam::#relation_name(where_param) => {
@@ -986,22 +1074,25 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         .iter()
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
-            matches!(relation.kind, RelationKind::BelongsTo) && 
-            relation.foreign_key_field.is_some() && {
-                // Only optional relations can be disconnected (set to None)
-                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                }) {
-                    is_option(&field.ty)
-                } else {
-                    false
+            matches!(relation.kind, RelationKind::BelongsTo)
+                && relation.foreign_key_field.is_some()
+                && {
+                    // Only optional relations can be disconnected (set to None)
+                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    if let Some(field) = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                    {
+                        is_option(&field.ty)
+                    } else {
+                        false
+                    }
                 }
-            }
         })
         .map(|relation| {
             let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
-            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
+            let foreign_key_field =
+                format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
             quote! {
                 SetParam::#relation_name => {
                     model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
@@ -1034,26 +1125,32 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
 
     let entity_name_lit = syn::LitStr::new(&model_ast.ident.to_string(), model_ast.ident.span());
     // Generate all field names as string literals for match arms
-    let all_field_names: Vec<_> = fields.iter().map(|field| {
-        let field_name = field.ident.as_ref().unwrap().to_string();
-        syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
-    }).collect();
+    let all_field_names: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+        })
+        .collect();
     // Generate all field identifiers for column access (PascalCase for SeaORM)
-    let all_field_idents: Vec<_> = fields.iter().map(|field| {
-        let field_name = field.ident.as_ref().unwrap().to_string();
-        // Convert snake_case to PascalCase
-        let pascal_case = field_name
-            .split('_')
-            .map(|part| {
-                let mut chars = part.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().chain(chars).collect(),
-                }
-            })
-            .collect::<String>();
-        syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
-    }).collect();
+    let all_field_idents: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            // Convert snake_case to PascalCase
+            let pascal_case = field_name
+                .split('_')
+                .map(|part| {
+                    let mut chars = part.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => first.to_uppercase().chain(chars).collect(),
+                    }
+                })
+                .collect::<String>();
+            syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+        })
+        .collect();
     // Generate the column_from_str function using the variables
     let column_from_str_fn = quote! {
         pub(crate) fn column_from_str(name: &str) -> Option<<Entity as sea_orm::EntityTrait>::Column> {
@@ -1065,9 +1162,9 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             }
         }
     };
-    
+
     let namespace_ident = format_ident!("{}", namespace);
-    
+
     let expanded = quote! {
         use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
         use uuid::Uuid;
@@ -1121,13 +1218,13 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
             }
         }
 
-        // PCR-compatible write_params module  
+        // PCR-compatible write_params module
         pub mod write_params {
             #[derive(Debug, Clone)]
             pub enum SetParam {
                 #(#write_params_types,)*
             }
-            
+
             #[derive(Debug, Clone)]
             pub enum UncheckedSetParam {
                 #(#write_params_types,)*
@@ -1174,10 +1271,10 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
         fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
                 let mut model = ActiveModel::new();
                 let mut deferred_lookups = Vec::new();
-                
+
                 #(#required_assigns)*
                 #(#foreign_key_assigns)*
-                
+
                 // Process SetParam values
                 for param in self._params {
                     match param {
@@ -1248,8 +1345,8 @@ pub fn generate_entity(model_ast: DeriveInput, relation_ast: DeriveInput, namesp
 
             pub fn create(&self, #(#required_fn_args,)* #(#foreign_key_relation_args,)* _params: Vec<SetParam>) -> caustics::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations> {
                 let create = Create {
-                    #(#required_inits,)* 
-                    #(#foreign_key_relation_inits,)* 
+                    #(#required_inits,)*
+                    #(#foreign_key_relation_inits,)*
                     _params,
                 };
                 let (model, deferred_lookups) = create.into_active_model::<C>();
@@ -1391,7 +1488,7 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
             let mut is_nullable = false;
             let mut foreign_key_column = None;
             let mut primary_key_field = None;
-            
+
             for attr in &variant.attrs {
                 if let syn::Meta::List(meta) = &attr.meta {
                     if meta.path.is_ident("sea_orm") {
@@ -1416,7 +1513,7 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
                                                 leading_colon: target_path.leading_colon,
                                                 segments: syn::punctuated::Punctuated::new(),
                                             };
-                                            
+
                                             // Copy all segments except the last one if it's "Entity"
                                             for (i, segment) in target_path.segments.iter().enumerate() {
                                                 if i == target_path.segments.len() - 1 && segment.ident == "Entity" {
@@ -1446,7 +1543,7 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
                                                 // Convert PascalCase to snake_case for field name
                                                 let snake_case_name = field_name.to_string().to_snake_case();
                                                 foreign_key_field = Some(snake_case_name.clone());
-                                                
+
                                                 // Find the corresponding field in the model to get its type
                                                 if let Some(field) = model_fields.iter().find(|f| {
                                                     f.ident.as_ref().unwrap().to_string() == snake_case_name
@@ -1494,7 +1591,9 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
             }
 
             // Only add the relation if we have all the required information
-            if let (Some(name), Some(target), Some(kind)) = (relation_name, relation_target, relation_kind) {
+            if let (Some(name), Some(target), Some(kind)) =
+                (relation_name, relation_target, relation_kind)
+            {
                 // Construct the target unique param path
                 let target_unique_param = if foreign_key_field.is_some() {
                     let mut unique_param_path = target.clone();
@@ -1509,9 +1608,10 @@ fn extract_relations(relation_ast: &DeriveInput, model_fields: &[&syn::Field]) -
 
                 // Check if the foreign key field is nullable by examining its type
                 if let Some(fk_field_name) = &foreign_key_field {
-                    if let Some(field) = model_fields.iter().find(|f| {
-                        f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                    }) {
+                    if let Some(field) = model_fields
+                        .iter()
+                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                    {
                         if is_option(&field.ty) {
                             is_nullable = true;
                         }
@@ -1552,9 +1652,10 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         let submodule = match relation.kind {
             RelationKind::BelongsTo => {
                 let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                let is_optional = if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                }) {
+                let is_optional = if let Some(field) = fields
+                    .iter()
+                    .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                {
                     is_option(&field.ty)
                 } else {
                     false
@@ -1618,4 +1719,3 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         #(#submodules)*
     }
 }
-

@@ -2,22 +2,30 @@
 // This module will support all types and will be long.
 
 use heck::ToPascalCase;
-use quote::{quote, format_ident};
-
+use quote::{format_ident, quote};
 
 /// Generate field variants, match arms, and field operator modules for WhereParam enum and filters.
 pub fn generate_where_param_logic(
     fields: &[&syn::Field],
     unique_fields: &[&syn::Field],
     full_mod_path: &syn::Path,
-) -> (Vec<proc_macro2::TokenStream>, Vec<proc_macro2::TokenStream>, Vec<proc_macro2::TokenStream>) {
+) -> (
+    Vec<proc_macro2::TokenStream>,
+    Vec<proc_macro2::TokenStream>,
+    Vec<proc_macro2::TokenStream>,
+) {
     let mut where_field_variants: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut field_ops: Vec<proc_macro2::TokenStream> = Vec::new();
     for field in fields.iter() {
         let name = field.ident.as_ref().unwrap();
         let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
         let ty = &field.ty;
-        let is_unique = unique_fields.iter().any(|unique_field| unique_field.ident.as_ref().unwrap() == name);
+        let is_unique = unique_fields
+            .iter()
+            .any(|unique_field| unique_field.ident.as_ref().unwrap() == name);
+
+        // Detect field type for appropriate operation generation
+        let field_type = detect_field_type(ty);
 
         // WhereParam variant uses FieldOp<T>
         where_field_variants.push(quote! { #pascal_name(FieldOp<#ty>) });
@@ -29,67 +37,76 @@ pub fn generate_where_param_logic(
                     super::SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
                 }
             }
-        } else { quote! {} };
+        } else {
+            quote! {}
+        };
 
+        // Unique where function
         let unique_where_fn = if is_unique {
             let equals_variant = format_ident!("{}Equals", pascal_name);
             quote! {
-                pub struct Equals(pub #ty);
                 pub fn equals<T: From<Equals>>(value: impl Into<#ty>) -> T {
                     Equals(value.into()).into()
                 }
+                pub struct Equals(pub #ty);
                 impl From<Equals> for super::UniqueWhereParam {
                     fn from(Equals(v): Equals) -> Self {
                         super::UniqueWhereParam::#equals_variant(v)
                     }
                 }
-                impl From<Equals> for WhereParam {
+                impl From<Equals> for super::WhereParam {
                     fn from(Equals(v): Equals) -> Self {
-                        WhereParam::#pascal_name(FieldOp::Equals(v))
+                        super::WhereParam::#pascal_name(FieldOp::Equals(v))
                     }
                 }
             }
         } else {
-            quote! {
-                pub fn equals<T: Into<#ty>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(FieldOp::Equals(value.into()))
-                }
-            }
+            quote! {}
         };
 
+        // Order by function
         let order_fn = quote! {
-            pub fn order(order: caustics::SortOrder) -> super::OrderByParam {
-                super::OrderByParam::#pascal_name(order)
+            pub fn order(sort_order: caustics::SortOrder) -> super::OrderByParam {
+                super::OrderByParam::#pascal_name(sort_order)
             }
         };
 
-        // String ops
-        let is_string_field = matches!(ty, syn::Type::Path(p) if p.path.is_ident("String"));
-        let is_option_string_field = matches!(ty, syn::Type::Path(p) if {
-            if let Some(segment) = p.path.segments.last() {
-                segment.ident == "Option" && matches!(&segment.arguments, syn::PathArguments::AngleBracketed(args) if {
-                    args.args.len() == 1 && matches!(args.args.first().unwrap(), syn::GenericArgument::Type(syn::Type::Path(inner)) if inner.path.is_ident("String"))
-                })
-            } else {
-                false
-            }
-        });
-        let string_ops = if is_string_field || is_option_string_field {
-            quote! {
-                pub fn contains<T: Into<String>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(FieldOp::Contains(value.into()))
-                }
-                pub fn starts_with<T: Into<String>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(FieldOp::StartsWith(value.into()))
-                }
-                pub fn ends_with<T: Into<String>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(FieldOp::EndsWith(value.into()))
-                }
-            }
-        } else { quote! {} };
+        // Generate type-specific operations
+        let type_specific_ops = if !is_unique {
+            generate_type_specific_operations(&field_type, &pascal_name, ty)
+        } else {
+            quote! {} // Don't generate equals for unique fields since unique_where_fn already has it
+        };
 
-        // Comparison ops for all types
-        let comparison_ops = quote! {
+        // String ops (only for string types)
+        let string_ops = match field_type {
+            FieldType::String | FieldType::OptionString => {
+                quote! {
+                    pub fn contains<T: Into<String>>(value: T) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::Contains(value.into()))
+                    }
+                    pub fn starts_with<T: Into<String>>(value: T) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::StartsWith(value.into()))
+                    }
+                    pub fn ends_with<T: Into<String>>(value: T) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::EndsWith(value.into()))
+                    }
+                }
+            }
+            _ => quote! {},
+        };
+
+        // Common comparison operations (for most types except boolean)
+        let comparison_ops = if !matches!(
+            field_type,
+            FieldType::Boolean
+                | FieldType::OptionBoolean
+                | FieldType::Json
+                | FieldType::OptionJson
+                | FieldType::Uuid
+                | FieldType::OptionUuid
+        ) {
+            quote! {
             pub fn not_equals<T: Into<#ty>>(value: T) -> WhereParam {
                 WhereParam::#pascal_name(FieldOp::NotEquals(value.into()))
             }
@@ -105,6 +122,18 @@ pub fn generate_where_param_logic(
             pub fn lte<T: Into<#ty>>(value: T) -> WhereParam {
                 WhereParam::#pascal_name(FieldOp::Lte(value.into()))
             }
+            }
+        } else {
+            // For boolean, UUID, and JSON fields, only provide equals/not_equals
+            quote! {
+                pub fn not_equals<T: Into<#ty>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(FieldOp::NotEquals(value.into()))
+                }
+            }
+        };
+
+        // Collection operations (for all types)
+        let collection_ops = quote! {
             pub fn in_vec<T: Into<#ty>>(values: Vec<T>) -> WhereParam {
                 WhereParam::#pascal_name(FieldOp::InVec(values.into_iter().map(|v| v.into()).collect()))
             }
@@ -113,24 +142,33 @@ pub fn generate_where_param_logic(
             }
         };
 
-        let mut field_mod_items = vec![set_fn, unique_where_fn, order_fn, string_ops, comparison_ops];
-        // If this is a string or Option<String> field, add a Mode variant and mode function
-        if is_string_field || is_option_string_field {
+        let mut field_mod_items = vec![
+            set_fn,
+            unique_where_fn,
+            order_fn,
+            type_specific_ops,
+            string_ops,
+            comparison_ops,
+            collection_ops,
+        ];
+
+        // If this is a string field, add a Mode variant and mode function
+        if matches!(field_type, FieldType::String | FieldType::OptionString) {
             let mode_variant = format_ident!("{}Mode", pascal_name);
             where_field_variants.push(quote! { #mode_variant(caustics::QueryMode) });
             field_mod_items.push(quote! {
-                pub fn mode(mode: caustics::QueryMode) -> WhereParam {
-                    WhereParam::#mode_variant(mode)
-                }
-            });
+            pub fn mode(mode: caustics::QueryMode) -> WhereParam {
+                WhereParam::#mode_variant(mode)
+                                            }
+                                        });
         }
         field_ops.push(quote! {
             #[allow(dead_code)]
-            pub mod #name {
-                use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
-                use uuid::Uuid;
-                use std::vec::Vec;
-                use super::*;
+                    pub mod #name {
+                        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                        use uuid::Uuid;
+                        use std::vec::Vec;
+                        use super::*;
                 #(#field_mod_items)*
             }
         });
@@ -168,167 +206,64 @@ pub fn generate_where_param_logic(
 fn generate_where_params_to_condition_function(fields: &[&syn::Field]) -> proc_macro2::TokenStream {
     let mut field_handlers = Vec::new();
     let mut mode_handlers = Vec::new();
-    
+
     for field in fields.iter() {
         let name = field.ident.as_ref().unwrap();
         let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
         let ty = &field.ty;
-        
-        // Check if this is a string field that supports QueryMode
-        let is_string_field = matches!(ty, syn::Type::Path(p) if p.path.is_ident("String"));
-        let is_option_string_field = matches!(ty, syn::Type::Path(p) if {
-            if let Some(segment) = p.path.segments.last() {
-                segment.ident == "Option" && matches!(&segment.arguments, syn::PathArguments::AngleBracketed(args) if {
-                    args.args.len() == 1 && matches!(args.args.first().unwrap(), syn::GenericArgument::Type(syn::Type::Path(inner)) if inner.path.is_ident("String"))
-                })
-            } else {
-                false
+
+        // Comprehensive type detection
+        let field_type = detect_field_type(ty);
+
+        // Generate field operation handler based on type
+        match field_type {
+            FieldType::String => {
+                field_handlers.push(generate_string_field_handler(&pascal_name, &name, false));
+                mode_handlers.push(generate_mode_handler(&pascal_name, &name));
             }
-        });
-        
-        // Generate field operation handler
-        if is_string_field || is_option_string_field {
-            // String fields with QueryMode support
-            if is_string_field {
-                // Non-nullable String fields
-                field_handlers.push(quote! {
-                    WhereParam::#pascal_name(op) => {
-                        let query_mode = query_modes.get(stringify!(#name)).copied().unwrap_or(caustics::QueryMode::Default);
-                        match op {
-                            FieldOp::Equals(v) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    // For case-insensitive equals, use LIKE
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(v))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
-                                }
-                            },
-                            FieldOp::NotEquals(v) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    // For case-insensitive not equals, use NOT LIKE
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.not_like(v))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
-                                }
-                            },
-                            FieldOp::Contains(s) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    // LIKE is case-insensitive in SQLite by default
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}%", s)))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
-                                }
-                            },
-                            FieldOp::StartsWith(s) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("{}%", s)))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.starts_with(s))
-                                }
-                            },
-                            FieldOp::EndsWith(s) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}", s)))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ends_with(s))
-                                }
-                            },
-                            FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                            FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                            FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                            FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-                            FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                            FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                        }
-                    }
-                });
-            } else {
-                // Nullable Option<String> fields
-                field_handlers.push(quote! {
-                    WhereParam::#pascal_name(op) => {
-                        let query_mode = query_modes.get(stringify!(#name)).copied().unwrap_or(caustics::QueryMode::Default);
-                        match op {
-                            FieldOp::Equals(v) => {
-                                match v {
-                                    Some(val) => {
-                                        if query_mode == caustics::QueryMode::Insensitive {
-                                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(val))
-                                        } else {
-                                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val))
-                                        }
-                                    },
-                                    None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                                }
-                            },
-                            FieldOp::NotEquals(v) => {
-                                match v {
-                                    Some(val) => {
-                                        if query_mode == caustics::QueryMode::Insensitive {
-                                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.not_like(val))
-                                        } else {
-                                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val))
-                                        }
-                                    },
-                                    None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                                }
-                            },
-                            FieldOp::Contains(s) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}%", s)))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
-                                }
-                            },
-                            FieldOp::StartsWith(s) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("{}%", s)))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.starts_with(s))
-                                }
-                            },
-                            FieldOp::EndsWith(s) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}", s)))
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ends_with(s))
-                                }
-                            },
-                            FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                            FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                            FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                            FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-                            FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                            FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                        }
-                    }
-                });
+            FieldType::OptionString => {
+                field_handlers.push(generate_string_field_handler(&pascal_name, &name, true));
+                mode_handlers.push(generate_mode_handler(&pascal_name, &name));
             }
-            
-            // Generate mode handler for string fields
-            let mode_variant = format_ident!("{}Mode", pascal_name);
-            mode_handlers.push(quote! {
-                WhereParam::#mode_variant(mode) => {
-                    query_modes.insert(stringify!(#name).to_string(), mode);
-                    continue; // Skip adding condition, this just sets the mode
-                }
-            });
-        } else {
-            // Non-string fields (no QueryMode support)
-            field_handlers.push(quote! {
-                WhereParam::#pascal_name(op) => match op {
-                    FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
-                    FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
-                    FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                    FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                    FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                    FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-                    FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                    FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                    FieldOp::Contains(_) => panic!("Contains operation not supported for non-string fields"),
-                    FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for non-string fields"),
-                    FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for non-string fields"),
-                }
-            });
+            FieldType::Integer => {
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, false));
+            }
+            FieldType::OptionInteger => {
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, true));
+            }
+            FieldType::Float => {
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, false));
+            }
+            FieldType::OptionFloat => {
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, true));
+            }
+            FieldType::Boolean => {
+                field_handlers.push(generate_boolean_field_handler(&pascal_name, false));
+            }
+            FieldType::OptionBoolean => {
+                field_handlers.push(generate_boolean_field_handler(&pascal_name, true));
+            }
+            FieldType::DateTime => {
+                field_handlers.push(generate_datetime_field_handler(&pascal_name, false));
+            }
+            FieldType::OptionDateTime => {
+                field_handlers.push(generate_datetime_field_handler(&pascal_name, true));
+            }
+            FieldType::Uuid => {
+                field_handlers.push(generate_uuid_field_handler(&pascal_name, false));
+            }
+            FieldType::OptionUuid => {
+                field_handlers.push(generate_uuid_field_handler(&pascal_name, true));
+            }
+            FieldType::Json => {
+                field_handlers.push(generate_json_field_handler(&pascal_name, false));
+            }
+            FieldType::OptionJson => {
+                field_handlers.push(generate_json_field_handler(&pascal_name, true));
+            }
+            FieldType::Other => {
+                field_handlers.push(generate_generic_field_handler(&pascal_name));
+            }
         }
     }
 
@@ -338,20 +273,20 @@ fn generate_where_params_to_condition_function(fields: &[&syn::Field]) -> proc_m
             use std::collections::HashMap;
             use sea_orm::{EntityTrait, ColumnTrait};
             use sea_query::Condition;
-            
+
             let mut final_condition = Condition::all();
             let mut query_modes: HashMap<String, caustics::QueryMode> = HashMap::new();
-            
+
             // Process params in two passes: first collect modes, then apply conditions
             let mut deferred_params = Vec::new();
-            
+
             for param in params {
                 match param {
                     #(#mode_handlers)*
                     other => deferred_params.push(other),
                 }
             }
-            
+
             // Second pass: apply conditions with collected query modes
             for param in deferred_params {
                 let condition = match param {
@@ -381,8 +316,548 @@ fn generate_where_params_to_condition_function(fields: &[&syn::Field]) -> proc_m
                 };
                 final_condition = final_condition.add(condition);
             }
-            
+
             final_condition
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum FieldType {
+    String,
+    OptionString,
+    Integer,
+    OptionInteger,
+    Float,
+    OptionFloat,
+    Boolean,
+    OptionBoolean,
+    DateTime,
+    OptionDateTime,
+    Uuid,
+    OptionUuid,
+    Json,
+    OptionJson,
+    Other,
+}
+
+/// Detect the field type from the syn::Type
+fn detect_field_type(ty: &syn::Type) -> FieldType {
+    match ty {
+        syn::Type::Path(path) => {
+            if let Some(segment) = path.path.segments.last() {
+                match segment.ident.to_string().as_str() {
+                    "String" => FieldType::String,
+                    "bool" => FieldType::Boolean,
+                    "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "isize"
+                    | "usize" => FieldType::Integer,
+                    "f32" | "f64" => FieldType::Float,
+                    "Uuid" => FieldType::Uuid,
+                    "DateTime" => FieldType::DateTime,
+                    "NaiveDateTime" => FieldType::DateTime,
+                    "NaiveDate" => FieldType::DateTime,
+                    "Value" => FieldType::Json, // serde_json::Value
+                    "Option" => {
+                        // Handle Option<T> types
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                                match detect_field_type(inner_ty) {
+                                    FieldType::String => FieldType::OptionString,
+                                    FieldType::Integer => FieldType::OptionInteger,
+                                    FieldType::Float => FieldType::OptionFloat,
+                                    FieldType::Boolean => FieldType::OptionBoolean,
+                                    FieldType::DateTime => FieldType::OptionDateTime,
+                                    FieldType::Uuid => FieldType::OptionUuid,
+                                    FieldType::Json => FieldType::OptionJson,
+                                    _ => FieldType::Other,
+                                }
+                            } else {
+                                FieldType::Other
+                            }
+                        } else {
+                            FieldType::Other
+                        }
+                    }
+                    _ => FieldType::Other,
+                }
+            } else {
+                FieldType::Other
+            }
+        }
+        _ => FieldType::Other,
+    }
+}
+
+/// Generate string field handler with QueryMode support
+fn generate_string_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    name: &syn::Ident,
+    is_nullable: bool,
+) -> proc_macro2::TokenStream {
+    if is_nullable {
+        quote! {
+            WhereParam::#pascal_name(op) => {
+                let query_mode = query_modes.get(stringify!(#name)).copied().unwrap_or(caustics::QueryMode::Default);
+                match op {
+                    FieldOp::Equals(v) => {
+                        match v {
+                            Some(val) => {
+                                if query_mode == caustics::QueryMode::Insensitive {
+                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(val))
+                                } else {
+                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val))
+                                }
+                            },
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                        }
+                    },
+                    FieldOp::NotEquals(v) => {
+                        match v {
+                            Some(val) => {
+                                if query_mode == caustics::QueryMode::Insensitive {
+                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.not_like(val))
+                                } else {
+                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val))
+                                }
+                            },
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                        }
+                    },
+                    FieldOp::Contains(s) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}%", s)))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
+                        }
+                    },
+                    FieldOp::StartsWith(s) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("{}%", s)))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.starts_with(s))
+                        }
+                    },
+                    FieldOp::EndsWith(s) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}", s)))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ends_with(s))
+                        }
+                    },
+                    FieldOp::Gt(v) => {
+                        match v {
+                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                        }
+                    },
+                    FieldOp::Lt(v) => {
+                        match v {
+                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                        }
+                    },
+                    FieldOp::Gte(v) => {
+                        match v {
+                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                        }
+                    },
+                    FieldOp::Lte(v) => {
+                        match v {
+                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                        }
+                    },
+                    FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                    FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                }
+            }
+        }
+    } else {
+        quote! {
+            WhereParam::#pascal_name(op) => {
+                let query_mode = query_modes.get(stringify!(#name)).copied().unwrap_or(caustics::QueryMode::Default);
+                match op {
+                    FieldOp::Equals(v) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(v))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
+                        }
+                    },
+                    FieldOp::NotEquals(v) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.not_like(v))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
+                        }
+                    },
+                    FieldOp::Contains(s) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}%", s)))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
+                        }
+                    },
+                    FieldOp::StartsWith(s) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("{}%", s)))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.starts_with(s))
+                        }
+                    },
+                    FieldOp::EndsWith(s) => {
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}", s)))
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ends_with(s))
+                        }
+                    },
+                    FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+                    FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+                    FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+                    FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+                    FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                    FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                }
+            }
+        }
+    }
+}
+
+/// Generate QueryMode handler for string fields
+fn generate_mode_handler(
+    pascal_name: &proc_macro2::Ident,
+    name: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    let mode_variant = format_ident!("{}Mode", pascal_name);
+    quote! {
+        WhereParam::#mode_variant(mode) => {
+            query_modes.insert(stringify!(#name).to_string(), mode);
+            continue; // Skip adding condition, this just sets the mode
+        }
+    }
+}
+
+/// Generate numeric field handler (integers and floats)
+fn generate_numeric_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    is_nullable: bool,
+) -> proc_macro2::TokenStream {
+    if is_nullable {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::NotEquals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::Gt(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::Lt(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::Gte(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::Lte(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for numeric fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for numeric fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for numeric fields"),
+            }
+        }
+    } else {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for numeric fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for numeric fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for numeric fields"),
+            }
+        }
+    }
+}
+
+/// Generate boolean field handler
+fn generate_boolean_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    is_nullable: bool,
+) -> proc_macro2::TokenStream {
+    if is_nullable {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::NotEquals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Gt(_) => panic!("Gt operation not supported for boolean fields"),
+                FieldOp::Lt(_) => panic!("Lt operation not supported for boolean fields"),
+                FieldOp::Gte(_) => panic!("Gte operation not supported for boolean fields"),
+                FieldOp::Lte(_) => panic!("Lte operation not supported for boolean fields"),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for boolean fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for boolean fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for boolean fields"),
+            }
+        }
+    } else {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Gt(_) => panic!("Gt operation not supported for boolean fields"),
+                FieldOp::Lt(_) => panic!("Lt operation not supported for boolean fields"),
+                FieldOp::Gte(_) => panic!("Gte operation not supported for boolean fields"),
+                FieldOp::Lte(_) => panic!("Lte operation not supported for boolean fields"),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for boolean fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for boolean fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for boolean fields"),
+            }
+        }
+    }
+}
+
+/// Generate DateTime field handler
+fn generate_datetime_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    is_nullable: bool,
+) -> proc_macro2::TokenStream {
+    if is_nullable {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::NotEquals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::Gt(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::Lt(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::Gte(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::Lte(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for DateTime fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for DateTime fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for DateTime fields"),
+            }
+        }
+    } else {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for DateTime fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for DateTime fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for DateTime fields"),
+            }
+        }
+    }
+}
+
+/// Generate UUID field handler
+fn generate_uuid_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    is_nullable: bool,
+) -> proc_macro2::TokenStream {
+    if is_nullable {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::NotEquals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Gt(_) => panic!("Gt operation not supported for UUID fields"),
+                FieldOp::Lt(_) => panic!("Lt operation not supported for UUID fields"),
+                FieldOp::Gte(_) => panic!("Gte operation not supported for UUID fields"),
+                FieldOp::Lte(_) => panic!("Lte operation not supported for UUID fields"),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for UUID fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for UUID fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for UUID fields"),
+            }
+        }
+    } else {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Gt(_) => panic!("Gt operation not supported for UUID fields"),
+                FieldOp::Lt(_) => panic!("Lt operation not supported for UUID fields"),
+                FieldOp::Gte(_) => panic!("Gte operation not supported for UUID fields"),
+                FieldOp::Lte(_) => panic!("Lte operation not supported for UUID fields"),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for UUID fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for UUID fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for UUID fields"),
+            }
+        }
+    }
+}
+
+/// Generate JSON field handler
+fn generate_json_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    is_nullable: bool,
+) -> proc_macro2::TokenStream {
+    if is_nullable {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                    }
+                },
+                FieldOp::NotEquals(v) => {
+                    match v {
+                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
+                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    }
+                },
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Gt(_) => panic!("Gt operation not supported for JSON fields"),
+                FieldOp::Lt(_) => panic!("Lt operation not supported for JSON fields"),
+                FieldOp::Gte(_) => panic!("Gte operation not supported for JSON fields"),
+                FieldOp::Lte(_) => panic!("Lte operation not supported for JSON fields"),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields"),
+            }
+        }
+    } else {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                FieldOp::Gt(_) => panic!("Gt operation not supported for JSON fields"),
+                FieldOp::Lt(_) => panic!("Lt operation not supported for JSON fields"),
+                FieldOp::Gte(_) => panic!("Gte operation not supported for JSON fields"),
+                FieldOp::Lte(_) => panic!("Lte operation not supported for JSON fields"),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields"),
+            }
+        }
+    }
+}
+
+/// Generate generic field handler for unknown types
+fn generate_generic_field_handler(pascal_name: &proc_macro2::Ident) -> proc_macro2::TokenStream {
+    quote! {
+        WhereParam::#pascal_name(op) => match op {
+            FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+            FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+            FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+            FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+            FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+            FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+            FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+            FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+            FieldOp::Contains(_) => panic!("Contains operation not supported for this field type"),
+            FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for this field type"),
+            FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for this field type"),
+        }
+    }
+}
+
+/// Generate type-specific operations (like equals for all types)
+fn generate_type_specific_operations(
+    field_type: &FieldType,
+    pascal_name: &proc_macro2::Ident,
+    ty: &syn::Type,
+) -> proc_macro2::TokenStream {
+    // For all field types, generate an equals function using the actual field type
+    quote! {
+        pub fn equals<T: Into<#ty>>(value: T) -> WhereParam {
+            WhereParam::#pascal_name(FieldOp::Equals(value.into()))
         }
     }
 }

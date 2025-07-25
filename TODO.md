@@ -19,10 +19,10 @@
 - [x] Add operators for DateTime, Int, String types
 
 ### 3. Collection Operators
-- [ ] `in_vec` operator for all types
-- [ ] `not_in_vec` operator for all types
-- [ ] Support for Vec<Int>, Vec<String>, Vec<DateTime>
-- [ ] Handle nullable field collections properly
+- [x] `in_vec` operator for all types
+- [x] `not_in_vec` operator for all types
+- [x] Support for Vec<Int>, Vec<String>, Vec<DateTime>
+- [x] Handle nullable field collections properly
 
 ### 4. Null Operators
 - [ ] `is_null` operator for nullable fields
@@ -31,11 +31,11 @@
 - [ ] Ensure proper type safety for null operations
 
 ### 5. Logical Operators
-- [ ] `AND` operator for combining conditions
-- [ ] `OR` operator for combining conditions
-- [ ] `NOT` operator for negating conditions
-- [ ] Complex nested logical expressions
-- [ ] Update WhereParam enum to support logical operators
+- [x] `AND` operator for combining conditions
+- [x] `OR` operator for combining conditions
+- [x] `NOT` operator for negating conditions
+- [x] Complex nested logical expressions
+- [x] Update WhereParam enum to support logical operators
 
 ## Medium Priority Features (Advanced Functionality)
 
@@ -112,8 +112,8 @@
 ## Implementation Notes
 
 ### Macro Updates Required
-- [ ] Update `caustics-macros/src/entity.rs` to generate field-specific operator variants
-- [ ] Add support for new filter types in WhereParam enum
+- [x] Update `caustics-macros/src/entity.rs` to generate field-specific operator variants
+- [x] Add support for new filter types in WhereParam enum
 - [ ] Generate atomic operation variants in SetParam enum
 - [ ] Add JSON field detection and handling
 - [ ] Update relation generation to support advanced operations
@@ -132,7 +132,11 @@
 
 ### Testing Requirements
 - [x] Unit/integration test for case-insensitive string search (see school_test.rs)
-- [ ] Unit tests for each new operator
+- [x] Unit tests for string operators (contains, starts_with, ends_with)
+- [x] Unit tests for comparison operators (gt, lt, gte, lte)
+- [x] Unit tests for collection operators (in_vec, not_in_vec) 
+- [x] Unit tests for logical operators (and, or, not)
+- [ ] Unit tests for null operators
 - [ ] Integration tests for complex queries
 - [ ] Performance tests for batch operations
 - [ ] Error handling tests
@@ -148,15 +152,15 @@
 - [x] Basic ordering
 - [x] Pagination (take/skip)
 - [x] String operators (including case-insensitive mode)
-- [x] Comparison operators
+- [x] Comparison operators (lt, lte, gt, gte, not_equals)
+- [x] Collection operators (in_vec, not_in_vec)
+- [x] Logical operators (and, or, not)
 
 ### In Progress
-- [ ] Collection operators
 - [ ] Null operators
-- [ ] Logical operators
+- [ ] JSON field support
 
 ### Not Started
-- [ ] JSON field support
 - [ ] Atomic operations
 - [ ] Advanced relation operations
 - [ ] Raw SQL capabilities

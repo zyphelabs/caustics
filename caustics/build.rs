@@ -142,10 +142,11 @@ fn generate_per_namespace_files(dirs: &[&str]) {
     }
 
     let out_dir = env::var("OUT_DIR").unwrap();
-    
+
     // Group entities by namespace
-    let mut namespace_entities: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
-    
+    let mut namespace_entities: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
+
     for dir in dirs {
         for entry in WalkDir::new(dir) {
             let entry = entry.unwrap();
@@ -166,10 +167,15 @@ fn generate_per_namespace_files(dirs: &[&str]) {
                                 if let Item::Struct(struct_item) = item {
                                     if struct_item.ident == "Model" {
                                         model_found = true;
-                                        if has_caustics_attr || has_caustics_derive(&struct_item.attrs) {
+                                        if has_caustics_attr
+                                            || has_caustics_derive(&struct_item.attrs)
+                                        {
                                             let entity_name = to_pascal_case(&module_name);
                                             let module_path = module_name.clone();
-                                            namespace_entities.entry(namespace.clone()).or_insert_with(Vec::new).push((entity_name, module_path));
+                                            namespace_entities
+                                                .entry(namespace.clone())
+                                                .or_insert_with(Vec::new)
+                                                .push((entity_name, module_path));
                                         }
                                     }
                                 } else if let Item::Enum(enum_item) = item {
@@ -183,7 +189,9 @@ fn generate_per_namespace_files(dirs: &[&str]) {
                             if has_caustics_attr && model_found && relation_found {
                                 let entity_name = to_pascal_case(&module_name);
                                 let module_path = module_name.clone();
-                                let entities = namespace_entities.entry(namespace.clone()).or_insert_with(Vec::new);
+                                let entities = namespace_entities
+                                    .entry(namespace.clone())
+                                    .or_insert_with(Vec::new);
                                 if !entities.iter().any(|(name, _)| name == &entity_name) {
                                     entities.push((entity_name, module_path));
                                 }
@@ -308,7 +316,16 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         .collect();
 
     // Determine import statements and prefixes based on is_test
-    let (imports, registry_trait, fetcher_trait, batch_container, batch_query, batch_result, from_model, merge_into) = if is_test {
+    let (
+        imports,
+        registry_trait,
+        fetcher_trait,
+        batch_container,
+        batch_query,
+        batch_result,
+        from_model,
+        merge_into,
+    ) = if is_test {
         (
             quote! {
                 use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
@@ -320,7 +337,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             quote! { caustics::BatchQuery },
             quote! { caustics::BatchResult },
             quote! { caustics::FromModel },
-            quote! { caustics::MergeInto }
+            quote! { caustics::MergeInto },
         )
     } else {
         (
@@ -333,7 +350,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             quote! { crate::BatchQuery },
             quote! { crate::BatchResult },
             quote! { crate::FromModel },
-            quote! { crate::MergeInto }
+            quote! { crate::MergeInto },
         )
     };
 

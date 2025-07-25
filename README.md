@@ -338,6 +338,103 @@ let result = client
     .await?;
 ```
 
+### Advanced Filtering
+
+#### String Search with Case-Insensitive Mode
+
+```rust
+// Case-sensitive search (default)
+let users = client
+    .user()
+    .find_many(vec![
+        user::name::contains("john"),
+    ])
+    .exec()
+    .await?;
+
+// Case-insensitive search
+let users = client
+    .user()
+    .find_many(vec![
+        user::name::contains("john"),
+        user::name::mode(caustics::QueryMode::Insensitive),
+    ])
+    .exec()
+    .await?;
+```
+
+#### Complex Logical Queries
+
+```rust
+// Find users who are either young or old, but not middle-aged
+let users = client
+    .user()
+    .find_many(vec![
+        user::or(vec![
+            user::age::lt(Some(25)),
+            user::age::gt(Some(55))
+        ])
+    ])
+    .exec()
+    .await?;
+
+// Find users with specific criteria using AND logic
+let users = client
+    .user()
+    .find_many(vec![
+        user::and(vec![
+            user::age::gte(Some(18)),
+            user::name::starts_with("J"),
+            user::email::contains("example.com")
+        ])
+    ])
+    .exec()
+    .await?;
+
+// Exclude users with certain characteristics
+let users = client
+    .user()
+    .find_many(vec![
+        user::not(vec![
+            user::age::lt(Some(18))
+        ])
+    ])
+    .exec()
+    .await?;
+```
+
+#### Collection and Range Queries
+
+```rust
+// Find users with specific IDs
+let users = client
+    .user()
+    .find_many(vec![
+        user::id::in_vec(vec![1, 2, 3, 5, 8])
+    ])
+    .exec()
+    .await?;
+
+// Find users excluding certain ages
+let users = client
+    .user()
+    .find_many(vec![
+        user::age::not_in_vec(vec![Some(13), Some(14), Some(15)])
+    ])
+    .exec()
+    .await?;
+
+// Age range query
+let adults = client
+    .user()
+    .find_many(vec![
+        user::age::gte(Some(18)),
+        user::age::lte(Some(65))
+    ])
+    .exec()
+    .await?;
+```
+
 ### Available Operators
 
 #### Comparison Operators
@@ -360,12 +457,53 @@ user::age::lt(18)
 
 // Less Than or Equal
 user::age::lte(18)
+```
 
+#### String Operators
+
+```rust
+// Contains
+user::name::contains("John")
+
+// Starts With
+user::name::starts_with("John")
+
+// Ends With
+user::name::ends_with("Doe")
+
+// Case-insensitive mode
+user::name::mode(caustics::QueryMode::Insensitive)
+```
+
+#### Collection Operators
+
+```rust
 // In
 user::id::in_vec(vec![1, 2, 3])
 
 // Not In
 user::id::not_in_vec(vec![1, 2, 3])
+```
+
+#### Logical Operators
+
+```rust
+// AND - combine multiple conditions (all must be true)
+user::and(vec![
+    user::age::gt(18),
+    user::name::contains("John")
+])
+
+// OR - combine multiple conditions (any can be true)
+user::or(vec![
+    user::age::lt(18),
+    user::age::gt(65)
+])
+
+// NOT - negate conditions
+user::not(vec![
+    user::age::lt(18)
+])
 ```
 
 ### Pagination and Sorting
@@ -390,14 +528,31 @@ let posts = client
     .await?;
 ```
 
+## Recent Updates
+
+**String Operators** - Full support for string search operations:
+- `contains()`, `starts_with()`, `ends_with()` for all string fields
+- Case-insensitive search with `QueryMode::Insensitive`
+- Works with both regular and nullable string fields
+
+**Comparison Operators** - Complete set of comparison operations:
+- `gt()`, `gte()`, `lt()`, `lte()`, `not_equals()` for all comparable types
+- Support for integers, floats, strings, dates, and their nullable variants
+
+**Collection Operators** - Query with lists of values:
+- `in_vec()` and `not_in_vec()` for efficient multi-value filtering
+- Proper handling of nullable fields in collections
+
+**Logical Operators** - Complex query composition:
+- `and()`, `or()`, `not()` functions for combining multiple conditions
+- Nested logical expressions with proper precedence
+- Type-safe condition building
+
+All features include comprehensive test coverage and are ready for production use.
+
 ## TODO: Planned Features
 
 The following features are planned but not yet implemented:
-
-### String Operators
-- `user::name::contains("John")`
-- `user::name::starts_with("John")`
-- `user::name::ends_with("Doe")`
 
 ### Null Operators
 - `user::deleted_at::is_null()`
@@ -407,15 +562,14 @@ The following features are planned but not yet implemented:
 - `user::data::json_path(vec!["address", "city"], "New York", FieldType::String)`
 - `user::data::json_contains("address")`
 
-### Logical Operators
-- `Condition::and(vec![user::age::gt(18), user::name::equals("John")])`
-- `Condition::or(vec![user::age::gt(18), user::name::equals("John")])`
-- `Condition::not(user::age::lt(18))`
-
 ### Relation Operators
 - `Condition::some(vec![user::posts::title::equals("Hello")])`
 - `Condition::every(vec![user::posts::title::equals("Hello")])`
 - `Condition::none(vec![user::posts::title::equals("Hello")])`
+
+### Atomic Operations
+- Increment/decrement operations for numeric fields
+- Multiply/divide operations for numeric fields
 
 ### Additional Features
 - Create many operations
