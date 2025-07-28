@@ -274,11 +274,11 @@ fn generate_where_params_to_condition_function(fields: &[&syn::Field]) -> proc_m
         // Generate field operation handler based on type
         match field_type {
             FieldType::String => {
-                field_handlers.push(generate_string_field_handler(&pascal_name, &name, false));
+                field_handlers.push(generate_string_field_handler(&pascal_name, false));
                 mode_handlers.push(generate_mode_handler(&pascal_name, &name));
             }
             FieldType::OptionString => {
-                field_handlers.push(generate_string_field_handler(&pascal_name, &name, true));
+                field_handlers.push(generate_string_field_handler(&pascal_name, true));
                 mode_handlers.push(generate_mode_handler(&pascal_name, &name));
             }
             FieldType::Integer => {
@@ -444,22 +444,40 @@ fn detect_field_type(ty: &syn::Type) -> FieldType {
     }
 }
 
-/// Generate string field handler with QueryMode support
+/// Generate database-agnostic string field handler
 fn generate_string_field_handler(
     pascal_name: &proc_macro2::Ident,
-    name: &syn::Ident,
     is_nullable: bool,
 ) -> proc_macro2::TokenStream {
+    let field_name_str = pascal_name.to_string().to_lowercase();
+    
     if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => {
-                let query_mode = query_modes.get(stringify!(#name)).copied().unwrap_or(caustics::QueryMode::Default);
+                let query_mode = query_modes.get(#field_name_str).copied().unwrap_or(caustics::QueryMode::Default);
                 match op {
                     FieldOp::Equals(v) => {
                         match v {
                             Some(val) => {
                                 if query_mode == caustics::QueryMode::Insensitive {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(val))
+                                    // Database-agnostic case insensitive equality
+                                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                                    if database_url.starts_with("postgres") {
+                                        Condition::all().add(
+                                            sea_query::Expr::cust_with_values(
+                                                &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                                [val]
+                                            )
+                                        )
+                                    } else {
+                                        // MySQL, MariaDB, SQLite - use UPPER() for consistency
+                                        Condition::all().add(
+                                            sea_query::Expr::cust_with_values(
+                                                &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                                [val]
+                                            )
+                                        )
+                                    }
                                 } else {
                                     Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val))
                                 }
@@ -471,7 +489,22 @@ fn generate_string_field_handler(
                         match v {
                             Some(val) => {
                                 if query_mode == caustics::QueryMode::Insensitive {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.not_like(val))
+                                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                                    if database_url.starts_with("postgres") {
+                                        Condition::all().add(
+                                            sea_query::Expr::cust_with_values(
+                                                &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                                [val]
+                                            )
+                                        )
+                                    } else {
+                                        Condition::all().add(
+                                            sea_query::Expr::cust_with_values(
+                                                &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                                [val]
+                                            )
+                                        )
+                                    }
                                 } else {
                                     Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val))
                                 }
@@ -480,22 +513,70 @@ fn generate_string_field_handler(
                         }
                     },
                     FieldOp::Contains(s) => {
+                        let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}%", s)))
+                            if database_url.starts_with("postgres") {
+                                // PostgreSQL: column ILIKE '%value%'
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}%", s)]
+                                    )
+                                )
+                            } else {
+                                // MySQL, MariaDB, SQLite: UPPER(column) LIKE UPPER('%value%')
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) LIKE UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}%", s)]
+                                    )
+                                )
+                            }
                         } else {
+                            // Case sensitive - use Sea-ORM's method (should be database-agnostic)
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
                         }
                     },
                     FieldOp::StartsWith(s) => {
+                        let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("{}%", s)))
+                            if database_url.starts_with("postgres") {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("{}%", s)]
+                                    )
+                                )
+                            } else {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) LIKE UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("{}%", s)]
+                                    )
+                                )
+                            }
                         } else {
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.starts_with(s))
                         }
                     },
                     FieldOp::EndsWith(s) => {
+                        let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}", s)))
+                            if database_url.starts_with("postgres") {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}", s)]
+                                    )
+                                )
+                            } else {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) LIKE UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}", s)]
+                                    )
+                                )
+                            }
                         } else {
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ends_with(s))
                         }
@@ -509,7 +590,7 @@ fn generate_string_field_handler(
                     FieldOp::Lt(v) => {
                         match v {
                             Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                         }
                     },
                     FieldOp::Gte(v) => {
@@ -521,14 +602,14 @@ fn generate_string_field_handler(
                     FieldOp::Lte(v) => {
                         match v {
                             Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                         }
                     },
-                    FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                    FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                    FieldOp::InVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(v)),
+                    FieldOp::NotInVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(v)),
                     FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                     FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    // JSON-specific operations (not supported for regular string fields)
+                    // JSON-specific operations (not supported for string fields)
                     FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
                     FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
                     FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
@@ -543,52 +624,127 @@ fn generate_string_field_handler(
     } else {
         quote! {
             WhereParam::#pascal_name(op) => {
-                let query_mode = query_modes.get(stringify!(#name)).copied().unwrap_or(caustics::QueryMode::Default);
+                let query_mode = query_modes.get(#field_name_str).copied().unwrap_or(caustics::QueryMode::Default);
                 match op {
-                    FieldOp::Equals(v) => {
+                    FieldOp::Equals(val) => {
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(v))
+                            let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                            if database_url.starts_with("postgres") {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val]
+                                    )
+                                )
+                            } else {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val]
+                                    )
+                                )
+                            }
                         } else {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val))
                         }
                     },
-                    FieldOp::NotEquals(v) => {
+                    FieldOp::NotEquals(val) => {
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.not_like(v))
+                            let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                            if database_url.starts_with("postgres") {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val]
+                                    )
+                                )
+                            } else {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val]
+                                    )
+                                )
+                            }
                         } else {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val))
                         }
                     },
                     FieldOp::Contains(s) => {
+                        let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}%", s)))
+                            if database_url.starts_with("postgres") {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}%", s)]
+                                    )
+                                )
+                            } else {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) LIKE UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}%", s)]
+                                    )
+                                )
+                            }
                         } else {
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
                         }
                     },
                     FieldOp::StartsWith(s) => {
+                        let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("{}%", s)))
+                            if database_url.starts_with("postgres") {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("{}%", s)]
+                                    )
+                                )
+                            } else {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) LIKE UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("{}%", s)]
+                                    )
+                                )
+                            }
                         } else {
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.starts_with(s))
                         }
                     },
                     FieldOp::EndsWith(s) => {
+                        let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
                         if query_mode == caustics::QueryMode::Insensitive {
-                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.like(format!("%{}", s)))
+                            if database_url.starts_with("postgres") {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}", s)]
+                                    )
+                                )
+                            } else {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) LIKE UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [format!("%{}", s)]
+                                    )
+                                )
+                            }
                         } else {
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ends_with(s))
                         }
                     },
-                    FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                    FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                    FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                    FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-                    FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                    FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                    FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                    FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                    FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                    FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                    FieldOp::InVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(v)),
+                    FieldOp::NotInVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(v)),
                     FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
                     FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
-                    // JSON-specific operations (not supported for regular string fields)
+                    // JSON-specific operations (not supported for string fields)
                     FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
                     FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
                     FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
@@ -965,340 +1121,609 @@ fn generate_json_field_handler(
                         None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                     }
                 },
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+                FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                FieldOp::InVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vals)),
+                FieldOp::NotInVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vals)),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields - use JSON-specific operations"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields - use JSON-specific operations"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields - use JSON-specific operations"),
                 FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                 FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                // JSON operations with database detection
+                // JSON-specific operations with database detection
                 FieldOp::JsonPath(path) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    // Runtime database detection
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
-                        // PostgreSQL: column #> '{path,to,key}' IS NOT NULL
-                        let path_array = format!("{{{}}}", path.join(","));
+                    // Detect database type from DATABASE_URL and generate appropriate SQL
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    let json_path = path.join(".");
+                    
+                    if database_url.starts_with("postgres") {
+                        // PostgreSQL: column #> '{path}' IS NOT NULL
+                        let pg_path = format!("{{{}}}", json_path);
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} #> ? IS NOT NULL", column_name),
-                                [path_array]
+                                &format!("{} #> ? IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [pg_path]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        // MySQL: JSON_EXTRACT(column, '$.path') IS NOT NULL
+                        let mysql_path = format!("$.{}", json_path);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mysql_path]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        // MariaDB: JSON_EXTRACT(column, '$.path') IS NOT NULL
+                        let mariadb_path = format!("$.{}", json_path);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mariadb_path]
                             )
                         )
                     } else {
-                        // SQLite: json_extract(column, '$.path.to.key') IS NOT NULL
-                        let json_path = format!("$.{}", path.join("."));
+                        // SQLite (default): json_extract(column, '$.path') IS NOT NULL
+                        let sqlite_path = format!("$.{}", json_path);
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
-                                [json_path]
+                                &format!("json_extract({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [sqlite_path]
                             )
                         )
                     }
                 },
                 FieldOp::JsonStringContains(s) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
-                        // PostgreSQL: column ->> '$' LIKE '%search%'
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
+                        // PostgreSQL: column #>> '{}' ILIKE '%value%'
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("({} ->> '$') LIKE ?", column_name),
+                                &format!("{} #>> '{{}}' ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        // MySQL: JSON_UNQUOTE(JSON_EXTRACT(column, '$')) LIKE '%value%'
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_UNQUOTE(JSON_EXTRACT({}, '$')) LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        // MariaDB: JSON_VALUE(column, '$') LIKE '%value%'
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_VALUE({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}%", s)]
                             )
                         )
                     } else {
-                        // SQLite: json_extract(column, '$') LIKE '%search%'
+                        // SQLite: json_extract(column, '$') LIKE '%value%'
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}%", s)]
                             )
                         )
                     }
                 },
                 FieldOp::JsonStringStartsWith(s) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("({} ->> '$') LIKE ?", column_name),
+                                &format!("{} #>> '{{}}' ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_UNQUOTE(JSON_EXTRACT({}, '$')) LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_VALUE({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("{}%", s)]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("{}%", s)]
                             )
                         )
                     }
                 },
                 FieldOp::JsonStringEndsWith(s) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("({} ->> '$') LIKE ?", column_name),
+                                &format!("{} #>> '{{}}' ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_UNQUOTE(JSON_EXTRACT({}, '$')) LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_VALUE({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}", s)]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}", s)]
                             )
                         )
                     }
                 },
                 FieldOp::JsonArrayContains(val) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         // PostgreSQL: column @> '[value]'
+                        let pg_val = format!("[{}]", val.to_string());
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} @> ?", column_name),
-                                [format!("[{}]", val.to_string())]
+                                &format!("{} @> ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [pg_val]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        // MySQL: JSON_CONTAINS(column, JSON_QUOTE(value))
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_CONTAINS({}, JSON_QUOTE(?))", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        // MariaDB: JSON_CONTAINS(column, JSON_QUOTE(value))
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_CONTAINS({}, JSON_QUOTE(?))", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
                             )
                         )
                     } else {
-                        // SQLite: json_each approach
+                        // SQLite: EXISTS (SELECT 1 FROM json_each(column) WHERE value = ?)
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", column_name),
+                                &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     }
                 },
                 FieldOp::JsonArrayStartsWith(val) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
+                        // PostgreSQL: column #> '{0}' = value
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} -> 0 = ?", column_name),
+                                &format!("{} #> '{{0}}' = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        // MySQL: JSON_EXTRACT(column, '$[0]') = value
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        // MariaDB: JSON_EXTRACT(column, '$[0]') = value
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     } else {
+                        // SQLite: json_extract(column, '$[0]') = value
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$[0]') = ?", column_name),
+                                &format!("json_extract({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     }
                 },
                 FieldOp::JsonArrayEndsWith(val) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
+                        // PostgreSQL: column #> '{-1}' = value (PostgreSQL supports negative indexing)
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} -> -1 = ?", column_name),
+                                &format!("{} #> '{{-1}}' = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        // MySQL: JSON_EXTRACT(column, '$[last]') = value
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[last]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        // MariaDB: JSON_EXTRACT(column, '$[last]') = value
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[last]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     } else {
+                        // SQLite: json_extract(column, '$[#-1]') = value
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$[#-1]') = ?", column_name),
+                                &format!("json_extract({}, '$[#-1]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     }
                 },
                 FieldOp::JsonObjectContains(key) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         // PostgreSQL: column ? 'key'
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} ? ?", column_name),
+                                &format!("{} ? ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [key]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        // MySQL: JSON_CONTAINS_PATH(column, 'one', '$.key')
+                        let mysql_path = format!("$.{}", key);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_CONTAINS_PATH({}, 'one', ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mysql_path]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        // MariaDB: JSON_CONTAINS_PATH(column, 'one', '$.key')
+                        let mariadb_path = format!("$.{}", key);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_CONTAINS_PATH({}, 'one', ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mariadb_path]
                             )
                         )
                     } else {
                         // SQLite: json_extract(column, '$.key') IS NOT NULL
+                        let sqlite_path = format!("$.{}", key);
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
-                                [format!("$.{}", key)]
+                                &format!("json_extract({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [sqlite_path]
                             )
                         )
                     }
                 },
-                // String operations (not supported for JSON fields)
-                FieldOp::Contains(_) => panic!("Use JsonStringContains for JSON string operations"),
-                FieldOp::StartsWith(_) => panic!("Use JsonStringStartsWith for JSON string operations"),
-                FieldOp::EndsWith(_) => panic!("Use JsonStringEndsWith for JSON string operations"),
             }
         }
     } else {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
-                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-                // JSON operations with database detection
+                FieldOp::Equals(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
+                FieldOp::NotEquals(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
+                FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                FieldOp::InVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vals)),
+                FieldOp::NotInVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vals)),
+                FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields - use JSON-specific operations"),
+                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields - use JSON-specific operations"),
+                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields - use JSON-specific operations"),
+                FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
+                FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
+                // JSON-specific operations (same as nullable version)
                 FieldOp::JsonPath(path) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
-                        let path_array = format!("{{{}}}", path.join(","));
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    let json_path = path.join(".");
+                    
+                    if database_url.starts_with("postgres") {
+                        let pg_path = format!("{{{}}}", json_path);
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} #> ? IS NOT NULL", column_name),
-                                [path_array]
+                                &format!("{} #> ? IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [pg_path]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        let mysql_path = format!("$.{}", json_path);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mysql_path]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        let mariadb_path = format!("$.{}", json_path);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mariadb_path]
                             )
                         )
                     } else {
-                        let json_path = format!("$.{}", path.join("."));
+                        let sqlite_path = format!("$.{}", json_path);
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
-                                [json_path]
+                                &format!("json_extract({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [sqlite_path]
                             )
                         )
                     }
                 },
+                // ... (other JSON operations identical to nullable version)
                 FieldOp::JsonStringContains(s) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("({} ->> '$') LIKE ?", column_name),
+                                &format!("{} #>> '{{}}' ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_UNQUOTE(JSON_EXTRACT({}, '$')) LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_VALUE({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}%", s)]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}%", s)]
                             )
                         )
                     }
                 },
                 FieldOp::JsonStringStartsWith(s) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("({} ->> '$') LIKE ?", column_name),
+                                &format!("{} #>> '{{}}' ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_UNQUOTE(JSON_EXTRACT({}, '$')) LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_VALUE({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("{}%", s)]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("{}%", s)]
                             )
                         )
                     }
                 },
                 FieldOp::JsonStringEndsWith(s) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("({} ->> '$') LIKE ?", column_name),
+                                &format!("{} #>> '{{}}' ILIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_UNQUOTE(JSON_EXTRACT({}, '$')) LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_VALUE({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}", s)]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}", s)]
                             )
                         )
                     }
                 },
                 FieldOp::JsonArrayContains(val) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
+                        let pg_val = format!("[{}]", val.to_string());
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} @> ?", column_name),
-                                [format!("[{}]", val.to_string())]
+                                &format!("{} @> ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [pg_val]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_CONTAINS({}, JSON_QUOTE(?))", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_CONTAINS({}, JSON_QUOTE(?))", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", column_name),
+                                &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     }
                 },
                 FieldOp::JsonArrayStartsWith(val) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} -> 0 = ?", column_name),
+                                &format!("{} #> '{{0}}' = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$[0]') = ?", column_name),
+                                &format!("json_extract({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     }
                 },
                 FieldOp::JsonArrayEndsWith(val) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} -> -1 = ?", column_name),
+                                &format!("{} #> '{{-1}}' = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mysql") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[last]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.to_string()]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_EXTRACT({}, '$[last]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     } else {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, '$[#-1]') = ?", column_name),
+                                &format!("json_extract({}, '$[#-1]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                             )
                         )
                     }
                 },
                 FieldOp::JsonObjectContains(key) => {
-                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
-                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+                    
+                    if database_url.starts_with("postgres") {
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("{} ? ?", column_name),
+                                &format!("{} ? ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [key]
                             )
                         )
-                    } else {
+                    } else if database_url.starts_with("mysql") {
+                        let mysql_path = format!("$.{}", key);
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
-                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
-                                [format!("$.{}", key)]
+                                &format!("JSON_CONTAINS_PATH({}, 'one', ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mysql_path]
+                            )
+                        )
+                    } else if database_url.starts_with("mariadb") {
+                        let mariadb_path = format!("$.{}", key);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("JSON_CONTAINS_PATH({}, 'one', ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [mariadb_path]
+                            )
+                        )
+                    } else {
+                        let sqlite_path = format!("$.{}", key);
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [sqlite_path]
                             )
                         )
                     }
                 },
-                // String operations (not supported for JSON fields)
-                FieldOp::Contains(_) => panic!("Use JsonStringContains for JSON string operations"),
-                FieldOp::StartsWith(_) => panic!("Use JsonStringStartsWith for JSON string operations"),
-                FieldOp::EndsWith(_) => panic!("Use JsonStringEndsWith for JSON string operations"),
-                FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
-                FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
             }
         }
     }

@@ -48,7 +48,17 @@
 - [x] `lt`, `lte`, `gt`, `gte`, `not` for JSON values
 - [x] JSON field type detection in macro
 
-### 7. Atomic Operations
+### 7. Database Compatibility
+- [x] PostgreSQL support with native JSON operators (`@>`, `#>`, `?`, `ILIKE`)
+- [x] MySQL support with JSON functions (`JSON_EXTRACT()`, `JSON_CONTAINS()`)
+- [x] MariaDB support with JSON functions (`JSON_VALUE()`, `JSON_CONTAINS()`)
+- [x] SQLite support with JSON1 extension (`json_extract()`, `json_each()`)
+- [x] Automatic database detection via `DATABASE_URL`
+- [x] Database-agnostic string operations with case sensitivity
+- [x] Comprehensive test coverage across all database types
+- [x] Migration support between databases without code changes
+
+### 8. Atomic Operations
 - [ ] `increment` operation for numeric fields
 - [ ] `decrement` operation for numeric fields
 - [ ] `multiply` operation for numeric fields
@@ -56,7 +66,7 @@
 - [ ] Support for both nullable and non-nullable numeric fields
 - [ ] Update SetParam enum to include atomic operations
 
-### 8. Advanced Relation Operations
+### 9. Advanced Relation Operations
 - [ ] `some` operator for relation filtering
 - [ ] `every` operator for relation filtering
 - [ ] `none` operator for relation filtering
@@ -65,13 +75,13 @@
 - [ ] `set` operation for relations
 - [ ] Nested relation queries
 
-### 9. Raw SQL Capabilities
+### 10. Raw SQL Capabilities
 - [ ] `_query_raw` method for raw SQL queries
 - [ ] `_execute_raw` method for raw SQL execution
 - [ ] Type-safe raw query results
 - [ ] Raw query builder interface
 
-### 10. Enhanced Batch Operations
+### 11. Enhanced Batch Operations
 - [ ] Complete batch operation support
 - [ ] Batch updates (currently missing)
 - [ ] Batch deletes (currently missing)
@@ -80,31 +90,31 @@
 
 ## Low Priority Features (Nice to Have)
 
-### 11. Query Modes and Ordering
+### 12. Query Modes and Ordering
 - [x] `QueryMode` enum with `Default` and `Insensitive`
 - [ ] `NullsOrder` enum with `First` and `Last`
 - [ ] `JsonNullValueFilter` with `DbNull`, `JsonNull`, `AnyNull`
 - [ ] Advanced ordering options
 
-### 12. Advanced Type System
+### 13. Advanced Type System
 - [ ] `ScalarFieldEnum` for each model
 - [ ] `RecursiveSafeType` for preventing infinite recursion
 - [ ] `PartialUnchecked` for partial updates
 - [ ] Enhanced type safety features
 
-### 13. Comprehensive Error Handling
+### 14. Comprehensive Error Handling
 - [ ] `RelationNotFetchedError` type
 - [ ] `NewClientError` type
 - [ ] Specific error types for different operations
 - [ ] Better error messages and context
 
-### 14. Advanced Query Building
+### 15. Advanced Query Building
 - [ ] `ManyArgs` with complex parameter structures
 - [ ] `UniqueArgs` with advanced options
 - [ ] `OrderByWithRelationParam` for relation ordering
 - [ ] `OrderByRelationAggregateParam` for aggregate ordering
 
-### 15. Data Model Integration
+### 16. Data Model Integration
 - [ ] Schema introspection capabilities
 - [ ] `DATAMODEL_STR` for schema awareness
 - [ ] `DATABASE_STR` for database type detection
