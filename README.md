@@ -591,6 +591,116 @@ let posts = client
     .await?;
 ```
 
+### JSON Field Support
+
+Caustics provides comprehensive support for JSON field operations that work across both **PostgreSQL** and **SQLite** databases with automatic database detection.
+
+#### Basic JSON Operations
+
+```rust
+// Check if JSON field exists
+let posts = client.post()
+    .find_many(vec![post::custom_data::is_not_null()])
+    .exec().await?;
+
+// Exact JSON value matching
+let posts = client.post()
+    .find_many(vec![post::custom_data::equals(Some(serde_json::json!({
+        "category": "technology",
+        "priority": "high"
+    })))])
+    .exec().await?;
+```
+
+#### JSON Path Access
+
+```rust
+// Check if nested JSON path exists
+let posts = client.post()
+    .find_many(vec![post::custom_data::path(vec![
+        "metadata".to_string(),
+        "priority".to_string(),
+    ])])
+    .exec().await?;
+```
+
+#### JSON String Operations
+
+```rust
+// Search within JSON string values
+let posts = client.post()
+    .find_many(vec![post::custom_data::json_string_contains(
+        "comprehensive guide".to_string()
+    )])
+    .exec().await?;
+
+// JSON string pattern matching
+let posts = client.post()
+    .find_many(vec![post::custom_data::json_string_starts_with(
+        "This is a".to_string()
+    )])
+    .exec().await?;
+```
+
+#### JSON Object Operations
+
+```rust
+// Check if JSON object contains specific keys
+let posts = client.post()
+    .find_many(vec![post::custom_data::json_object_contains(
+        "metadata".to_string()
+    )])
+    .exec().await?;
+```
+
+#### JSON Array Operations
+
+```rust
+// Check if JSON array contains specific values
+let posts = client.post()
+    .find_many(vec![post::custom_data::json_array_contains(
+        serde_json::json!("rust")
+    )])
+    .exec().await?;
+
+// Check array position
+let posts = client.post()
+    .find_many(vec![post::custom_data::json_array_starts_with(
+        serde_json::json!("programming")
+    )])
+    .exec().await?;
+```
+
+#### Complex JSON Queries
+
+JSON operations work seamlessly with logical operators:
+
+```rust
+let posts = client.post()
+    .find_many(vec![post::and(vec![
+        post::custom_data::is_not_null(),
+        post::custom_data::json_object_contains("category".to_string()),
+        post::or(vec![
+            post::custom_data::json_string_contains("rust".to_string()),
+            post::custom_data::json_string_contains("database".to_string()),
+        ]),
+    ])])
+    .exec().await?;
+```
+
+#### Database Compatibility
+
+JSON operations automatically detect the database type and generate appropriate SQL:
+
+- **PostgreSQL**: Uses native JSON operators (`#>`, `->>`, `@>`, `?`, etc.)
+- **SQLite**: Uses SQLite JSON functions (`json_extract()`, `json_each()`, etc.)
+
+The detection is based on the `DATABASE_URL` environment variable:
+- URLs starting with `postgres://` use PostgreSQL syntax
+- All other URLs use SQLite syntax
+
+This allows the same code to work in both development (SQLite) and production (PostgreSQL) environments.
+
 ## Recent Updates
 
 **String Operators** - Full support for string search operations:

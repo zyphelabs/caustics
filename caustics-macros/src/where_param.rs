@@ -163,6 +163,39 @@ pub fn generate_where_param_logic(
             _ => quote! {},
         };
 
+        // JSON-specific operations (only for JSON types)
+        let json_ops = match field_type {
+            FieldType::Json | FieldType::OptionJson => {
+                quote! {
+                    pub fn path(path: Vec<String>) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonPath(path))
+                    }
+                    pub fn json_string_contains(value: String) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonStringContains(value))
+                    }
+                    pub fn json_string_starts_with(value: String) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonStringStartsWith(value))
+                    }
+                    pub fn json_string_ends_with(value: String) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonStringEndsWith(value))
+                    }
+                    pub fn json_array_contains(value: serde_json::Value) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonArrayContains(value))
+                    }
+                    pub fn json_array_starts_with(value: serde_json::Value) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonArrayStartsWith(value))
+                    }
+                    pub fn json_array_ends_with(value: serde_json::Value) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonArrayEndsWith(value))
+                    }
+                    pub fn json_object_contains(key: String) -> WhereParam {
+                        WhereParam::#pascal_name(FieldOp::JsonObjectContains(key))
+                    }
+                }
+            }
+            _ => quote! {},
+        };
+
         let mut field_mod_items = vec![
             set_fn,
             unique_where_fn,
@@ -172,6 +205,7 @@ pub fn generate_where_param_logic(
             comparison_ops,
             collection_ops,
             null_ops,
+            json_ops,
         ];
 
         // If this is a string field, add a Mode variant and mode function
@@ -494,6 +528,15 @@ fn generate_string_field_handler(
                     FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
                     FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                     FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                    // JSON-specific operations (not supported for regular string fields)
+                    FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                    FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                    FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                    FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                    FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                    FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                    FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                    FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
                 }
             }
         }
@@ -545,6 +588,15 @@ fn generate_string_field_handler(
                     FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
                     FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
                     FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
+                    // JSON-specific operations (not supported for regular string fields)
+                    FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                    FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                    FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                    FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                    FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                    FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                    FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                    FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
                 }
             }
         }
@@ -616,6 +668,15 @@ fn generate_numeric_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for numeric fields"),
                 FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                 FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                // JSON-specific operations (not supported for numeric fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     } else {
@@ -634,6 +695,15 @@ fn generate_numeric_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for numeric fields"),
                 FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
                 FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
+                // JSON-specific operations (not supported for numeric fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     }
@@ -670,6 +740,15 @@ fn generate_boolean_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for boolean fields"),
                 FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                 FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                // JSON-specific operations (not supported for boolean fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     } else {
@@ -688,6 +767,15 @@ fn generate_boolean_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for boolean fields"),
                 FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
                 FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
+                // JSON-specific operations (not supported for boolean fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     }
@@ -744,6 +832,15 @@ fn generate_datetime_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for DateTime fields"),
                 FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                 FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                // JSON-specific operations (not supported for DateTime fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     } else {
@@ -762,6 +859,15 @@ fn generate_datetime_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for DateTime fields"),
                 FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
                 FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
+                // JSON-specific operations (not supported for DateTime fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     }
@@ -798,6 +904,15 @@ fn generate_uuid_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for UUID fields"),
                 FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                 FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                // JSON-specific operations (not supported for UUID fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     } else {
@@ -816,12 +931,21 @@ fn generate_uuid_field_handler(
                 FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for UUID fields"),
                 FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
                 FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
+                // JSON-specific operations (not supported for UUID fields)
+                FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+                FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+                FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+                FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+                FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+                FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
             }
         }
     }
 }
 
-/// Generate JSON field handler
+/// Generate database-agnostic JSON field handler
 fn generate_json_field_handler(
     pascal_name: &proc_macro2::Ident,
     is_nullable: bool,
@@ -843,15 +967,172 @@ fn generate_json_field_handler(
                 },
                 FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
                 FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::Gt(_) => panic!("Gt operation not supported for JSON fields"),
-                FieldOp::Lt(_) => panic!("Lt operation not supported for JSON fields"),
-                FieldOp::Gte(_) => panic!("Gte operation not supported for JSON fields"),
-                FieldOp::Lte(_) => panic!("Lte operation not supported for JSON fields"),
-                FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields"),
-                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields"),
-                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields"),
+                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
                 FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                 FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                // JSON operations with database detection
+                FieldOp::JsonPath(path) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    // Runtime database detection
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        // PostgreSQL: column #> '{path,to,key}' IS NOT NULL
+                        let path_array = format!("{{{}}}", path.join(","));
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} #> ? IS NOT NULL", column_name),
+                                [path_array]
+                            )
+                        )
+                    } else {
+                        // SQLite: json_extract(column, '$.path.to.key') IS NOT NULL
+                        let json_path = format!("$.{}", path.join("."));
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
+                                [json_path]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonStringContains(s) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        // PostgreSQL: column ->> '$' LIKE '%search%'
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("({} ->> '$') LIKE ?", column_name),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    } else {
+                        // SQLite: json_extract(column, '$') LIKE '%search%'
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonStringStartsWith(s) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("({} ->> '$') LIKE ?", column_name),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonStringEndsWith(s) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("({} ->> '$') LIKE ?", column_name),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonArrayContains(val) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        // PostgreSQL: column @> '[value]'
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} @> ?", column_name),
+                                [format!("[{}]", val.to_string())]
+                            )
+                        )
+                    } else {
+                        // SQLite: json_each approach
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonArrayStartsWith(val) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} -> 0 = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$[0]') = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonArrayEndsWith(val) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} -> -1 = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$[#-1]') = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonObjectContains(key) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        // PostgreSQL: column ? 'key'
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} ? ?", column_name),
+                                [key]
+                            )
+                        )
+                    } else {
+                        // SQLite: json_extract(column, '$.key') IS NOT NULL
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
+                                [format!("$.{}", key)]
+                            )
+                        )
+                    }
+                },
+                // String operations (not supported for JSON fields)
+                FieldOp::Contains(_) => panic!("Use JsonStringContains for JSON string operations"),
+                FieldOp::StartsWith(_) => panic!("Use JsonStringStartsWith for JSON string operations"),
+                FieldOp::EndsWith(_) => panic!("Use JsonStringEndsWith for JSON string operations"),
             }
         }
     } else {
@@ -861,13 +1142,161 @@ fn generate_json_field_handler(
                 FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
                 FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
                 FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::Gt(_) => panic!("Gt operation not supported for JSON fields"),
-                FieldOp::Lt(_) => panic!("Lt operation not supported for JSON fields"),
-                FieldOp::Gte(_) => panic!("Gte operation not supported for JSON fields"),
-                FieldOp::Lte(_) => panic!("Lte operation not supported for JSON fields"),
-                FieldOp::Contains(_) => panic!("Contains operation not supported for JSON fields"),
-                FieldOp::StartsWith(_) => panic!("StartsWith operation not supported for JSON fields"),
-                FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for JSON fields"),
+                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+                // JSON operations with database detection
+                FieldOp::JsonPath(path) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        let path_array = format!("{{{}}}", path.join(","));
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} #> ? IS NOT NULL", column_name),
+                                [path_array]
+                            )
+                        )
+                    } else {
+                        let json_path = format!("$.{}", path.join("."));
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
+                                [json_path]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonStringContains(s) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("({} ->> '$') LIKE ?", column_name),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                [format!("%{}%", s)]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonStringStartsWith(s) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("({} ->> '$') LIKE ?", column_name),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                [format!("{}%", s)]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonStringEndsWith(s) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("({} ->> '$') LIKE ?", column_name),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') LIKE ?", column_name),
+                                [format!("%{}", s)]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonArrayContains(val) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} @> ?", column_name),
+                                [format!("[{}]", val.to_string())]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonArrayStartsWith(val) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} -> 0 = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$[0]') = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonArrayEndsWith(val) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} -> -1 = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$[#-1]') = ?", column_name),
+                                [val.to_string()]
+                            )
+                        )
+                    }
+                },
+                FieldOp::JsonObjectContains(key) => {
+                    let column_name = <Entity as EntityTrait>::Column::#pascal_name.to_string();
+                    if std::env::var("DATABASE_URL").unwrap_or_default().starts_with("postgres") {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("{} ? ?", column_name),
+                                [key]
+                            )
+                        )
+                    } else {
+                        Condition::all().add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, ?) IS NOT NULL", column_name),
+                                [format!("$.{}", key)]
+                            )
+                        )
+                    }
+                },
+                // String operations (not supported for JSON fields)
+                FieldOp::Contains(_) => panic!("Use JsonStringContains for JSON string operations"),
+                FieldOp::StartsWith(_) => panic!("Use JsonStringStartsWith for JSON string operations"),
+                FieldOp::EndsWith(_) => panic!("Use JsonStringEndsWith for JSON string operations"),
                 FieldOp::IsNull => panic!("IsNull operation not supported for non-nullable fields"),
                 FieldOp::IsNotNull => panic!("IsNotNull operation not supported for non-nullable fields"),
             }
@@ -892,6 +1321,15 @@ fn generate_generic_field_handler(pascal_name: &proc_macro2::Ident) -> proc_macr
             FieldOp::EndsWith(_) => panic!("EndsWith operation not supported for this field type"),
             FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
             FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+            // JSON-specific operations (not supported for generic fields)
+            FieldOp::JsonPath(_) => panic!("JsonPath operation only supported for JSON fields"),
+            FieldOp::JsonStringContains(_) => panic!("JsonStringContains operation only supported for JSON fields"),
+            FieldOp::JsonStringStartsWith(_) => panic!("JsonStringStartsWith operation only supported for JSON fields"),
+            FieldOp::JsonStringEndsWith(_) => panic!("JsonStringEndsWith operation only supported for JSON fields"),
+            FieldOp::JsonArrayContains(_) => panic!("JsonArrayContains operation only supported for JSON fields"),
+            FieldOp::JsonArrayStartsWith(_) => panic!("JsonArrayStartsWith operation only supported for JSON fields"),
+            FieldOp::JsonArrayEndsWith(_) => panic!("JsonArrayEndsWith operation only supported for JSON fields"),
+            FieldOp::JsonObjectContains(_) => panic!("JsonObjectContains operation only supported for JSON fields"),
         }
     }
 }

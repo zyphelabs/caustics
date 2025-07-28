@@ -40,12 +40,13 @@
 ## Medium Priority Features (Advanced Functionality)
 
 ### 6. JSON Field Support
-- [ ] `JsonNullableFilter` enum with all operators
-- [ ] `path` operator for JSON field access
-- [ ] `string_contains`, `string_starts_with`, `string_ends_with` for JSON
-- [ ] `array_contains`, `array_starts_with`, `array_ends_with` for JSON arrays
-- [ ] `lt`, `lte`, `gt`, `gte`, `not` for JSON values
-- [ ] JSON field type detection in macro
+- [x] `JsonNullableFilter` enum with all operators
+- [x] `path` operator for JSON field access
+- [x] `string_contains`, `string_starts_with`, `string_ends_with` for JSON
+- [x] `array_contains`, `array_starts_with`, `array_ends_with` for JSON arrays
+- [x] `object_contains` for JSON objects
+- [x] `lt`, `lte`, `gt`, `gte`, `not` for JSON values
+- [x] JSON field type detection in macro
 
 ### 7. Atomic Operations
 - [ ] `increment` operation for numeric fields

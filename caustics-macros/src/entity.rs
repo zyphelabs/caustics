@@ -1172,6 +1172,7 @@ pub fn generate_entity(
         use caustics::{SortOrder, MergeInto};
         use caustics::FromModel;
         use sea_query::{Condition, Expr};
+        use serde_json;
 
         pub struct EntityClient<'a, C: sea_orm::ConnectionTrait> {
             conn: &'a C
@@ -1191,6 +1192,15 @@ pub fn generate_entity(
             EndsWith(String),
             IsNull,
             IsNotNull,
+            // JSON-specific operations
+            JsonPath(Vec<String>),
+            JsonStringContains(String),
+            JsonStringStartsWith(String),
+            JsonStringEndsWith(String),
+            JsonArrayContains(serde_json::Value),
+            JsonArrayStartsWith(serde_json::Value),
+            JsonArrayEndsWith(serde_json::Value),
+            JsonObjectContains(String),
         }
 
         pub enum SetParam {

@@ -62,6 +62,8 @@ pub mod post {
         pub user_id: i32,
         #[sea_orm(column_name = "reviewer_user_id", nullable)]
         pub reviewer_user_id: Option<i32>,
+        #[sea_orm(column_name = "customData", nullable)]
+        pub custom_data: Option<serde_json::Value>,
     }
 
     #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -143,6 +145,7 @@ mod query_builder_tests {
 
     use caustics::{QueryError, SortOrder};
     use chrono::{DateTime, FixedOffset};
+    use serde_json;
 
     use super::helpers::setup_test_db;
 
@@ -1372,5 +1375,264 @@ mod query_builder_tests {
         let missing_data_ids: Vec<i32> = users_missing_data.iter().map(|u| u.id).collect();
         assert!(missing_data_ids.contains(&user_without_age.id));
         assert!(missing_data_ids.contains(&user_deleted.id));
+    }
+
+    #[tokio::test]
+    async fn test_json_field_operations() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create a user for the posts
+        let user = client
+            .user()
+            .create(
+                format!("jsonuser_{}@example.com", chrono::Utc::now().timestamp()),
+                "JSON User".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create posts with various JSON data for testing
+        let post_with_simple_json = client
+            .post()
+            .create(
+                "Post with Simple JSON".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![
+                    post::content::set(Some("A post with simple JSON".to_string())),
+                    post::custom_data::set(Some(serde_json::json!({
+                        "category": "technology",
+                        "tags": ["rust", "json", "database"],
+                        "metadata": {
+                            "author_notes": "This is a test post",
+                            "priority": "high"
+                        },
+                        "view_count": 42,
+                        "published": true
+                    }))),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let post_with_array_json = client
+            .post()
+            .create(
+                "Post with Array JSON".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![
+                    post::content::set(Some("A post with array JSON".to_string())),
+                    post::custom_data::set(Some(serde_json::json!({
+                        "categories": ["programming", "tutorial", "beginner"],
+                        "scores": [85, 90, 78],
+                        "settings": {
+                            "notifications": true,
+                            "public": false
+                        }
+                    }))),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let post_with_string_json = client
+            .post()
+            .create(
+                "Post with String JSON".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![
+                    post::content::set(Some("A post with string JSON".to_string())),
+                    post::custom_data::set(Some(serde_json::json!({
+                        "description": "This is a comprehensive guide to JSON operations in databases",
+                        "author": "John Developer",
+                        "status": "published"
+                    }))),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let post_without_json = client
+            .post()
+            .create(
+                "Post without JSON".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![
+                    post::content::set(Some("A post without JSON data".to_string())),
+                    post::custom_data::set(None),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test basic JSON equals operation
+        let posts_with_specific_category = client
+            .post()
+            .find_many(vec![post::custom_data::equals(Some(serde_json::json!({
+                "category": "technology",
+                "tags": ["rust", "json", "database"],
+                "metadata": {
+                    "author_notes": "This is a test post",
+                    "priority": "high"
+                },
+                "view_count": 42,
+                "published": true
+            })))])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_specific_category.len(), 1);
+        assert_eq!(posts_with_specific_category[0].id, post_with_simple_json.id);
+
+        // Test JSON null operations
+        let posts_without_custom_data = client
+            .post()
+            .find_many(vec![post::custom_data::is_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_without_custom_data.len(), 1);
+        assert_eq!(posts_without_custom_data[0].id, post_without_json.id);
+
+        let posts_with_custom_data = client
+            .post()
+            .find_many(vec![post::custom_data::is_not_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_custom_data.len(), 3);
+
+        // Test JSON path access - simple key
+        let posts_with_category_key = client
+            .post()
+            .find_many(vec![post::custom_data::path(vec![
+                "category".to_string(),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_category_key.len(), 1);
+        assert_eq!(posts_with_category_key[0].id, post_with_simple_json.id);
+        
+        // Test JSON object contains key operations
+        let posts_with_metadata_key = client
+            .post()
+            .find_many(vec![post::custom_data::json_object_contains(
+                "metadata".to_string(),
+            )])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_metadata_key.len(), 1);
+        assert_eq!(posts_with_metadata_key[0].id, post_with_simple_json.id);
+
+        let posts_with_settings_key = client
+            .post()
+            .find_many(vec![post::custom_data::json_object_contains(
+                "settings".to_string(),
+            )])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_settings_key.len(), 1);
+        assert_eq!(posts_with_settings_key[0].id, post_with_array_json.id);
+        
+        let posts_with_description_key = client
+            .post()
+            .find_many(vec![post::custom_data::json_object_contains(
+                "description".to_string(),
+            )])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_description_key.len(), 1);
+        assert_eq!(posts_with_description_key[0].id, post_with_string_json.id);
+
+        // Test JSON string contains operations
+        let posts_with_rust_anywhere = client
+            .post()
+            .find_many(vec![post::custom_data::json_string_contains(
+                "rust".to_string(),
+            )])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_rust_anywhere.len(), 1);
+        assert_eq!(posts_with_rust_anywhere[0].id, post_with_simple_json.id);
+
+        let posts_with_guide_description = client
+            .post()
+            .find_many(vec![post::custom_data::json_string_contains(
+                "comprehensive guide".to_string(),
+            )])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_guide_description.len(), 1);
+        assert_eq!(posts_with_guide_description[0].id, post_with_string_json.id);
+
+        // Test JSON operations with logical operators (AND)
+        let posts_with_category_and_metadata = client
+            .post()
+            .find_many(vec![post::and(vec![
+                post::custom_data::json_object_contains("category".to_string()),
+                post::custom_data::json_object_contains("metadata".to_string()),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_category_and_metadata.len(), 1);
+        assert_eq!(posts_with_category_and_metadata[0].id, post_with_simple_json.id);
+
+        // Test JSON operations with logical operators (OR)
+        let posts_with_description_or_settings = client
+            .post()
+            .find_many(vec![post::or(vec![
+                post::custom_data::json_object_contains("description".to_string()),
+                post::custom_data::json_object_contains("settings".to_string()),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_with_description_or_settings.len(), 2);
+        let found_ids: Vec<i32> = posts_with_description_or_settings
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert!(found_ids.contains(&post_with_string_json.id));
+        assert!(found_ids.contains(&post_with_array_json.id));
+
+        // Test JSON operations with NOT operator
+        let posts_without_metadata = client
+            .post()
+            .find_many(vec![post::not(vec![
+                post::custom_data::json_object_contains("metadata".to_string()),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+        // Should find posts without JSON data and posts without metadata key
+        assert!(posts_without_metadata.len() >= 3);
+        let found_ids: Vec<i32> = posts_without_metadata.iter().map(|p| p.id).collect();
+        assert!(found_ids.contains(&post_without_json.id));
+        assert!(found_ids.contains(&post_with_array_json.id));
+        assert!(found_ids.contains(&post_with_string_json.id));
+        assert!(!found_ids.contains(&post_with_simple_json.id));
     }
 }
