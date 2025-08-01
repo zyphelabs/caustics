@@ -59,12 +59,12 @@
 - [x] Migration support between databases without code changes
 
 ### 8. Atomic Operations
-- [ ] `increment` operation for numeric fields
-- [ ] `decrement` operation for numeric fields
-- [ ] `multiply` operation for numeric fields
-- [ ] `divide` operation for numeric fields
-- [ ] Support for both nullable and non-nullable numeric fields
-- [ ] Update SetParam enum to include atomic operations
+- [x] `increment` operation for numeric fields
+- [x] `decrement` operation for numeric fields
+- [x] `multiply` operation for numeric fields
+- [x] `divide` operation for numeric fields
+- [x] Support for both nullable and non-nullable numeric fields
+- [x] Update SetParam enum to include atomic operations
 
 ### 9. Advanced Relation Operations
 - [ ] `some` operator for relation filtering

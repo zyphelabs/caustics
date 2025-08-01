@@ -196,6 +196,34 @@ pub fn generate_where_param_logic(
             _ => quote! {},
         };
 
+        // Atomic operations (only for numeric types)
+        let atomic_ops = if !is_unique && matches!(field_type, FieldType::Integer | FieldType::OptionInteger | FieldType::Float | FieldType::OptionFloat) {
+            // Extract the inner type for Option<T>
+            let inner_ty = crate::common::extract_inner_type_from_option(ty);
+            
+            let increment_name = format_ident!("{}Increment", pascal_name);
+            let decrement_name = format_ident!("{}Decrement", pascal_name);
+            let multiply_name = format_ident!("{}Multiply", pascal_name);
+            let divide_name = format_ident!("{}Divide", pascal_name);
+            
+            quote! {
+                pub fn increment<T: Into<#inner_ty>>(value: T) -> super::SetParam {
+                    super::SetParam::#increment_name(value.into())
+                }
+                pub fn decrement<T: Into<#inner_ty>>(value: T) -> super::SetParam {
+                    super::SetParam::#decrement_name(value.into())
+                }
+                pub fn multiply<T: Into<#inner_ty>>(value: T) -> super::SetParam {
+                    super::SetParam::#multiply_name(value.into())
+                }
+                pub fn divide<T: Into<#inner_ty>>(value: T) -> super::SetParam {
+                    super::SetParam::#divide_name(value.into())
+                }
+            }
+        } else {
+            quote! {}
+        };
+
         let mut field_mod_items = vec![
             set_fn,
             unique_where_fn,
@@ -206,6 +234,7 @@ pub fn generate_where_param_logic(
             collection_ops,
             null_ops,
             json_ops,
+            atomic_ops,
         ];
 
         // If this is a string field, add a Mode variant and mode function
@@ -379,7 +408,7 @@ fn generate_where_params_to_condition_function(fields: &[&syn::Field]) -> proc_m
 }
 
 #[derive(Debug, Clone)]
-enum FieldType {
+pub enum FieldType {
     String,
     OptionString,
     Integer,
@@ -398,7 +427,7 @@ enum FieldType {
 }
 
 /// Detect the field type from the syn::Type
-fn detect_field_type(ty: &syn::Type) -> FieldType {
+pub fn detect_field_type(ty: &syn::Type) -> FieldType {
     match ty {
         syn::Type::Path(path) => {
             if let Some(segment) = path.path.segments.last() {

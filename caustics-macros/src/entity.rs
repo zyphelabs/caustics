@@ -439,6 +439,42 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate atomic operation variants for SetParam enum (for numeric fields only)
+    let atomic_variants: Vec<_> = fields
+        .iter()
+        .filter(|field| !primary_key_fields.contains(field))
+        .filter_map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            let ty = &field.ty;
+            // Check if this is a numeric field
+            let field_type = crate::where_param::detect_field_type(ty);
+            let is_numeric = matches!(field_type, 
+                crate::where_param::FieldType::Integer | 
+                crate::where_param::FieldType::OptionInteger |
+                crate::where_param::FieldType::Float |
+                crate::where_param::FieldType::OptionFloat
+            );
+            if is_numeric {
+                let inner_ty = crate::common::extract_inner_type_from_option(ty);
+                let increment_name = format_ident!("{}Increment", pascal_name);
+                let decrement_name = format_ident!("{}Decrement", pascal_name);
+                let multiply_name = format_ident!("{}Multiply", pascal_name);
+                let divide_name = format_ident!("{}Divide", pascal_name);
+                
+                Some(vec![
+                    quote! { #increment_name(#inner_ty) },
+                    quote! { #decrement_name(#inner_ty) },
+                    quote! { #multiply_name(#inner_ty) },
+                    quote! { #divide_name(#inner_ty) },
+                ])
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect();
+
     // Generate relation connection variants for SetParam enum
     let relation_connect_variants = relations
         .iter()
@@ -487,12 +523,18 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
-    // Combine all SetParam variants
-    let all_set_param_variants = quote! {
-        #(#field_variants,)*
-        #(#relation_connect_variants,)*
-        #(#relation_disconnect_variants,)*
-    };
+
+    
+    // Combine all SetParam variants as a flat Vec
+    let all_set_param_variants: Vec<_> = field_variants
+        .into_iter()
+        .chain(atomic_variants.into_iter())
+        .chain(relation_connect_variants.into_iter())
+        .chain(relation_disconnect_variants.into_iter())
+        .collect();
+    
+
+
 
     // Generate field variants and field operator modules for WhereParam enum (all fields, with string ops for string fields)
     let (where_field_variants, where_match_arms, field_ops) =
@@ -809,6 +851,7 @@ pub fn generate_entity(
         pub type Filter = caustics::Filter;
 
         #[derive(Clone)]
+        #[allow(dead_code)]
         pub struct RelationFilter {
             pub relation: &'static str,
             pub filters: Vec<Filter>,
@@ -839,6 +882,7 @@ pub fn generate_entity(
         #filter_types
 
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[allow(dead_code)]
         pub struct ModelWithRelations {
             #(#model_with_relations_fields,)*
             #(#relation_fields,)*
@@ -1116,12 +1160,192 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+        // Generate atomic operation match arms for SetParam (for numeric fields only)
+    let atomic_match_arms: Vec<proc_macro2::TokenStream> = fields
+        .iter()
+        .filter(|field| !primary_key_fields.contains(field))
+        .filter(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            !foreign_key_fields.contains(&field_name)
+        })
+        .filter_map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            let ty = &field.ty;
+            
+            // Check if this is a numeric field
+            let field_type = crate::where_param::detect_field_type(ty);
+            let is_numeric = matches!(field_type, 
+                crate::where_param::FieldType::Integer | 
+                crate::where_param::FieldType::OptionInteger |
+                crate::where_param::FieldType::Float |
+                crate::where_param::FieldType::OptionFloat
+            );
+            
+            if is_numeric {
+                let is_nullable = matches!(field_type, 
+                    crate::where_param::FieldType::OptionInteger | 
+                    crate::where_param::FieldType::OptionFloat
+                );
+
+
+                // Create identifiers for atomic operation variants
+                let increment_name = format_ident!("{}Increment", pascal_name);
+                let decrement_name = format_ident!("{}Decrement", pascal_name);
+                let multiply_name = format_ident!("{}Multiply", pascal_name);
+                let divide_name = format_ident!("{}Divide", pascal_name);
+                
+                if is_nullable {
+                    // For nullable fields, we need to handle the Option wrapper
+                    // Try a very simple atomic operation
+                    Some(vec![
+                        quote! {
+                            SetParam::#increment_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(Some(current_val)) => {
+                                        Some(current_val + *value)
+                                    },
+                                    sea_orm::ActiveValue::Set(None) => Some(*value),
+                                    sea_orm::ActiveValue::Unchanged(Some(current_val)) => {
+                                        Some(current_val + *value)
+                                    },
+                                    sea_orm::ActiveValue::Unchanged(None) => Some(*value),
+                                    _ => Some(*value),
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                        quote! {
+                            SetParam::#decrement_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(Some(current_val)) => {
+                                        Some(current_val - *value)
+                                    },
+                                    sea_orm::ActiveValue::Set(None) => Some(-*value),
+                                    sea_orm::ActiveValue::Unchanged(Some(current_val)) => {
+                                        Some(current_val - *value)
+                                    },
+                                    sea_orm::ActiveValue::Unchanged(None) => Some(-*value),
+                                    _ => Some(-*value),
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                        quote! {
+                            SetParam::#multiply_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(Some(current_val)) => {
+                                        Some(current_val * *value)
+                                    },
+                                    sea_orm::ActiveValue::Unchanged(Some(current_val)) => {
+                                        Some(current_val * *value)
+                                    },
+                                    _ => None,
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                        quote! {
+                            SetParam::#divide_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(Some(current_val)) => {
+                                        Some(current_val / *value)
+                                    },
+                                    sea_orm::ActiveValue::Unchanged(Some(current_val)) => {
+                                        Some(current_val / *value)
+                                    },
+                                    _ => None,
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                    ])
+                } else {
+                    // For non-nullable fields
+                    Some(vec![
+                        quote! {
+                            SetParam::#increment_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(val) => {
+                                        // val is i32, value is &i32
+                                        val + *value
+                                    },
+                                    sea_orm::ActiveValue::NotSet => *value,
+                                    sea_orm::ActiveValue::Unchanged(val) => {
+                                        val + *value
+                                    },
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                        quote! {
+                            SetParam::#decrement_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(val) => {
+                                        val - *value
+                                    },
+                                    sea_orm::ActiveValue::NotSet => -*value,
+                                    sea_orm::ActiveValue::Unchanged(val) => {
+                                        val - *value
+                                    },
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                        quote! {
+                            SetParam::#multiply_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(val) => {
+                                        val * *value
+                                    },
+                                    sea_orm::ActiveValue::NotSet => 0,
+                                    sea_orm::ActiveValue::Unchanged(val) => {
+                                        val * *value
+                                    },
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                        quote! {
+                            SetParam::#divide_name(value) => {
+                                let current = model.#name.clone();
+                                let new_value = match current {
+                                    sea_orm::ActiveValue::Set(val) => {
+                                        val / *value
+                                    },
+                                    sea_orm::ActiveValue::NotSet => 0,
+                                    sea_orm::ActiveValue::Unchanged(val) => {
+                                        val / *value
+                                    },
+                                };
+                                model.#name = sea_orm::ActiveValue::Set(new_value);
+                            }
+                        },
+                    ])
+                }
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect();
+
     // Combine all match arms
     let all_match_arms = quote! {
         #(#match_arms,)*
+        #(#atomic_match_arms,)*
         #(#relation_connect_deferred_match_arms,)*
         #(#relation_disconnect_match_arms,)*
     };
+    
+
 
     let entity_name_lit = syn::LitStr::new(&model_ast.ident.to_string(), model_ast.ident.span());
     // Generate all field names as string literals for match arms
@@ -1203,14 +1427,17 @@ pub fn generate_entity(
             JsonObjectContains(String),
         }
 
+        #[allow(dead_code)]
         pub enum SetParam {
-            #all_set_param_variants
+            #(#all_set_param_variants,)*
         }
 
+        #[allow(dead_code)]
         pub enum WhereParam {
             #(#where_field_variants,)*
         }
 
+        #[allow(dead_code)]
         pub enum OrderByParam {
             #(#order_by_field_variants,)*
         }
@@ -1247,6 +1474,10 @@ pub fn generate_entity(
             fn merge_into(&self, model: &mut ActiveModel) {
                 match self {
                     #(#match_arms,)*
+                    #(#atomic_match_arms,)*
+                    // TEMPORARILY DISABLED FOR DEBUGGING
+                    // #(#relation_connect_deferred_match_arms,)*
+                    #(#relation_disconnect_match_arms,)*
                     _ => {
                         // Relation SetParam values are handled in into_active_model, not here
                         // This prevents infinite recursion
@@ -1273,6 +1504,7 @@ pub fn generate_entity(
             }
         }
 
+        #[allow(dead_code)]
         pub struct Create {
             #(#required_struct_fields,)*
             #(#foreign_key_relation_fields,)*
@@ -1280,7 +1512,7 @@ pub fn generate_entity(
         }
 
         impl Create {
-        fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
+            fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
                 let mut model = ActiveModel::new();
                 let mut deferred_lookups = Vec::new();
 
@@ -1295,7 +1527,7 @@ pub fn generate_entity(
                         other => {
                             // For non-relation SetParam values, use the normal merge_into
                             other.merge_into(&mut model);
-                }
+                        }
                     }
                 }
                 (model, deferred_lookups)
@@ -1731,3 +1963,5 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         #(#submodules)*
     }
 }
+
+

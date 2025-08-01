@@ -540,7 +540,7 @@ mod query_builder_tests {
                 "Reviewed Post".to_string(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
                 DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                user::email::equals(author.email),
+                user::id::equals(author.id),
                 vec![
                     post::content::set("This post has been reviewed".to_string()),
                     post::reviewer::connect(user::id::equals(reviewer.id)),
@@ -1634,5 +1634,146 @@ mod query_builder_tests {
         assert!(found_ids.contains(&post_with_array_json.id));
         assert!(found_ids.contains(&post_with_string_json.id));
         assert!(!found_ids.contains(&post_with_simple_json.id));
+    }
+
+    #[tokio::test]
+    async fn test_atomic_operations() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Create a user with an age to test atomic operations
+        let user = client
+            .user()
+            .create(
+                "atomic@example.com".to_string(),
+                "Atomic User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(user.age, Some(25));
+
+        // Test increment operation
+        println!("🔧 Testing increment operation: age = {:?}", user.age);
+        println!("🔧 Calling update with user::age::increment(5)");
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(user.id),
+                vec![user::age::increment(5)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        println!("🔧 After increment(5): age = {:?}", updated_user.age);
+        assert_eq!(updated_user.age, Some(30));
+
+        // Test decrement operation
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(user.id),
+                vec![user::age::decrement(3)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(updated_user.age, Some(27));
+
+        // Test multiply operation
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(user.id),
+                vec![user::age::multiply(2)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(updated_user.age, Some(54));
+
+        // Test divide operation
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(user.id),
+                vec![user::age::divide(3)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(updated_user.age, Some(18));
+
+        // Test multiple atomic operations in one update
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(user.id),
+                vec![
+                    user::age::increment(10),
+                    user::age::multiply(2),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+        // Should be (18 + 10) * 2 = 56
+        assert_eq!(updated_user.age, Some(56));
+    }
+
+    #[tokio::test]
+    async fn test_atomic_operations_simple() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Create a user with an age to test atomic operations
+        let user = client
+            .user()
+            .create(
+                "atomic@example.com".to_string(),
+                "Atomic User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(user.age, Some(25));
+
+        // Test that atomic operations exist and can be called
+        let _increment_op = user::age::increment(5);
+        let _decrement_op = user::age::decrement(3);
+        let _multiply_op = user::age::multiply(2);
+        let _divide_op = user::age::divide(3);
+
+        // Test increment operation
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(user.id),
+                vec![user::age::increment(5)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        
+        // The atomic operation should work
+        assert_eq!(updated_user.age, Some(30));
     }
 }

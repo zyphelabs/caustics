@@ -1,13 +1,12 @@
 generator client {
   provider        = "cargo prisma"
   output          = "../example/src/generated/db.rs"
-  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["auth", "public", "sandbox"]
+
 }
 
 
@@ -22,7 +21,6 @@ model User {
   posts      Post[]    // relation to Post model
   reviewedPosts Post[] @relation("Reviewer") // relation to Post model as reviewer
 
-  @@schema("public")
 }
 
 model Post {
@@ -37,5 +35,4 @@ model Post {
   reviewer        User?     @relation("Reviewer", fields: [reviewerUserId], references: [id])
   customData      Json?     @default("{}")
 
-  @@schema("public")
 }

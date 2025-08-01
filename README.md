@@ -237,6 +237,64 @@ let post = client
     .await?;
 ```
 
+#### Atomic Operations
+
+Caustics supports atomic numeric operations that are performed at the database level for safe concurrent updates:
+
+```rust
+// Increment a user's age by 5
+let user = client
+    .user()
+    .update(
+        user::id::equals(1),
+        vec![user::age::increment(5)]
+    )
+    .exec()
+    .await?;
+
+// Decrement a product's stock count
+let product = client
+    .product()
+    .update(
+        product::id::equals(123),
+        vec![product::stock::decrement(1)]
+    )
+    .exec()
+    .await?;
+
+// Double a user's score
+let user = client
+    .user()
+    .update(
+        user::id::equals(1),
+        vec![user::score::multiply(2)]
+    )
+    .exec()
+    .await?;
+
+// Split a value in half
+let user = client
+    .user()
+    .update(
+        user::id::equals(1),
+        vec![user::balance::divide(2)]
+    )
+    .exec()
+    .await?;
+
+// Atomic operations handle null values appropriately:
+// - increment/decrement on null: sets to the operation value
+// - multiply/divide on null: remains null
+let user = client
+    .user()
+    .update(
+        user::id::equals(1),
+        vec![user::optional_score::increment(10)] // null becomes 10
+    )
+    .exec()
+    .await?;
+```
+
 #### Delete Operations
 
 ```rust
@@ -676,210 +734,6 @@ let posts = client.post()
     ])])
     .exec().await?;
 ```
-
-## 🌐 Database Compatibility
-
-Caustics provides **comprehensive database-agnostic support** with automatic detection and optimized SQL generation for all major databases supported by Sea-ORM.
-
-### Supported Databases
-
-| Database | Version | String Ops | JSON Ops | Case Insensitive | Notes |
-|----------|---------|------------|----------|------------------|-------|
-| **PostgreSQL** | 9.4+ | ✅ | ✅ | `ILIKE` | Full JSON support with `@>`, `#>`, `?` operators |
-| **MySQL** | 5.7+ | ✅ | ✅ | `UPPER()` | JSON functions: `JSON_EXTRACT()`, `JSON_CONTAINS()` |
-| **MariaDB** | 10.2+ | ✅ | ✅ | `UPPER()` | JSON functions: `JSON_VALUE()`, `JSON_CONTAINS()` |
-| **SQLite** | 3.38+ | ✅ | ✅ | `UPPER()` | JSON1 extension: `json_extract()`, `json_each()` |
-
-### Database Detection
-
-Caustics automatically detects the database type at runtime using the `DATABASE_URL` environment variable:
-
-```bash
-# PostgreSQL
-DATABASE_URL="postgres://user:pass@localhost/db"
-
-# MySQL  
-DATABASE_URL="mysql://user:pass@localhost/db"
-
-# MariaDB
-DATABASE_URL="mariadb://user:pass@localhost/db"
-
-# SQLite
-DATABASE_URL="sqlite:./database.db"
-```
-
-### String Operations Compatibility
-
-#### Case Sensitive Operations
-All databases use Sea-ORM's standard operators:
-- `.contains()`, `.starts_with()`, `.ends_with()`
-- `.eq()`, `.ne()`, `.gt()`, `.lt()`, `.gte()`, `.lte()`
-- `.is_in()`, `.is_not_in()`
-
-#### Case Insensitive Operations
-Database-specific optimizations:
-
-| Database | Implementation | Example SQL |
-|----------|----------------|-------------|
-| **PostgreSQL** | `ILIKE` | `name ILIKE '%john%'` |
-| **MySQL** | `UPPER()` | `UPPER(name) LIKE UPPER('%john%')` |
-| **MariaDB** | `UPPER()` | `UPPER(name) LIKE UPPER('%john%')` |
-| **SQLite** | `UPPER()` | `UPPER(name) LIKE UPPER('%john%')` |
-
-### JSON Operations Compatibility
-
-#### Basic JSON Operations
-```rust
-// Works across all databases
-post::custom_data::equals(Some(json_value))
-post::custom_data::is_null()
-post::custom_data::is_not_null()
-```
-
-#### JSON Path Access
-```rust
-// Database-specific path syntax
-post::custom_data::path(vec!["metadata", "author"])
-```
-
-| Database | Implementation | Example SQL |
-|----------|----------------|-------------|
-| **PostgreSQL** | `#>` operator | `custom_data #> '{metadata,author}' IS NOT NULL` |
-| **MySQL** | `JSON_EXTRACT()` | `JSON_EXTRACT(custom_data, '$.metadata.author') IS NOT NULL` |
-| **MariaDB** | `JSON_EXTRACT()` | `JSON_EXTRACT(custom_data, '$.metadata.author') IS NOT NULL` |
-| **SQLite** | `json_extract()` | `json_extract(custom_data, '$.metadata.author') IS NOT NULL` |
-
-#### JSON String Operations
-```rust
-// Case-insensitive string search in JSON
-post::custom_data::json_string_contains("search_term")
-```
-
-| Database | Implementation |
-|----------|----------------|
-| **PostgreSQL** | `custom_data #>> '{}' ILIKE '%term%'` |
-| **MySQL** | `JSON_UNQUOTE(JSON_EXTRACT(custom_data, '$')) LIKE '%term%'` |
-| **MariaDB** | `JSON_VALUE(custom_data, '$') LIKE '%term%'` |
-| **SQLite** | `json_extract(custom_data, '$') LIKE '%term%'` |
-
-#### JSON Array Operations
-```rust
-// Check if JSON array contains value
-post::custom_data::json_array_contains(serde_json::json!("rust"))
-```
-
-| Database | Implementation |
-|----------|----------------|
-| **PostgreSQL** | `custom_data @> '["rust"]'` |
-| **MySQL** | `JSON_CONTAINS(custom_data, JSON_QUOTE('rust'))` |
-| **MariaDB** | `JSON_CONTAINS(custom_data, JSON_QUOTE('rust'))` |
-| **SQLite** | `EXISTS (SELECT 1 FROM json_each(custom_data) WHERE value = 'rust')` |
-
-#### JSON Object Operations
-```rust
-// Check if object contains a specific key
-post::custom_data::json_object_contains("metadata")
-```
-
-| Database | Implementation |
-|----------|----------------|
-| **PostgreSQL** | `custom_data ? 'metadata'` |
-| **MySQL** | `JSON_CONTAINS_PATH(custom_data, 'one', '$.metadata')` |
-| **MariaDB** | `JSON_CONTAINS_PATH(custom_data, 'one', '$.metadata')` |
-| **SQLite** | `json_extract(custom_data, '$.metadata') IS NOT NULL` |
-
-### Migration Between Databases
-
-Since Caustics generates database-agnostic code, you can switch between databases by simply changing the `DATABASE_URL` without modifying your application code:
-
-```rust
-// This code works unchanged across all databases
-let posts = client.post()
-    .find_many(vec![
-        post::title::mode(QueryMode::Insensitive),
-        post::title::contains("rust"),
-        post::custom_data::json_string_contains("tutorial"),
-    ])
-    .exec().await?;
-```
-
-### Performance Considerations
-
-#### PostgreSQL
-- Use native JSON operators for best performance
-- JSONB columns provide better performance than JSON for complex queries
-
-#### MySQL/MariaDB  
-- Ensure JSON columns have appropriate indexes
-- Use `JSON_EXTRACT()` indexes for frequently queried paths
-
-#### SQLite
-- Enable JSON1 extension: `PRAGMA load_extension('json1')`
-- Consider using generated columns for frequently accessed JSON paths
-
-### Testing Across Databases
-
-Caustics includes comprehensive test suites that run against SQLite (for CI) and can be configured for other databases:
-
-```bash
-# Test with PostgreSQL
-DATABASE_URL="postgres://localhost/test" cargo test
-
-# Test with MySQL
-DATABASE_URL="mysql://localhost/test" cargo test
-
-# Test with SQLite (default)
-cargo test
-```
-
-## Recent Updates
-
-**String Operators** - Full support for string search operations:
-- `contains()`, `starts_with()`, `ends_with()` for all string fields
-- Case-insensitive search with `QueryMode::Insensitive`
-- Works with both regular and nullable string fields
-
-**Comparison Operators** - Complete set of comparison operations:
-- `gt()`, `gte()`, `lt()`, `lte()`, `not_equals()` for all comparable types
-- Support for integers, floats, strings, dates, and their nullable variants
-
-**Collection Operators** - Query with lists of values:
-- `in_vec()` and `not_in_vec()` for efficient multi-value filtering
-- Proper handling of nullable fields in collections
-
-**Logical Operators** - Complex query composition:
-- `and()`, `or()`, `not()` functions for combining multiple conditions
-- Nested logical expressions with proper precedence
-- Type-safe condition building
-
-All features include comprehensive test coverage and are ready for production use.
-
-## TODO: Planned Features
-
-The following features are planned but not yet implemented:
-
-### JSON Operators
-- `user::data::json_path(vec!["address", "city"], "New York", FieldType::String)`
-- `user::data::json_contains("address")`
-
-### Relation Operators
-- `Condition::some(vec![user::posts::title::equals("Hello")])`
-- `Condition::every(vec![user::posts::title::equals("Hello")])`
-- `Condition::none(vec![user::posts::title::equals("Hello")])`
-
-### Atomic Operations
-- Increment/decrement operations for numeric fields
-- Multiply/divide operations for numeric fields
-
-### Additional Features
-- Create many operations
-- Update many operations
-- Delete many operations
-- Aggregation functions (count, sum, avg, etc.)
-- Raw SQL queries
-- Database migrations
-- Connection pooling
-- Query optimization
 
 ## Acknowledgments
 
