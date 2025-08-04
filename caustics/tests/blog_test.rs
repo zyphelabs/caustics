@@ -569,7 +569,7 @@ mod query_builder_tests {
         let user_with_posts = client
             .user()
             .find_unique(user::id::equals(author.id))
-            .with(user::posts::fetch(vec![]))
+            .with(user::posts::fetch())
             .exec()
             .await
             .unwrap()
@@ -954,7 +954,7 @@ mod query_builder_tests {
         assert_eq!(not_minors.len(), 3); // Jane, Bob, and Alice
         assert!(not_minors.iter().all(|u| u.age.unwrap_or(0) >= 18));
 
-        // Test complex nested logical operations - 
+        // Test complex nested logical operations -
         // (adults with example.com email) OR (seniors regardless of email)
         let complex_query_users = client
             .user()
@@ -985,13 +985,13 @@ mod query_builder_tests {
         // Actually, John has example.com but is young, so NOT(young AND example.com) excludes John... wait let me think about this
         // John: age=16, email="young.john@example.com" -> young=true, has_example=true -> AND=true -> NOT=false (excluded)
         // Jane: age=25, email="adult.jane@example.com" -> young=false, has_example=true -> AND=false -> NOT=true (included)
-        // Bob: age=70, email="senior.bob@test.org" -> young=false, has_example=false -> AND=false -> NOT=true (included)  
+        // Bob: age=70, email="senior.bob@test.org" -> young=false, has_example=false -> AND=false -> NOT=true (included)
         // Alice: age=35, email="middle.alice@example.com" -> young=false, has_example=true -> AND=false -> NOT=true (included)
         assert_eq!(not_young_example.len(), 3); // Jane, Bob, Alice (John is excluded)
     }
 
     #[tokio::test]
-    async fn test_pcr_compatible_filters_and_params() {
+    async fn test_basic_functionality() {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;
         let client = CausticsClient::new(db.clone());
@@ -1000,46 +1000,31 @@ mod query_builder_tests {
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
             .unwrap();
 
-        // Test PCR-compatible write_params alongside existing SetParam system
+        // Test basic create and find functionality
         let _user = client
             .user()
             .create(
-                "pcr@example.com".to_string(),
-                "PCR User".to_string(),
+                "test@example.com".to_string(),
+                "Test User".to_string(),
                 now,
                 now,
-                vec![
-                    // Using existing set functions (backward compatibility)
-                    user::age::set(Some(25)),
-                    user::deleted_at::set(None),
-                    // The write_params types can be used through the generic T: Into<Type> system
-                ],
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await
             .unwrap();
 
-        // Test that read_filters and write_params modules exist and can be referenced
-        // This validates the module structure without actually using them in queries yet
-        let _read_filters_exist = user::read_filters::WhereParam::Email(
-            caustics::read_filters::StringFilter::Equals("test".to_string()),
-        );
-
-        let _write_params_exist = user::write_params::SetParam::Name(
-            caustics::write_params::StringParam::Set("Test".to_string()),
-        );
-
         // Verify existing functionality still works
         let found_user = client
             .user()
-            .find_first(vec![user::email::equals("pcr@example.com")])
+            .find_first(vec![user::email::equals("test@example.com")])
             .exec()
             .await
             .unwrap();
 
         assert!(found_user.is_some());
         let found = found_user.unwrap();
-        assert_eq!(found.name, "PCR User");
+        assert_eq!(found.name, "Test User");
         assert_eq!(found.age, Some(25));
     }
 
@@ -1124,7 +1109,7 @@ mod query_builder_tests {
         let users_by_ids = client
             .user()
             .find_many(vec![user::id::in_vec(vec![
-                user1.id, user2.id, user3.id, user5.id, user8.id
+                user1.id, user2.id, user3.id, user5.id, user8.id,
             ])])
             .exec()
             .await
@@ -1140,7 +1125,11 @@ mod query_builder_tests {
         // Test README example: user::age::not_in_vec(vec![Some(13), Some(14), Some(15)])
         let users_excluding_young_ages = client
             .user()
-            .find_many(vec![user::age::not_in_vec(vec![Some(13), Some(14), Some(15)])])
+            .find_many(vec![user::age::not_in_vec(vec![
+                Some(13),
+                Some(14),
+                Some(15),
+            ])])
             .exec()
             .await
             .unwrap();
@@ -1151,7 +1140,8 @@ mod query_builder_tests {
         }));
 
         // Verify the excluded users have the expected ages
-        let included_ages: Vec<Option<i32>> = users_excluding_young_ages.iter().map(|u| u.age).collect();
+        let included_ages: Vec<Option<i32>> =
+            users_excluding_young_ages.iter().map(|u| u.age).collect();
         assert!(included_ages.contains(&Some(25)));
         assert!(included_ages.contains(&Some(30)));
     }
@@ -1521,15 +1511,13 @@ mod query_builder_tests {
         // Test JSON path access - simple key
         let posts_with_category_key = client
             .post()
-            .find_many(vec![post::custom_data::path(vec![
-                "category".to_string(),
-            ])])
+            .find_many(vec![post::custom_data::path(vec!["category".to_string()])])
             .exec()
             .await
             .unwrap();
         assert_eq!(posts_with_category_key.len(), 1);
         assert_eq!(posts_with_category_key[0].id, post_with_simple_json.id);
-        
+
         // Test JSON object contains key operations
         let posts_with_metadata_key = client
             .post()
@@ -1552,7 +1540,7 @@ mod query_builder_tests {
             .unwrap();
         assert_eq!(posts_with_settings_key.len(), 1);
         assert_eq!(posts_with_settings_key[0].id, post_with_array_json.id);
-        
+
         let posts_with_description_key = client
             .post()
             .find_many(vec![post::custom_data::json_object_contains(
@@ -1598,7 +1586,10 @@ mod query_builder_tests {
             .await
             .unwrap();
         assert_eq!(posts_with_category_and_metadata.len(), 1);
-        assert_eq!(posts_with_category_and_metadata[0].id, post_with_simple_json.id);
+        assert_eq!(
+            posts_with_category_and_metadata[0].id,
+            post_with_simple_json.id
+        );
 
         // Test JSON operations with logical operators (OR)
         let posts_with_description_or_settings = client
@@ -1667,10 +1658,7 @@ mod query_builder_tests {
         println!("🔧 Calling update with user::age::increment(5)");
         let updated_user = client
             .user()
-            .update(
-                user::id::equals(user.id),
-                vec![user::age::increment(5)],
-            )
+            .update(user::id::equals(user.id), vec![user::age::increment(5)])
             .exec()
             .await
             .unwrap();
@@ -1680,10 +1668,7 @@ mod query_builder_tests {
         // Test decrement operation
         let updated_user = client
             .user()
-            .update(
-                user::id::equals(user.id),
-                vec![user::age::decrement(3)],
-            )
+            .update(user::id::equals(user.id), vec![user::age::decrement(3)])
             .exec()
             .await
             .unwrap();
@@ -1692,10 +1677,7 @@ mod query_builder_tests {
         // Test multiply operation
         let updated_user = client
             .user()
-            .update(
-                user::id::equals(user.id),
-                vec![user::age::multiply(2)],
-            )
+            .update(user::id::equals(user.id), vec![user::age::multiply(2)])
             .exec()
             .await
             .unwrap();
@@ -1704,10 +1686,7 @@ mod query_builder_tests {
         // Test divide operation
         let updated_user = client
             .user()
-            .update(
-                user::id::equals(user.id),
-                vec![user::age::divide(3)],
-            )
+            .update(user::id::equals(user.id), vec![user::age::divide(3)])
             .exec()
             .await
             .unwrap();
@@ -1718,10 +1697,7 @@ mod query_builder_tests {
             .user()
             .update(
                 user::id::equals(user.id),
-                vec![
-                    user::age::increment(10),
-                    user::age::multiply(2),
-                ],
+                vec![user::age::increment(10), user::age::multiply(2)],
             )
             .exec()
             .await
@@ -1765,15 +1741,466 @@ mod query_builder_tests {
         // Test increment operation
         let updated_user = client
             .user()
-            .update(
-                user::id::equals(user.id),
-                vec![user::age::increment(5)],
+            .update(user::id::equals(user.id), vec![user::age::increment(5)])
+            .exec()
+            .await
+            .unwrap();
+
+        // The atomic operation should work
+        assert_eq!(updated_user.age, Some(30));
+    }
+
+    #[tokio::test]
+    async fn test_advanced_relation_operations() {
+        let _ = env_logger::try_init();
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Create a user with some posts
+        let user = client
+            .user()
+            .create(
+                "relation@example.com".to_string(),
+                "Relation User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
             )
             .exec()
             .await
             .unwrap();
-        
-        // The atomic operation should work
-        assert_eq!(updated_user.age, Some(30));
+
+        // Create some posts for the user
+        let _post1 = client
+            .post()
+            .create(
+                "First Post".to_string(),
+                now,
+                now,
+                user::id::equals(user.id),
+                vec![post::content::set(Some("First post content".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _post2 = client
+            .post()
+            .create(
+                "Second Post".to_string(),
+                now,
+                now,
+                user::id::equals(user.id),
+                vec![post::content::set(Some("Second post content".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test that the advanced relation operations exist and can be called
+        let _some_condition =
+            user::posts::some(vec![post::title::equals("First Post".to_string())]);
+
+        let _every_condition = user::posts::every(vec![post::title::contains("Post".to_string())]);
+
+        let _none_condition =
+            user::posts::none(vec![post::title::equals("Non-existent Post".to_string())]);
+
+        // Test that the conditions can be used in queries (they should work now!)
+        let users_with_some_posts = client
+            .user()
+            .find_many(vec![user::posts::some(vec![post::title::equals(
+                "First Post".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // The query should return the user since they have a post with title "First Post"
+        assert_eq!(users_with_some_posts.len(), 1);
+        assert_eq!(users_with_some_posts[0].id, user.id);
+
+        // Test every condition
+        let users_with_every_post_containing_post = client
+            .user()
+            .find_many(vec![user::posts::every(vec![post::title::contains(
+                "Post".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // The query should return the user since all their posts contain "Post"
+        assert_eq!(users_with_every_post_containing_post.len(), 1);
+        assert_eq!(users_with_every_post_containing_post[0].id, user.id);
+
+        // Test none condition
+        let users_with_no_nonexistent_posts = client
+            .user()
+            .find_many(vec![user::posts::none(vec![post::title::equals(
+                "Non-existent Post".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // The query should return the user since they don't have a post with title "Non-existent Post"
+        assert_eq!(users_with_no_nonexistent_posts.len(), 1);
+        assert_eq!(users_with_no_nonexistent_posts[0].id, user.id);
+    }
+
+    #[tokio::test]
+    async fn test_complex_relation_filtering_with_subqueries() {
+        let _ = env_logger::try_init();
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+        let future_date = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 12, 31, 23, 59, 59)
+            .unwrap();
+
+        // Create multiple users with different post patterns
+        let user1 = client
+            .user()
+            .create(
+                "user1@example.com".to_string(),
+                "User One".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user2 = client
+            .user()
+            .create(
+                "user2@example.com".to_string(),
+                "User Two".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user3 = client
+            .user()
+            .create(
+                "user3@example.com".to_string(),
+                "User Three".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(35)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create posts for user1: Has "Hello" posts with content, all created in 2024
+        let _post1_1 = client
+            .post()
+            .create(
+                "Hello World".to_string(),
+                now,
+                now,
+                user::id::equals(user1.id),
+                vec![post::content::set(Some("Hello post content".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _post1_2 = client
+            .post()
+            .create(
+                "Hello Again".to_string(),
+                now,
+                now,
+                user::id::equals(user1.id),
+                vec![post::content::set(Some("Another hello post".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create posts for user2: Has "Hello" posts but some without content, all created in 2024
+        let _post2_1 = client
+            .post()
+            .create(
+                "Hello from User2".to_string(),
+                now,
+                now,
+                user::id::equals(user2.id),
+                vec![post::content::set(Some("User2 hello content".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _post2_2 = client
+            .post()
+            .create(
+                "Hello without content".to_string(),
+                now,
+                now,
+                user::id::equals(user2.id),
+                vec![post::content::set(None)], // No content
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create posts for user3: Has "Hello" posts but some created in future, some spam
+        let _post3_1 = client
+            .post()
+            .create(
+                "Hello from User3".to_string(),
+                now,
+                now,
+                user::id::equals(user3.id),
+                vec![post::content::set(Some("User3 hello content".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _post3_2 = client
+            .post()
+            .create(
+                "Future Hello".to_string(),
+                future_date,
+                future_date,
+                user::id::equals(user3.id),
+                vec![post::content::set(Some("Future hello content".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _post3_3 = client
+            .post()
+            .create(
+                "Spam Post".to_string(),
+                now,
+                now,
+                user::id::equals(user3.id),
+                vec![post::content::set(Some("Spam content".to_string()))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test 1: Complex relation filtering with multiple conditions
+        // Find users who:
+        // - Have SOME posts with "Hello" in title
+        // - Have EVERY post with "Hello" in title
+        // - Have NO posts with "Spam" in title
+        let complex_filtered_users = client
+            .user()
+            .find_many(vec![
+                user::posts::some(vec![post::title::contains("Hello".to_string())]),
+                user::posts::every(vec![post::title::contains("Hello".to_string())]),
+                user::posts::none(vec![post::title::contains("Spam".to_string())]),
+            ])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user1 and user2, but not user3
+        // user1: ✅ has "Hello" posts, ✅ all posts have "Hello", ✅ no spam
+        // user2: ✅ has "Hello" posts, ✅ all posts have "Hello", ✅ no spam
+        // user3: ✅ has "Hello" posts, ❌ has "Spam" post, ❌ has spam
+        assert_eq!(complex_filtered_users.len(), 2);
+        let user_ids: Vec<i32> = complex_filtered_users.iter().map(|u| u.id).collect();
+        assert!(user_ids.contains(&user1.id));
+        assert!(user_ids.contains(&user2.id));
+        assert!(!user_ids.contains(&user3.id));
+
+        // Test 2: More specific filtering with different conditions
+        // Find users who have posts with "World" in title
+        let users_with_world = client
+            .user()
+            .find_many(vec![user::posts::some(vec![post::title::contains(
+                "World".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user1 (has "Hello World" post)
+        assert_eq!(users_with_world.len(), 1);
+        assert_eq!(users_with_world[0].id, user1.id);
+
+        // Test 3: Every post must have "Hello" in title
+        let users_with_all_hello_posts = client
+            .user()
+            .find_many(vec![user::posts::every(vec![post::title::contains(
+                "Hello".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user1 and user2, but not user3 (has "Spam Post")
+        assert_eq!(users_with_all_hello_posts.len(), 2);
+        let all_hello_user_ids: Vec<i32> =
+            users_with_all_hello_posts.iter().map(|u| u.id).collect();
+        assert!(all_hello_user_ids.contains(&user1.id));
+        assert!(all_hello_user_ids.contains(&user2.id));
+        assert!(!all_hello_user_ids.contains(&user3.id));
+
+        // Test 4: No spam posts
+        let users_without_spam_posts = client
+            .user()
+            .find_many(vec![user::posts::none(vec![post::title::contains(
+                "Spam".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user1 and user2, but not user3 (has spam post)
+        assert_eq!(users_without_spam_posts.len(), 2);
+        let no_spam_user_ids: Vec<i32> = users_without_spam_posts.iter().map(|u| u.id).collect();
+        assert!(no_spam_user_ids.contains(&user1.id));
+        assert!(no_spam_user_ids.contains(&user2.id));
+        assert!(!no_spam_user_ids.contains(&user3.id));
+
+        // Test 5: Combined with logical operators
+        let combined_filtered_users = client
+            .user()
+            .find_many(vec![user::and(vec![
+                user::posts::some(vec![post::title::contains("Hello".to_string())]),
+                user::posts::none(vec![post::title::contains("Spam".to_string())]),
+            ])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user1 and user2, but not user3
+        assert_eq!(combined_filtered_users.len(), 2);
+        let combined_user_ids: Vec<i32> = combined_filtered_users.iter().map(|u| u.id).collect();
+        assert!(combined_user_ids.contains(&user1.id));
+        assert!(combined_user_ids.contains(&user2.id));
+        assert!(!combined_user_ids.contains(&user3.id));
+
+        // Test 6: Edge case - user with no posts
+        let user_no_posts = client
+            .user()
+            .create(
+                "noposts@example.com".to_string(),
+                "No Posts User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(40)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // User with no posts should match "none" conditions
+        let users_with_no_spam = client
+            .user()
+            .find_many(vec![user::posts::none(vec![post::title::contains(
+                "Spam".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should include the user with no posts
+        let no_spam_user_ids_updated: Vec<i32> = users_with_no_spam.iter().map(|u| u.id).collect();
+        assert!(no_spam_user_ids_updated.contains(&user_no_posts.id));
+
+        // User with no posts should NOT match "some" conditions
+        let users_with_hello_final = client
+            .user()
+            .find_many(vec![user::posts::some(vec![post::title::contains(
+                "Hello".to_string(),
+            )])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should NOT include the user with no posts
+        let hello_user_ids: Vec<i32> = users_with_hello_final.iter().map(|u| u.id).collect();
+        assert!(!hello_user_ids.contains(&user_no_posts.id));
+
+        // Test 7: Nullable field filtering in relations
+        // Find users who have posts with content (is_not_null)
+        let users_with_content_posts = client
+            .user()
+            .find_many(vec![user::posts::some(vec![post::content::is_not_null()])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return all 3 users because:
+        // user1: has 2 posts with content ✅
+        // user2: has 1 post with content (and 1 without) ✅
+        // user3: has 3 posts with content ✅
+        assert_eq!(users_with_content_posts.len(), 3);
+        let content_user_ids: Vec<i32> = users_with_content_posts.iter().map(|u| u.id).collect();
+        assert!(content_user_ids.contains(&user1.id));
+        assert!(content_user_ids.contains(&user2.id));
+        assert!(content_user_ids.contains(&user3.id));
+
+        // Find users who have posts without content (is_null)
+        let users_with_null_content_posts = client
+            .user()
+            .find_many(vec![user::posts::some(vec![post::content::is_null()])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user2 (has post without content)
+        assert_eq!(users_with_null_content_posts.len(), 1);
+        assert_eq!(users_with_null_content_posts[0].id, user2.id);
+
+        // Test 8: Every post must have content
+        let users_with_all_content = client
+            .user()
+            .find_many(vec![user::posts::every(vec![post::content::is_not_null()])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user1, user3, and user4 (no posts - vacuous truth), but not user2 (has post without content)
+        assert_eq!(users_with_all_content.len(), 3);
+        let all_content_user_ids: Vec<i32> = users_with_all_content.iter().map(|u| u.id).collect();
+        assert!(all_content_user_ids.contains(&user1.id));
+        assert!(all_content_user_ids.contains(&user3.id));
+        assert!(all_content_user_ids.contains(&user_no_posts.id)); // user with no posts
+        assert!(!all_content_user_ids.contains(&user2.id)); // has post without content
+
+        // Test 9: No posts without content
+        let users_with_no_null_content = client
+            .user()
+            .find_many(vec![user::posts::none(vec![post::content::is_null()])])
+            .exec()
+            .await
+            .unwrap();
+
+        // Should return user1, user3, and user4 (no posts - vacuous truth), but not user2 (has post without content)
+        assert_eq!(users_with_no_null_content.len(), 3);
+        let no_null_content_user_ids: Vec<i32> =
+            users_with_no_null_content.iter().map(|u| u.id).collect();
+        assert!(no_null_content_user_ids.contains(&user1.id));
+        assert!(no_null_content_user_ids.contains(&user3.id));
+        assert!(no_null_content_user_ids.contains(&user_no_posts.id)); // user with no posts
+        assert!(!no_null_content_user_ids.contains(&user2.id));
     }
 }

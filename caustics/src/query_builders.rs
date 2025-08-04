@@ -168,6 +168,7 @@ pub struct FirstQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelW
     pub conn: &'a C,
     pub relations_to_fetch: Vec<RelationFilter>,
     pub registry: &'a dyn EntityRegistry<C>,
+    pub database_backend: sea_orm::DatabaseBackend,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -297,6 +298,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub conn: &'a C,
     pub relations_to_fetch: Vec<RelationFilter>,
     pub registry: &'a dyn EntityRegistry<C>,
+    pub database_backend: sea_orm::DatabaseBackend,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 

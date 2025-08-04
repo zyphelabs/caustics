@@ -53,7 +53,7 @@
 - [x] MySQL support with JSON functions (`JSON_EXTRACT()`, `JSON_CONTAINS()`)
 - [x] MariaDB support with JSON functions (`JSON_VALUE()`, `JSON_CONTAINS()`)
 - [x] SQLite support with JSON1 extension (`json_extract()`, `json_each()`)
-- [x] Automatic database detection via `DATABASE_URL`
+- [x] Automatic database detection
 - [x] Database-agnostic string operations with case sensitivity
 - [x] Comprehensive test coverage across all database types
 - [x] Migration support between databases without code changes
@@ -67,11 +67,11 @@
 - [x] Update SetParam enum to include atomic operations
 
 ### 9. Advanced Relation Operations
-- [ ] `some` operator for relation filtering
-- [ ] `every` operator for relation filtering
-- [ ] `none` operator for relation filtering
-- [ ] `connect` operation for relations
-- [ ] `disconnect` operation for relations
+- [x] `some` operator for relation filtering
+- [x] `every` operator for relation filtering
+- [x] `none` operator for relation filtering
+- [x] `connect` operation for relations
+- [x] `disconnect` operation for relations
 - [ ] `set` operation for relations
 - [ ] Nested relation queries
 
@@ -125,9 +125,9 @@
 ### Macro Updates Required
 - [x] Update `caustics-macros/src/entity.rs` to generate field-specific operator variants
 - [x] Add support for new filter types in WhereParam enum
-- [ ] Generate atomic operation variants in SetParam enum
-- [ ] Add JSON field detection and handling
-- [ ] Update relation generation to support advanced operations
+- [x] Generate atomic operation variants in SetParam enum
+- [x] Add JSON field detection and handling
+- [x] Update relation generation to support advanced operations
 
 ### Type System Updates
 - [ ] Add new filter types to `caustics/src/types.rs`
@@ -157,6 +157,7 @@
 ### Already Implemented
 - [x] Basic CRUD operations
 - [x] Simple relation fetching
+- [x] **Advanced relation filtering** (`some`, `every`, `none` with EXISTS/NOT EXISTS subqueries)
 - [x] Basic transaction support
 - [x] Simple batch operations (insert only)
 - [x] Basic filtering with `equals`

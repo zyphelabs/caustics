@@ -17,6 +17,37 @@ pub enum QueryMode {
     Insensitive,
 }
 
+/// Generic field operations for filtering
+#[derive(Debug, Clone)]
+pub enum FieldOp<T> {
+    Equals(T),
+    NotEquals(T),
+    Gt(T),
+    Lt(T),
+    Gte(T),
+    Lte(T),
+    InVec(Vec<T>),
+    NotInVec(Vec<T>),
+    Contains(String),
+    StartsWith(String),
+    EndsWith(String),
+    IsNull,
+    IsNotNull,
+    // JSON-specific operations
+    JsonPath(Vec<String>),
+    JsonStringContains(String),
+    JsonStringStartsWith(String),
+    JsonStringEndsWith(String),
+    JsonArrayContains(serde_json::Value),
+    JsonArrayStartsWith(serde_json::Value),
+    JsonArrayEndsWith(serde_json::Value),
+    JsonObjectContains(String),
+    // Relation operations
+    Some(()),
+    Every(()),
+    None(()),
+}
+
 /// Trait for converting a model to a model with relations
 pub trait FromModel<M> {
     fn from_model(model: M) -> Self;
@@ -44,7 +75,7 @@ pub trait RelationFilterTrait: Clone {
 #[derive(Debug, Clone)]
 pub struct Filter {
     pub field: String,
-    pub value: String,
+    pub operation: FieldOp<String>, // Type-safe operation instead of string value
 }
 
 /// Generic relation filter structure that matches the generated RelationFilter type
@@ -61,6 +92,53 @@ impl RelationFilterTrait for RelationFilter {
 
     fn filters(&self) -> &[Filter] {
         &self.filters
+    }
+}
+
+/// Advanced relation operations for filtering on relations
+/// These follow the Prisma Client Rust pattern for relation filtering
+#[derive(Debug, Clone)]
+pub struct RelationCondition {
+    pub relation_name: &'static str,
+    pub operation: FieldOp<()>,
+    pub filters: Vec<Filter>,
+    pub foreign_key_column: Option<String>,
+    pub current_table: Option<String>,
+    pub relation_table: Option<String>,
+}
+
+impl RelationCondition {
+    pub fn some(relation_name: &'static str, filters: Vec<Filter>) -> Self {
+        Self {
+            relation_name,
+            operation: FieldOp::Some(()),
+            filters,
+            foreign_key_column: None,
+            current_table: None,
+            relation_table: None,
+        }
+    }
+
+    pub fn every(relation_name: &'static str, filters: Vec<Filter>) -> Self {
+        Self {
+            relation_name,
+            operation: FieldOp::Every(()),
+            filters,
+            foreign_key_column: None,
+            current_table: None,
+            relation_table: None,
+        }
+    }
+
+    pub fn none(relation_name: &'static str, filters: Vec<Filter>) -> Self {
+        Self {
+            relation_name,
+            operation: FieldOp::None(()),
+            filters,
+            foreign_key_column: None,
+            current_table: None,
+            relation_table: None,
+        }
     }
 }
 
@@ -481,322 +559,5 @@ where
             _ => panic!("Expected Insert result"),
         };
         (result1, result2, result3, result4)
-    }
-}
-
-/// Read filters for querying (PCR-compatible)
-pub mod read_filters {
-    use crate::QueryMode;
-
-    #[derive(Debug, Clone)]
-    pub enum StringFilter {
-        Equals(String),
-        In(Vec<String>),
-        NotIn(Vec<String>),
-        Lt(String),
-        Lte(String),
-        Gt(String),
-        Gte(String),
-        Contains(String),
-        StartsWith(String),
-        EndsWith(String),
-        Not(Option<String>),
-        Mode(QueryMode),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum StringNullableFilter {
-        Equals(Option<String>),
-        In(Vec<String>),
-        NotIn(Vec<String>),
-        Lt(String),
-        Lte(String),
-        Gt(String),
-        Gte(String),
-        Contains(String),
-        StartsWith(String),
-        EndsWith(String),
-        Not(Option<String>),
-        Mode(QueryMode),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum IntFilter {
-        Equals(i32),
-        In(Vec<i32>),
-        NotIn(Vec<i32>),
-        Lt(i32),
-        Lte(i32),
-        Gt(i32),
-        Gte(i32),
-        Not(Option<i32>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum IntNullableFilter {
-        Equals(Option<i32>),
-        In(Vec<i32>),
-        NotIn(Vec<i32>),
-        Lt(i32),
-        Lte(i32),
-        Gt(i32),
-        Gte(i32),
-        Not(Option<i32>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum DateTimeFilter {
-        Equals(chrono::DateTime<chrono::FixedOffset>),
-        In(Vec<chrono::DateTime<chrono::FixedOffset>>),
-        NotIn(Vec<chrono::DateTime<chrono::FixedOffset>>),
-        Lt(chrono::DateTime<chrono::FixedOffset>),
-        Lte(chrono::DateTime<chrono::FixedOffset>),
-        Gt(chrono::DateTime<chrono::FixedOffset>),
-        Gte(chrono::DateTime<chrono::FixedOffset>),
-        Not(Option<chrono::DateTime<chrono::FixedOffset>>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum DateTimeNullableFilter {
-        Equals(Option<chrono::DateTime<chrono::FixedOffset>>),
-        In(Vec<chrono::DateTime<chrono::FixedOffset>>),
-        NotIn(Vec<chrono::DateTime<chrono::FixedOffset>>),
-        Lt(chrono::DateTime<chrono::FixedOffset>),
-        Lte(chrono::DateTime<chrono::FixedOffset>),
-        Gt(chrono::DateTime<chrono::FixedOffset>),
-        Gte(chrono::DateTime<chrono::FixedOffset>),
-        Not(Option<chrono::DateTime<chrono::FixedOffset>>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum BoolFilter {
-        Equals(bool),
-        Not(Option<bool>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum JsonNullableFilter {
-        Equals(Option<serde_json::Value>),
-        Path(Vec<String>),
-        StringContains(String),
-        StringStartsWith(String),
-        StringEndsWith(String),
-        ArrayContains(Option<serde_json::Value>),
-        ArrayStartsWith(Option<serde_json::Value>),
-        ArrayEndsWith(Option<serde_json::Value>),
-        Lt(serde_json::Value),
-        Lte(serde_json::Value),
-        Gt(serde_json::Value),
-        Gte(serde_json::Value),
-        Not(serde_json::Value),
-    }
-}
-
-/// Write parameters for creating/updating (PCR-compatible)
-pub mod write_params {
-    #[derive(Debug, Clone)]
-    pub enum StringParam {
-        Set(String),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum StringNullableParam {
-        Set(Option<String>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum IntParam {
-        Set(i32),
-        Increment(i32),
-        Decrement(i32),
-        Multiply(i32),
-        Divide(i32),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum IntNullableParam {
-        Set(Option<i32>),
-        Increment(i32),
-        Decrement(i32),
-        Multiply(i32),
-        Divide(i32),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum DateTimeParam {
-        Set(chrono::DateTime<chrono::FixedOffset>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum DateTimeNullableParam {
-        Set(Option<chrono::DateTime<chrono::FixedOffset>>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum BoolParam {
-        Set(bool),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum JsonParam {
-        Set(serde_json::Value),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum JsonNullableParam {
-        Set(Option<serde_json::Value>),
-    }
-}
-
-// Integration layer for making read_filters work with FieldOp<T>
-impl From<read_filters::StringFilter> for String {
-    fn from(filter: read_filters::StringFilter) -> Self {
-        match filter {
-            read_filters::StringFilter::Equals(value) => value,
-            read_filters::StringFilter::Contains(value) => value,
-            read_filters::StringFilter::StartsWith(value) => value,
-            read_filters::StringFilter::EndsWith(value) => value,
-            read_filters::StringFilter::Lt(value) => value,
-            read_filters::StringFilter::Lte(value) => value,
-            read_filters::StringFilter::Gt(value) => value,
-            read_filters::StringFilter::Gte(value) => value,
-            _ => panic!("Unsupported filter operation for simple string conversion"),
-        }
-    }
-}
-
-impl From<read_filters::StringNullableFilter> for Option<String> {
-    fn from(filter: read_filters::StringNullableFilter) -> Self {
-        match filter {
-            read_filters::StringNullableFilter::Equals(value) => value,
-            read_filters::StringNullableFilter::Contains(value) => Some(value),
-            read_filters::StringNullableFilter::StartsWith(value) => Some(value),
-            read_filters::StringNullableFilter::EndsWith(value) => Some(value),
-            read_filters::StringNullableFilter::Lt(value) => Some(value),
-            read_filters::StringNullableFilter::Lte(value) => Some(value),
-            read_filters::StringNullableFilter::Gt(value) => Some(value),
-            read_filters::StringNullableFilter::Gte(value) => Some(value),
-            _ => panic!("Unsupported filter operation for simple string conversion"),
-        }
-    }
-}
-
-impl From<read_filters::IntFilter> for i32 {
-    fn from(filter: read_filters::IntFilter) -> Self {
-        match filter {
-            read_filters::IntFilter::Equals(value) => value,
-            read_filters::IntFilter::Lt(value) => value,
-            read_filters::IntFilter::Lte(value) => value,
-            read_filters::IntFilter::Gt(value) => value,
-            read_filters::IntFilter::Gte(value) => value,
-            _ => panic!("Unsupported filter operation for simple int conversion"),
-        }
-    }
-}
-
-impl From<read_filters::IntNullableFilter> for Option<i32> {
-    fn from(filter: read_filters::IntNullableFilter) -> Self {
-        match filter {
-            read_filters::IntNullableFilter::Equals(value) => value,
-            read_filters::IntNullableFilter::Lt(value) => Some(value),
-            read_filters::IntNullableFilter::Lte(value) => Some(value),
-            read_filters::IntNullableFilter::Gt(value) => Some(value),
-            read_filters::IntNullableFilter::Gte(value) => Some(value),
-            _ => panic!("Unsupported filter operation for simple int conversion"),
-        }
-    }
-}
-
-impl From<read_filters::DateTimeFilter> for chrono::DateTime<chrono::FixedOffset> {
-    fn from(filter: read_filters::DateTimeFilter) -> Self {
-        match filter {
-            read_filters::DateTimeFilter::Equals(value) => value,
-            read_filters::DateTimeFilter::Lt(value) => value,
-            read_filters::DateTimeFilter::Lte(value) => value,
-            read_filters::DateTimeFilter::Gt(value) => value,
-            read_filters::DateTimeFilter::Gte(value) => value,
-            _ => panic!("Unsupported filter operation for simple datetime conversion"),
-        }
-    }
-}
-
-impl From<read_filters::DateTimeNullableFilter> for Option<chrono::DateTime<chrono::FixedOffset>> {
-    fn from(filter: read_filters::DateTimeNullableFilter) -> Self {
-        match filter {
-            read_filters::DateTimeNullableFilter::Equals(value) => value,
-            read_filters::DateTimeNullableFilter::Lt(value) => Some(value),
-            read_filters::DateTimeNullableFilter::Lte(value) => Some(value),
-            read_filters::DateTimeNullableFilter::Gt(value) => Some(value),
-            read_filters::DateTimeNullableFilter::Gte(value) => Some(value),
-            _ => panic!("Unsupported filter operation for simple datetime conversion"),
-        }
-    }
-}
-
-impl From<read_filters::BoolFilter> for bool {
-    fn from(filter: read_filters::BoolFilter) -> Self {
-        match filter {
-            read_filters::BoolFilter::Equals(value) => value,
-            _ => panic!("Unsupported filter operation for simple bool conversion"),
-        }
-    }
-}
-
-// Integration layer for making write_params work with SetParam system
-impl From<write_params::StringParam> for String {
-    fn from(param: write_params::StringParam) -> Self {
-        match param {
-            write_params::StringParam::Set(value) => value,
-        }
-    }
-}
-
-impl From<write_params::StringNullableParam> for Option<String> {
-    fn from(param: write_params::StringNullableParam) -> Self {
-        match param {
-            write_params::StringNullableParam::Set(value) => value,
-        }
-    }
-}
-
-impl From<write_params::IntParam> for i32 {
-    fn from(param: write_params::IntParam) -> Self {
-        match param {
-            write_params::IntParam::Set(value) => value,
-            _ => panic!("Only Set operations supported for simple int conversion"),
-        }
-    }
-}
-
-impl From<write_params::IntNullableParam> for Option<i32> {
-    fn from(param: write_params::IntNullableParam) -> Self {
-        match param {
-            write_params::IntNullableParam::Set(value) => value,
-            _ => panic!("Only Set operations supported for simple int conversion"),
-        }
-    }
-}
-
-impl From<write_params::DateTimeParam> for chrono::DateTime<chrono::FixedOffset> {
-    fn from(param: write_params::DateTimeParam) -> Self {
-        match param {
-            write_params::DateTimeParam::Set(value) => value,
-        }
-    }
-}
-
-impl From<write_params::DateTimeNullableParam> for Option<chrono::DateTime<chrono::FixedOffset>> {
-    fn from(param: write_params::DateTimeNullableParam) -> Self {
-        match param {
-            write_params::DateTimeNullableParam::Set(value) => value,
-        }
-    }
-}
-
-impl From<write_params::BoolParam> for bool {
-    fn from(param: write_params::BoolParam) -> Self {
-        match param {
-            write_params::BoolParam::Set(value) => value,
-        }
     }
 }

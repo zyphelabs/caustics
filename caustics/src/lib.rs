@@ -12,6 +12,3 @@ pub use query_builders::DeferredLookup;
 
 // Re-export traits for use in generated code
 pub use types::{EntityFetcher, EntityRegistry};
-
-// Re-export read_filters and write_params for PCR compatibility
-pub use types::{read_filters, write_params};

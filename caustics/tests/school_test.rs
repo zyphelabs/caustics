@@ -857,12 +857,14 @@ mod caustics_school_tests {
         use super::student;
         use caustics::QueryMode;
         let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
             .unwrap();
         // Insert a student with mixed-case first_name
-        let _student = student::EntityClient::new(&db)
+        let _student = client
+            .student()
             .create(
                 "S12345".to_string(), // student_number
                 "Alice".to_string(),  // first_name (mixed case)
@@ -878,7 +880,8 @@ mod caustics_school_tests {
             .await
             .expect("insert student");
         // Query with different case and QueryMode::Insensitive
-        let found = student::EntityClient::new(&db)
+        let found = client
+            .student()
             .find_many(vec![
                 student::first_name::contains("alice"),
                 student::WhereParam::FirstNameMode(QueryMode::Insensitive),
@@ -1090,7 +1093,7 @@ mod caustics_school_advanced_tests {
             .find_unique(course::id::equals(course.id))
             .with(course::teacher::fetch())
             .with(course::department::fetch())
-            .with(course::enrollments::fetch(vec![]))
+            .with(course::enrollments::fetch())
             .exec()
             .await
             .unwrap()
@@ -1150,12 +1153,14 @@ mod caustics_school_advanced_tests {
         use super::student;
         use caustics::QueryMode;
         let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
             .unwrap();
         // Insert a student with mixed-case first_name
-        let _student = student::EntityClient::new(&db)
+        let _student = client
+            .student()
             .create(
                 "S12345".to_string(), // student_number
                 "Alice".to_string(),  // first_name (mixed case)
@@ -1171,7 +1176,8 @@ mod caustics_school_advanced_tests {
             .await
             .expect("insert student");
         // Query with different case and QueryMode::Insensitive
-        let found = student::EntityClient::new(&db)
+        let found = client
+            .student()
             .find_many(vec![
                 student::first_name::contains("alice"),
                 student::WhereParam::FirstNameMode(QueryMode::Insensitive),
@@ -1245,6 +1251,9 @@ mod caustics_school_advanced_tests {
             .unwrap();
         assert_eq!(students_with_email.len(), 1);
         assert_eq!(students_with_email[0].id, student_with_email.id);
-        assert_eq!(students_with_email[0].email, Some("john@school.edu".to_string()));
+        assert_eq!(
+            students_with_email[0].email,
+            Some("john@school.edu".to_string())
+        );
     }
 }

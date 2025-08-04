@@ -45,8 +45,6 @@ pub mod helpers {
             "postgresql://postgres:postgres@127.0.0.1:{}/postgres",
             pg_port
         );
-        println!("Database URL: {}", db_url);
-        env::set_var("DATABASE_URL", &db_url);
         // Wait for PostgreSQL to be ready
         println!("Waiting for PostgreSQL to be ready...");
         let mut retries = 0;

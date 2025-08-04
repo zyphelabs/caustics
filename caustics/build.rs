@@ -284,7 +284,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             let module_path = format_ident!("{}", module_path);
             quote! {
                 pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseConnection> {
-                    #module_path::EntityClient::new(&*self.db)
+                    #module_path::EntityClient::new(&*self.db, self.database_backend)
                 }
             }
         })
@@ -297,7 +297,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             let module_path = format_ident!("{}", module_path);
             quote! {
                 pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseTransaction> {
-                    #module_path::EntityClient::new(&*self.tx)
+                    #module_path::EntityClient::new(&*self.tx, self.database_backend)
                 }
             }
         })
@@ -361,15 +361,18 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         #[allow(dead_code)]
         pub struct CausticsClient {
             db: std::sync::Arc<DatabaseConnection>,
+            database_backend: sea_orm::DatabaseBackend,
         }
 
         #[allow(dead_code)]
         pub struct TransactionCausticsClient {
             tx: std::sync::Arc<DatabaseTransaction>,
+            database_backend: sea_orm::DatabaseBackend,
         }
 
         pub struct TransactionBuilder {
             db: std::sync::Arc<DatabaseConnection>,
+            database_backend: sea_orm::DatabaseBackend,
         }
 
         // Composite Entity Registry for relation fetching
@@ -400,16 +403,26 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         #[allow(dead_code)]
         impl CausticsClient {
             pub fn new(db: DatabaseConnection) -> Self {
-                Self { db: std::sync::Arc::new(db) }
+                use sea_orm::ConnectionTrait;
+                let database_backend = db.get_database_backend();
+                Self {
+                    db: std::sync::Arc::new(db),
+                    database_backend,
+                }
             }
 
             pub fn db(&self) -> std::sync::Arc<DatabaseConnection> {
                 self.db.clone()
             }
 
+            pub fn database_backend(&self) -> sea_orm::DatabaseBackend {
+                self.database_backend
+            }
+
             pub fn _transaction(&self) -> TransactionBuilder {
                 TransactionBuilder {
                     db: self.db.clone(),
+                    database_backend: self.database_backend,
                 }
             }
 
@@ -462,8 +475,8 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
 
         #[allow(dead_code)]
         impl TransactionCausticsClient {
-            pub fn new(tx: std::sync::Arc<DatabaseTransaction>) -> Self {
-                Self { tx }
+            pub fn new(tx: std::sync::Arc<DatabaseTransaction>, database_backend: sea_orm::DatabaseBackend) -> Self {
+                Self { tx, database_backend }
             }
 
             #(#tx_entity_methods)*
@@ -477,7 +490,7 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             {
                 let tx = self.db.begin().await?;
                 let tx_arc = std::sync::Arc::new(tx);
-                let tx_client = TransactionCausticsClient::new(tx_arc.clone());
+                let tx_client = TransactionCausticsClient::new(tx_arc.clone(), self.database_backend);
                 let result = f(tx_client).await;
                 let tx = std::sync::Arc::try_unwrap(tx_arc).expect("Transaction Arc should be unique");
                 match result {
