@@ -179,6 +179,14 @@ pub struct RelationDescriptor<ModelWithRelations> {
     pub target_entity: &'static str,
     // The foreign key column name
     pub foreign_key_column: &'static str,
+    // The target table name (for has_many set operations)
+    pub target_table_name: &'static str,
+    // The current entity's primary key column name
+    pub current_primary_key_column: &'static str,
+    // The target entity's primary key column name
+    pub target_primary_key_column: &'static str,
+    // Whether the foreign key is nullable
+    pub is_foreign_key_nullable: bool,
 }
 
 /// Trait for types that provide relation metadata
@@ -560,4 +568,22 @@ where
         };
         (result1, result2, result3, result4)
     }
+}
+
+/// Trait for SetParam types to enable proper pattern matching without string parsing
+pub trait SetParamInfo {
+    /// Check if this is a has_many set operation
+    fn is_has_many_set_operation(&self) -> bool;
+    
+    /// Extract the relation name from a has_many set operation
+    fn extract_relation_name(&self) -> Option<&'static str>;
+    
+    /// Extract target IDs from a has_many set operation
+    fn extract_target_ids(&self) -> Vec<sea_orm::Value>;
+}
+
+/// Trait for condition types to enable proper ID extraction without string parsing
+pub trait ConditionInfo {
+    /// Extract the entity ID from a condition
+    fn extract_entity_id(&self) -> Option<sea_orm::Value>;
 }

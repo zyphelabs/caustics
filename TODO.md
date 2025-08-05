@@ -72,7 +72,7 @@
 - [x] `none` operator for relation filtering
 - [x] `connect` operation for relations
 - [x] `disconnect` operation for relations
-- [ ] `set` operation for relations
+- [x] `set` operation for relations
 - [ ] Nested relation queries
 
 ### 10. Raw SQL Capabilities

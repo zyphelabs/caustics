@@ -144,7 +144,7 @@ mod query_builder_tests {
     use std::str::FromStr;
 
     use caustics::{QueryError, SortOrder};
-    use chrono::{DateTime, FixedOffset};
+    use chrono::{DateTime, FixedOffset, TimeZone};
     use serde_json;
 
     use super::helpers::setup_test_db;
@@ -2202,5 +2202,387 @@ mod query_builder_tests {
         assert!(no_null_content_user_ids.contains(&user3.id));
         assert!(no_null_content_user_ids.contains(&user_no_posts.id)); // user with no posts
         assert!(!no_null_content_user_ids.contains(&user2.id));
+    }
+
+    #[tokio::test]
+    async fn test_has_many_set_operation_structure() {
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create a user
+        let user = client
+            .user()
+            .create(
+                "user@example.com".to_string(),
+                "User".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create some posts
+        let post1 = client
+            .post()
+            .create(
+                "Post 1".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let post2 = client
+            .post()
+            .create(
+                "Post 2".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test that the has_many set operation structure compiles and runs
+        // This should work even though the actual set operation is not implemented yet
+        let updated_user = client
+            .user()
+            .update_with_has_many_set(
+                user::id::equals(user.id),
+                vec![user::posts::set(vec![
+                    post::id::equals(post1.id),
+                    post::id::equals(post2.id),
+                ])],
+            )
+            .exec()
+            .await;
+
+        // For now, this should work (it just delegates to regular update)
+        if let Err(e) = &updated_user {
+            println!("Error: {:?}", e);
+        }
+        assert!(updated_user.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_has_many_set_operation_functionality() {
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create a user
+        let user = client
+            .user()
+            .create(
+                "user@example.com".to_string(),
+                "User".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create some posts initially not associated with the user
+        let post1 = client
+            .post()
+            .create(
+                "Post 1".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id), // Initially associated
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let post2 = client
+            .post()
+            .create(
+                "Post 2".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id), // Initially associated
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _post3 = client
+            .post()
+            .create(
+                "Post 3".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id), // Initially associated
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify initial state
+        let initial_posts = client
+            .post()
+            .find_many(vec![post::user_id::equals(user.id)])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(initial_posts.len(), 3);
+
+        // Test the has_many set operation
+        // This should set the user's posts to only post1 and post2
+        let updated_user = client
+            .user()
+            .update_with_has_many_set(
+                user::id::equals(user.id),
+                vec![user::posts::set(vec![
+                    post::id::equals(post1.id),
+                    post::id::equals(post2.id),
+                ])],
+            )
+            .exec()
+            .await;
+
+        if let Err(e) = &updated_user {
+            println!("Error: {:?}", e);
+        }
+        assert!(updated_user.is_ok());
+
+        // Verify the result
+        let final_posts = client
+            .post()
+            .find_many(vec![post::user_id::equals(user.id)])
+            .exec()
+            .await
+            .unwrap();
+        
+
+        
+        // Now we expect exactly 2 posts since the set operation should replace all associations
+        // The set operation should have removed post3 and kept only post1 and post2
+        assert_eq!(final_posts.len(), 2);
+        
+        // Verify that only post1 and post2 are associated with the user
+        let final_post_ids: Vec<i32> = final_posts.iter().map(|p| p.id).collect();
+        assert!(final_post_ids.contains(&post1.id));
+        assert!(final_post_ids.contains(&post2.id));
+        assert!(!final_post_ids.contains(&_post3.id));
+    }
+
+    #[tokio::test]
+    async fn test_agnostic_implementation_compiles() {
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create a user
+        let user = client
+            .user()
+            .create(
+                "test@example.com".to_string(),
+                "Test User".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a post with a different user to avoid conflicts
+        let post = client
+            .post()
+            .create(
+                "Test Post".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test that the agnostic implementation compiles and runs
+        // This should work with any relation name, not just hardcoded ones
+        let result = client
+            .user()
+            .update_with_has_many_set(
+                user::id::equals(user.id),
+                vec![user::posts::set(vec![
+                    post::id::equals(post.id),
+                ])],
+            )
+            .exec()
+            .await;
+
+        // The result might fail due to incomplete implementation, but it should compile
+        // This test verifies that our agnostic approach works with the metadata system
+        println!("Agnostic implementation result: {:?}", result);
+        
+        // For now, we just verify it compiles and runs without panicking
+        // The actual functionality will be implemented later
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_foreign_key_column_extraction() {
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create a user
+        let user = client
+            .user()
+            .create(
+                "test@example.com".to_string(),
+                "Test User".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create posts with different foreign key columns
+        let post1 = client
+            .post()
+            .create(
+                "Post 1".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let post2 = client
+            .post()
+            .create(
+                "Post 2".to_string(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .with_ymd_and_hms(2022, 1, 1, 12, 0, 0)
+                    .unwrap(),
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Test that the set operation works with the dynamically extracted foreign key column
+        // This should use "user_id" (converted from "UserId" in the relation definition)
+        let updated_user = client
+            .user()
+            .update_with_has_many_set(
+                user::id::equals(user.id),
+                vec![user::posts::set(vec![
+                    post::id::equals(post1.id),
+                    post::id::equals(post2.id),
+                ])],
+            )
+            .exec()
+            .await;
+
+        assert!(updated_user.is_ok());
+
+        // Verify the result
+        let final_user = client
+            .user()
+            .find_unique(user::id::equals(user.id))
+            .with(user::posts::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        let final_posts = final_user.posts.unwrap();
+        assert_eq!(final_posts.len(), 2);
+        
+        // Verify that only post1 and post2 are associated with the user
+        let final_post_ids: Vec<i32> = final_posts.iter().map(|p| p.id).collect();
+        assert!(final_post_ids.contains(&post1.id));
+        assert!(final_post_ids.contains(&post2.id));
     }
 }

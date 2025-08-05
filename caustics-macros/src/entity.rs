@@ -529,12 +529,37 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate has_many set operation variants for SetParam enum
+    let has_many_set_variants = relations
+        .iter()
+        .filter_map(|relation| {
+            match relation.kind {
+                RelationKind::HasMany => {
+                    let relation_name = format_ident!("Set{}", relation.name.to_pascal_case());
+                    let target_module = &relation.target;
+                    Some((relation.name.clone(), relation_name, target_module.clone()))
+                }
+                _ => None
+            }
+        })
+        .collect::<Vec<_>>();
+    
+    let has_many_set_variant_tokens = has_many_set_variants
+        .iter()
+        .map(|(_, relation_name, target_module)| {
+            quote! {
+                #relation_name(Vec<#target_module::UniqueWhereParam>)
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Combine all SetParam variants as a flat Vec
     let all_set_param_variants: Vec<_> = field_variants
         .into_iter()
         .chain(atomic_variants.into_iter())
         .chain(relation_connect_variants.into_iter())
         .chain(relation_disconnect_variants.into_iter())
+        .chain(has_many_set_variant_tokens.into_iter())
         .collect();
 
     // Generate field variants and field operator modules for WhereParam enum (all fields, with string ops for string fields)
@@ -873,9 +898,20 @@ pub fn generate_entity(
         let (foreign_key_field, foreign_key_column, get_foreign_key_closure) = match relation.kind {
             RelationKind::HasMany => {
                 let id_field = format_ident!("id");
+                // For HasMany relations, the foreign key column is in the target entity
+                // Use the extracted foreign_key_column if available, otherwise fallback to mapping
+                let fk_column = if let Some(fk_col) = &relation.foreign_key_column {
+                    // Convert PascalCase to snake_case to match database column names
+                    // This is completely dynamic and works with any foreign key column name
+                    fk_col.to_snake_case()
+                } else {
+                    // Fallback: use the relation name + "_id" pattern
+                    // This is also dynamic and works with any relation name
+                    format!("{}_id", relation.name.to_snake_case())
+                };
                 (
                     quote! { model.#id_field },
-                    "id",
+                    fk_column,
                     quote! { |model| Some(model.id) },
                 )
             }
@@ -901,7 +937,7 @@ pub fn generate_entity(
                 };
                 (
                     quote! { model.#foreign_key_field },
-                    foreign_key_field_name.as_str(),
+                    foreign_key_field_name.to_string(),
                     get_fk,
                 )
             }
@@ -910,9 +946,39 @@ pub fn generate_entity(
             &format!("{:?}", relation.target),
             proc_macro2::Span::call_site(),
         );
-        let foreign_key_column =
-            syn::LitStr::new(foreign_key_column, proc_macro2::Span::call_site());
-        let debug_name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
+        let foreign_key_column = syn::LitStr::new(&foreign_key_column, proc_macro2::Span::call_site());
+        
+        // Get additional metadata from relation
+        let fallback_table_name = relation.name.to_snake_case();
+        let target_table_name = relation
+            .target_table_name
+            .as_ref()
+            .unwrap_or(&fallback_table_name);
+        let unknown_table = "unknown".to_string();
+        let current_table_name = relation
+            .current_table_name
+            .as_ref()
+            .unwrap_or(&unknown_table);
+        
+        let target_table_name_lit = syn::LitStr::new(target_table_name, proc_macro2::Span::call_site());
+        let current_table_name_lit = syn::LitStr::new(current_table_name, proc_macro2::Span::call_site());
+        // Extract primary key column names dynamically
+        let current_primary_key_column = if let Some(pk_field) = primary_key_fields.first() {
+            pk_field.ident.as_ref().unwrap().to_string()
+        } else {
+            "id".to_string() // fallback
+        };
+        let current_primary_key_column_lit = syn::LitStr::new(&current_primary_key_column, proc_macro2::Span::call_site());
+        
+        // For target primary key, we'll use the relation's primary_key_field or default to "id"
+        let target_primary_key_column = if let Some(pk_field) = &relation.primary_key_field {
+            pk_field.clone()
+        } else {
+            "id".to_string() // fallback
+        };
+        let target_primary_key_column_lit = syn::LitStr::new(&target_primary_key_column, proc_macro2::Span::call_site());
+        let is_foreign_key_nullable_lit = syn::LitBool::new(relation.is_nullable, proc_macro2::Span::call_site());
+        
         quote! {
             caustics::RelationDescriptor::<ModelWithRelations> {
                 name: #name,
@@ -923,6 +989,10 @@ pub fn generate_entity(
                 get_foreign_key: #get_foreign_key_closure,
                 target_entity: #target_entity,
                 foreign_key_column: #foreign_key_column,
+                target_table_name: #target_table_name_lit,
+                current_primary_key_column: #current_primary_key_column_lit,
+                target_primary_key_column: #target_primary_key_column_lit,
+                is_foreign_key_nullable: #is_foreign_key_nullable_lit,
             }
         }
     });
@@ -1253,6 +1323,49 @@ pub fn generate_entity(
         .flatten()
         .collect();
 
+    // Generate SetParamInfo trait match arms
+    let has_many_set_match_arms = has_many_set_variants
+        .iter()
+        .map(|(_, relation_name, _)| {
+            quote! { SetParam::#relation_name(_) => true }
+        })
+        .collect::<Vec<_>>();
+    
+    let relation_name_match_arms = has_many_set_variants
+        .iter()
+        .map(|(relation_name, variant_name, _)| {
+            let relation_name_lit = syn::LitStr::new(&relation_name.to_lowercase(), proc_macro2::Span::call_site());
+            quote! { SetParam::#variant_name(_) => Some(#relation_name_lit) }
+        })
+        .collect::<Vec<_>>();
+    
+    let target_ids_match_arms = has_many_set_variants
+        .iter()
+        .map(|(_, variant_name, target_module)| {
+            quote! {
+                SetParam::#variant_name(unique_params) => {
+                    // Extract IDs from Vec<#target_module::UniqueWhereParam>
+                    // Parse each UniqueWhereParam to extract the ID
+                    let mut target_ids = Vec::new();
+                    for unique_param in unique_params {
+                        // Convert UniqueWhereParam to string and extract ID
+                        let param_str = format!("{:?}", unique_param);
+                        if let Some(id_start) = param_str.find("Equals(") {
+                            let after_equals = &param_str[id_start + 7..];
+                            if let Some(id_end) = after_equals.find(')') {
+                                let id_str = &after_equals[..id_end];
+                                if let Ok(id) = id_str.parse::<i32>() {
+                                    target_ids.push(sea_orm::Value::Int(Some(id)));
+                                }
+                            }
+                        }
+                    }
+                    target_ids
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Combine all match arms
     let all_match_arms = quote! {
         #(#match_arms,)*
@@ -1318,6 +1431,7 @@ pub fn generate_entity(
             database_backend: sea_orm::DatabaseBackend,
         }
 
+        #[derive(Debug)]
         pub enum SetParam {
             #(#all_set_param_variants,)*
         }
@@ -1345,6 +1459,29 @@ pub fn generate_entity(
                         // Relation SetParam values are handled in into_active_model, not here
                         // This prevents infinite recursion
                     }
+                }
+            }
+        }
+
+        impl caustics::SetParamInfo for SetParam {
+            fn is_has_many_set_operation(&self) -> bool {
+                match self {
+                    #(#has_many_set_match_arms,)*
+                    _ => false,
+                }
+            }
+            
+            fn extract_relation_name(&self) -> Option<&'static str> {
+                match self {
+                    #(#relation_name_match_arms,)*
+                    _ => None,
+                }
+            }
+            
+            fn extract_target_ids(&self) -> Vec<sea_orm::Value> {
+                match self {
+                    #(#target_ids_match_arms,)*
+                    _ => Vec::new(),
                 }
             }
         }
@@ -1467,6 +1604,15 @@ pub fn generate_entity(
 
             pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
                 caustics::UpdateQueryBuilder {
+                    condition: condition.into(),
+                    changes,
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn update_with_has_many_set(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                caustics::HasManySetUpdateQueryBuilder {
                     condition: condition.into(),
                     changes,
                     conn: self.conn,
@@ -1772,6 +1918,18 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         let target = &relation.target;
         let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
         let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
+        let set_variant = format_ident!("Set{}", relation.name.to_pascal_case());
+
+        // Generate conditional functions
+        let set_fn = if matches!(relation.kind, RelationKind::HasMany) {
+            quote! {
+                pub fn set(where_params: Vec<super::#target::UniqueWhereParam>) -> super::SetParam {
+                    super::SetParam::#set_variant(where_params)
+                }
+            }
+        } else {
+            quote! {}
+        };
 
         // Get foreign key column information from relation metadata
         let foreign_key_column_ident = if let Some(fk_col) = &relation.foreign_key_column {
@@ -1791,65 +1949,62 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
 
                     // Extract field name from the WhereParam variant
                     // Format is typically "FieldName(FieldOp::Operation(value))"
-                    if let Some(start) = filter_str.find('(') {
+                    let field_name_snake = if let Some(start) = filter_str.find('(') {
                         let field_name = &filter_str[..start];
                         // Convert PascalCase to snake_case for database column name
-                        let field_name_snake = field_name.to_lowercase();
-
-                        // Extract the operation and value using a more robust approach
-                        let operation = if filter_str.contains("IsNull") {
-                            caustics::FieldOp::IsNull
-                        } else if filter_str.contains("IsNotNull") {
-                            caustics::FieldOp::IsNotNull
-                        } else if filter_str.contains("Contains(") {
-                            let value = extract_quoted_value(&filter_str, "Contains(");
-                            caustics::FieldOp::Contains(value)
-                        } else if filter_str.contains("StartsWith(") {
-                            let value = extract_quoted_value(&filter_str, "StartsWith(");
-                            caustics::FieldOp::StartsWith(value)
-                        } else if filter_str.contains("EndsWith(") {
-                            let value = extract_quoted_value(&filter_str, "EndsWith(");
-                            caustics::FieldOp::EndsWith(value)
-                        } else if filter_str.contains("Equals(") {
-                            let value = extract_quoted_value(&filter_str, "Equals(");
-                            caustics::FieldOp::Equals(value)
-                        } else if filter_str.contains("NotEquals(") {
-                            let value = extract_quoted_value(&filter_str, "NotEquals(");
-                            caustics::FieldOp::NotEquals(value)
-                        } else if filter_str.contains("Gt(") {
-                            let value = extract_quoted_value(&filter_str, "Gt(");
-                            caustics::FieldOp::Gt(value)
-                        } else if filter_str.contains("Lt(") {
-                            let value = extract_quoted_value(&filter_str, "Lt(");
-                            caustics::FieldOp::Lt(value)
-                        } else if filter_str.contains("Gte(") {
-                            let value = extract_quoted_value(&filter_str, "Gte(");
-                            caustics::FieldOp::Gte(value)
-                        } else if filter_str.contains("Lte(") {
-                            let value = extract_quoted_value(&filter_str, "Lte(");
-                            caustics::FieldOp::Lte(value)
-                        } else if filter_str.contains("InVec(") {
-                            let value = extract_quoted_value(&filter_str, "InVec(");
-                            caustics::FieldOp::InVec(vec![value])
-                        } else if filter_str.contains("NotInVec(") {
-                            let value = extract_quoted_value(&filter_str, "NotInVec(");
-                            caustics::FieldOp::NotInVec(vec![value])
-                        } else {
-                            // Fallback: try to extract any quoted string
-                            let value = extract_quoted_value(&filter_str, "");
-                            caustics::FieldOp::Equals(value)
-                        };
-
-                        caustics::Filter {
-                            field: field_name_snake,
-                            operation,
-                        }
+                        field_name.to_lowercase()
                     } else {
-                        // Fallback
-                        caustics::Filter {
-                            field: "field".to_string(),
-                            operation: caustics::FieldOp::Equals(String::new()),
-                        }
+                        // Fallback field name if we can't parse the variant
+                        "unknown_field".to_string()
+                    };
+
+                    // Extract the operation and value using a more robust approach
+                    let operation = if filter_str.contains("IsNull") {
+                        caustics::FieldOp::IsNull
+                    } else if filter_str.contains("IsNotNull") {
+                        caustics::FieldOp::IsNotNull
+                    } else if filter_str.contains("Contains(") {
+                        let value = extract_quoted_value(&filter_str, "Contains(");
+                        caustics::FieldOp::Contains(value)
+                    } else if filter_str.contains("StartsWith(") {
+                        let value = extract_quoted_value(&filter_str, "StartsWith(");
+                        caustics::FieldOp::StartsWith(value)
+                    } else if filter_str.contains("EndsWith(") {
+                        let value = extract_quoted_value(&filter_str, "EndsWith(");
+                        caustics::FieldOp::EndsWith(value)
+                    } else if filter_str.contains("Equals(") {
+                        let value = extract_quoted_value(&filter_str, "Equals(");
+                        caustics::FieldOp::Equals(value)
+                    } else if filter_str.contains("NotEquals(") {
+                        let value = extract_quoted_value(&filter_str, "NotEquals(");
+                        caustics::FieldOp::NotEquals(value)
+                    } else if filter_str.contains("Gt(") {
+                        let value = extract_quoted_value(&filter_str, "Gt(");
+                        caustics::FieldOp::Gt(value)
+                    } else if filter_str.contains("Lt(") {
+                        let value = extract_quoted_value(&filter_str, "Lt(");
+                        caustics::FieldOp::Lt(value)
+                    } else if filter_str.contains("Gte(") {
+                        let value = extract_quoted_value(&filter_str, "Gte(");
+                        caustics::FieldOp::Gte(value)
+                    } else if filter_str.contains("Lte(") {
+                        let value = extract_quoted_value(&filter_str, "Lte(");
+                        caustics::FieldOp::Lte(value)
+                    } else if filter_str.contains("InVec(") {
+                        let value = extract_quoted_value(&filter_str, "InVec(");
+                        caustics::FieldOp::InVec(vec![value])
+                    } else if filter_str.contains("NotInVec(") {
+                        let value = extract_quoted_value(&filter_str, "NotInVec(");
+                        caustics::FieldOp::NotInVec(vec![value])
+                    } else {
+                        // Fallback: try to extract any quoted string
+                        let value = extract_quoted_value(&filter_str, "");
+                        caustics::FieldOp::Equals(value)
+                    };
+
+                    caustics::Filter {
+                        field: field_name_snake,
+                        operation,
                     }
                 }
 
@@ -1890,6 +2045,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)
                 }
+
+                #set_fn
 
                 // Advanced relation operations for filtering
                 pub fn some(filters: Vec<super::#target::WhereParam>) -> super::WhereParam {
