@@ -11,29 +11,36 @@ pub struct SeaOrmRelationFetcher<R: EntityRegistry<C>, C: ConnectionTrait> {
 impl<C: ConnectionTrait, ModelWithRelations, R: EntityRegistry<C>>
     RelationFetcher<C, ModelWithRelations> for SeaOrmRelationFetcher<R, C>
 where
-    ModelWithRelations: HasRelationMetadata<ModelWithRelations> + 'static,
+    ModelWithRelations: HasRelationMetadata<ModelWithRelations> + Send + 'static,
     R: Send + Sync,
     C: Send + Sync,
 {
-    fn fetch_relation_for_model(
-        &self,
-        conn: &C,
-        model_with_relations: &mut ModelWithRelations,
-        relation_name: &str,
-        _filters: &[crate::types::Filter],
-    ) -> Result<(), sea_orm::DbErr> {
-        let descriptor = ModelWithRelations::get_relation_descriptor(relation_name).ok_or_else(|| {
-            sea_orm::DbErr::Custom(format!("Relation '{}' not found", relation_name))
-        })?;
+    fn fetch_relation_for_model<'a>(
+        &'a self,
+        conn: &'a C,
+        model_with_relations: &'a mut ModelWithRelations,
+        relation_name: &'a str,
+        _filters: &'a [crate::types::Filter],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+        let descriptor = match ModelWithRelations::get_relation_descriptor(relation_name) {
+            Some(d) => d,
+            None => {
+                let fut = async move {
+                    Err(sea_orm::DbErr::Custom(format!(
+                        "Relation '{}' not found",
+                        relation_name
+                    )))
+                };
+                return Box::pin(fut);
+            }
+        };
 
         let type_name = std::any::type_name::<ModelWithRelations>();
         let fetcher_entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
 
-        if let Some(fetcher) = self.entity_registry.get_fetcher(&fetcher_entity_name) {
-            // Synchronously block via current runtime if present (tests drive async)
-            let rt = tokio::runtime::Handle::current();
-            let result = rt.block_on(async {
-                fetcher
+        let fut = async move {
+            if let Some(fetcher) = self.entity_registry.get_fetcher(&fetcher_entity_name) {
+                let result = fetcher
                     .fetch_by_foreign_key(
                         conn,
                         (descriptor.get_foreign_key)(model_with_relations),
@@ -41,16 +48,17 @@ where
                         &fetcher_entity_name,
                         relation_name,
                     )
-                    .await
-            })?;
-            (descriptor.set_field)(model_with_relations, result);
-            Ok(())
-        } else {
-            Err(sea_orm::DbErr::Custom(format!(
-                "No fetcher found for entity: {}",
-                fetcher_entity_name
-            )))
-        }
+                    .await?;
+                (descriptor.set_field)(model_with_relations, result);
+                Ok(())
+            } else {
+                Err(sea_orm::DbErr::Custom(format!(
+                    "No fetcher found for entity: {}",
+                    fetcher_entity_name
+                )))
+            }
+        };
+        Box::pin(fut)
     }
 }
 

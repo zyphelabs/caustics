@@ -400,19 +400,36 @@ pub fn generate_entity(
                     other => {
                         // For complex foreign key resolution, we need to add to deferred lookups
                         // This handles cases like user::email::equals(author.email)
-                        deferred_lookups.push(caustics::DeferredLookup::<C>::new(
+                        deferred_lookups.push(caustics::DeferredLookup::new(
                             Box::new(other.clone()),
                             |model, value| {
                                 let model = model.downcast_mut::<ActiveModel>().unwrap();
                                 model.#fk_field_ident = sea_orm::ActiveValue::Set(value);
                             },
-                            |conn: &C, param| {
+                            |conn: & sea_orm::DatabaseConnection, param| {
                                 let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
                                 Box::pin(async move {
                                     let condition: sea_query::Condition = param.clone().into();
                                     let result = #target_module::Entity::find()
                                         .filter::<sea_query::Condition>(condition)
                                         .one(conn)
+                                        .await?;
+                                    result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                        sea_orm::DbErr::Custom(format!(
+                                            "No {} found for condition: {:?}",
+                                            stringify!(#target_module),
+                                            param
+                                        ))
+                                    })
+                                })
+                            },
+                            |txn: & sea_orm::DatabaseTransaction, param| {
+                                let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                Box::pin(async move {
+                                    let condition: sea_query::Condition = param.clone().into();
+                                    let result = #target_module::Entity::find()
+                                        .filter::<sea_query::Condition>(condition)
+                                        .one(txn)
                                         .await?;
                                     result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
                                         sea_orm::DbErr::Custom(format!(
@@ -1066,13 +1083,13 @@ pub fn generate_entity(
                             }
                             other => {
                                 // Store deferred lookup instead of executing
-                                                        deferred_lookups.push(caustics::DeferredLookup::<C>::new(
+                                                        deferred_lookups.push(caustics::DeferredLookup::new(
                             Box::new(other.clone()),
                             |model, value| {
                                 let model = model.downcast_mut::<ActiveModel>().unwrap();
                                 model.#foreign_key_field = sea_orm::ActiveValue::Set(value);
                             },
-                                    |conn: &C, param| {
+                                     |conn: & sea_orm::DatabaseConnection, param| {
                                         let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
                                         Box::pin(async move {
                                             let condition: sea_query::Condition = param.clone().into();
@@ -1089,6 +1106,23 @@ pub fn generate_entity(
                                             })
                                         })
                                     },
+                                     |txn: & sea_orm::DatabaseTransaction, param| {
+                                         let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                         Box::pin(async move {
+                                             let condition: sea_query::Condition = param.clone().into();
+                                             let result = #target_module::Entity::find()
+                                                 .filter::<sea_query::Condition>(condition)
+                                                 .one(txn)
+                                                 .await?;
+                                             result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                                 sea_orm::DbErr::Custom(format!(
+                                                     "No {} found for condition: {:?}",
+                                                     stringify!(#target_module),
+                                                     param
+                                                 ))
+                                             })
+                                         })
+                                     },
                                 ));
                             }
                         }
@@ -1511,7 +1545,7 @@ pub fn generate_entity(
         }
 
         impl Create {
-            fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup<C>>) {
+            fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup>) {
                 let mut model = ActiveModel::new();
                 let mut deferred_lookups = Vec::new();
 

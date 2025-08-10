@@ -146,27 +146,27 @@ impl RelationCondition {
 
 /// Trait for dynamic relation fetching
 pub trait RelationFetcher<C: sea_orm::ConnectionTrait, ModelWithRelations> {
-    fn fetch_relation_for_model(
-        &self,
-        conn: &C,
-        model_with_relations: &mut ModelWithRelations,
-        relation_name: &str,
-        filters: &[Filter],
-    ) -> Result<(), sea_orm::DbErr>;
+    fn fetch_relation_for_model<'a>(
+        &'a self,
+        conn: &'a C,
+        model_with_relations: &'a mut ModelWithRelations,
+        relation_name: &'a str,
+        filters: &'a [Filter],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>;
 }
 
 // Provide a default no-op implementation for all types
 impl<C: sea_orm::ConnectionTrait, ModelWithRelations> RelationFetcher<C, ModelWithRelations>
     for ()
 {
-    fn fetch_relation_for_model(
-        &self,
-        _conn: &C,
-        _model_with_relations: &mut ModelWithRelations,
-        _relation_name: &str,
-        _filters: &[Filter],
-    ) -> Result<(), sea_orm::DbErr> {
-        Ok(())
+    fn fetch_relation_for_model<'a>(
+        &'a self,
+        _conn: &'a C,
+        _model_with_relations: &'a mut ModelWithRelations,
+        _relation_name: &'a str,
+        _filters: &'a [Filter],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
