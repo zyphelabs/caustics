@@ -1639,46 +1639,23 @@ pub fn generate_entity(
                 }
             }
 
-        pub async fn _batch(
+        pub async fn _batch<Container>(
             &self,
-            queries: Vec<caustics::BatchQuery<'a, sea_orm::DatabaseTransaction, Entity, ActiveModel, ModelWithRelations, SetParam>>,
-        ) -> Result<Vec<caustics::BatchResult<ModelWithRelations>>, sea_orm::DbErr>
+            queries: Container,
+        ) -> Result<Container::ReturnType, sea_orm::DbErr>
         where
             Entity: sea_orm::EntityTrait,
             ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
             ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model>,
             SetParam: caustics::MergeInto<ActiveModel>,
             <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+            Container: caustics::BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam>,
         {
-            let txn = self.conn.begin().await?;
-            let mut results = Vec::with_capacity(queries.len());
-
-            for query in queries {
-                let res = match query {
-                    caustics::BatchQuery::Insert(q) => {
-                        // Extract model and execute directly
-                        let model = q.model;
-                        let result = model.insert(&txn).await.map(ModelWithRelations::from_model)?;
-                        caustics::BatchResult::Insert(result)
-                    }
-                    caustics::BatchQuery::Update(q) => {
-                        // For now, skip updates in batch mode
-                        caustics::BatchResult::Update(ModelWithRelations::default())
-                    }
-                    caustics::BatchQuery::Delete(q) => {
-                        // For now, skip deletes in batch mode
-                        caustics::BatchResult::Delete(())
-                    }
-                    caustics::BatchQuery::Upsert(q) => {
-                        // For now, skip upserts in batch mode
-                        caustics::BatchResult::Upsert(ModelWithRelations::default())
-                    }
-                };
-                results.push(res);
-            }
-
-            txn.commit().await?;
-            Ok(results)
+            caustics::batch::<C, Entity, ActiveModel, ModelWithRelations, SetParam, Container>(
+                queries,
+                self.conn,
+            )
+            .await
         }
 
 

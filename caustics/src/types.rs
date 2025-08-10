@@ -1,3 +1,5 @@
+#![allow(non_camel_case_types)]
+
 use std::any::Any;
 
 pub type QueryError = sea_orm::DbErr;
@@ -304,23 +306,17 @@ where
                 let result = model.insert(&txn).await.map(FromModel::from_model)?;
                 BatchResult::Insert(result)
             }
-            BatchQuery::Update(_) => {
-                // For now, skip updates in batch mode
-                return Err(sea_orm::DbErr::Custom(
-                    "Update operations not supported in batch mode".to_string(),
-                ));
+            BatchQuery::Update(q) => {
+                let result = q.exec_in_txn(&txn).await?;
+                BatchResult::Update(result)
             }
-            BatchQuery::Delete(_) => {
-                // For now, skip deletes in batch mode
-                return Err(sea_orm::DbErr::Custom(
-                    "Delete operations not supported in batch mode".to_string(),
-                ));
+            BatchQuery::Delete(q) => {
+                q.exec_in_txn(&txn).await?;
+                BatchResult::Delete(())
             }
-            BatchQuery::Upsert(_) => {
-                // For now, skip upserts in batch mode
-                return Err(sea_orm::DbErr::Custom(
-                    "Upsert operations not supported in batch mode".to_string(),
-                ));
+            BatchQuery::Upsert(q) => {
+                let result = q.exec_in_txn(&txn).await?;
+                BatchResult::Upsert(result)
             }
         };
         results.push(res);
@@ -353,221 +349,140 @@ where
     }
 }
 
-// Implementation for tuples of CreateQueryBuilder (up to 4 elements for DatabaseConnection)
-impl<'a, Entity, ActiveModel, ModelWithRelations>
-    BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
-    for (
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-    )
+// Generic element trait to unify tuple impls up to arity 16
+pub trait BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
 where
+    C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel:
-        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
-    (): MergeInto<ActiveModel>,
+    T: MergeInto<ActiveModel>,
 {
-    type ReturnType = (ModelWithRelations,);
-    fn into_queries(
-        self,
-    ) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>>
-    {
-        vec![BatchQuery::Insert(self.0)]
+    type Output;
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T>;
+    fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output;
+}
+
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    for crate::query_builders::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+where
+    C: sea_orm::ConnectionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    T: MergeInto<ActiveModel>,
+    <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+{
+    type Output = ModelWithRelations;
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {
+        BatchQuery::Update(self)
     }
-    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
-        let result1 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        (result1,)
+    fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
+        match result {
+            BatchResult::Update(m) => m,
+            _ => panic!("Expected Update"),
+        }
     }
 }
 
-impl<'a, Entity, ActiveModel, ModelWithRelations>
-    BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
-    for (
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-    )
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    for crate::query_builders::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
 where
+    C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel:
-        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
-    (): MergeInto<ActiveModel>,
+    T: MergeInto<ActiveModel>,
+    <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
 {
-    type ReturnType = (ModelWithRelations, ModelWithRelations);
-    fn into_queries(
-        self,
-    ) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>>
-    {
-        vec![BatchQuery::Insert(self.0), BatchQuery::Insert(self.1)]
+    type Output = ModelWithRelations;
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {
+        BatchQuery::Upsert(self)
     }
-    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
-        let result1 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        let result2 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        (result1, result2)
+    fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
+        match result {
+            BatchResult::Upsert(m) => m,
+            _ => panic!("Expected Upsert"),
+        }
     }
 }
 
-impl<'a, Entity, ActiveModel, ModelWithRelations>
-    BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
-    for (
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-    )
+impl<'a, C, Entity, ActiveModel, ModelWithRelations>
+    BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, ()>
+    for crate::query_builders::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations>
 where
+    C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel:
-        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
-    (): MergeInto<ActiveModel>,
 {
-    type ReturnType = (ModelWithRelations, ModelWithRelations, ModelWithRelations);
-    fn into_queries(
-        self,
-    ) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>>
-    {
-        vec![
-            BatchQuery::Insert(self.0),
-            BatchQuery::Insert(self.1),
-            BatchQuery::Insert(self.2),
-        ]
+    type Output = ModelWithRelations;
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, ()> {
+        BatchQuery::Insert(self)
     }
-    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
-        let result1 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        let result2 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        let result3 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        (result1, result2, result3)
+    fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
+        match result {
+            BatchResult::Insert(m) => m,
+            _ => panic!("Expected Insert"),
+        }
     }
 }
 
-impl<'a, Entity, ActiveModel, ModelWithRelations>
-    BatchContainer<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>
-    for (
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-        crate::query_builders::CreateQueryBuilder<
-            'a,
-            sea_orm::DatabaseConnection,
-            Entity,
-            ActiveModel,
-            ModelWithRelations,
-        >,
-    )
+impl<'a, C, Entity, ActiveModel, ModelWithRelations>
+    BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, ()>
+    for crate::query_builders::DeleteQueryBuilder<'a, C, Entity>
 where
+    C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel:
-        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
-    (): MergeInto<ActiveModel>,
 {
-    type ReturnType = (
-        ModelWithRelations,
-        ModelWithRelations,
-        ModelWithRelations,
-        ModelWithRelations,
-    );
-    fn into_queries(
-        self,
-    ) -> Vec<BatchQuery<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, ()>>
-    {
-        vec![
-            BatchQuery::Insert(self.0),
-            BatchQuery::Insert(self.1),
-            BatchQuery::Insert(self.2),
-            BatchQuery::Insert(self.3),
-        ]
+    type Output = ();
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, ()> {
+        BatchQuery::Delete(self)
     }
-    fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
-        let result1 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        let result2 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        let result3 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        let result4 = match results.remove(0) {
-            BatchResult::Insert(model) => model,
-            _ => panic!("Expected Insert result"),
-        };
-        (result1, result2, result3, result4)
+    fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
+        match result {
+            BatchResult::Delete(()) => (),
+            _ => panic!("Expected Delete"),
+        }
     }
+}
+
+macro_rules! impl_tuple_batch_container {
+    ( $( $name:ident ),+ ) => {
+        impl<'a, Conn, Entity, ActiveModel, ModelWithRelations, T, $( $name ),+>
+            BatchContainer<'a, Conn, Entity, ActiveModel, ModelWithRelations, T> for ( $( $name ),+ , )
+        where
+            Conn: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
+            Entity: sea_orm::EntityTrait,
+            ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity>
+                + sea_orm::ActiveModelBehavior
+                + Send
+                + 'static,
+            ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+            T: MergeInto<ActiveModel>,
+            $( $name: BatchElement<'a, Conn, Entity, ActiveModel, ModelWithRelations, T> ),+
+        {
+            type ReturnType = ( $( <$name as BatchElement<'a, Conn, Entity, ActiveModel, ModelWithRelations, T>>::Output ),+ , );
+            fn into_queries(self) -> Vec<BatchQuery<'a, Conn, Entity, ActiveModel, ModelWithRelations, T>> {
+                let ( $( $name ),+ , ) = self;
+                vec![ $( $name.into_query() ),+ ]
+            }
+            fn from_results(mut results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+                (
+                    $(
+                        {
+                            let tmp = results.remove(0);
+                            <$name as BatchElement<'a, Conn, Entity, ActiveModel, ModelWithRelations, T>>::extract_output(tmp)
+                        }
+                    ),+ ,
+                )
+            }
+        }
+    };
 }
 
 /// Trait for SetParam types to enable proper pattern matching without string parsing
@@ -587,3 +502,64 @@ pub trait ConditionInfo {
     /// Extract the entity ID from a condition
     fn extract_entity_id(&self) -> Option<sea_orm::Value>;
 }
+
+impl ConditionInfo for sea_orm::Condition {
+    fn extract_entity_id(&self) -> Option<sea_orm::Value> {
+        // Best-effort parsing of debug string until a typed API is available
+        let condition_str = format!("{:?}", self);
+
+        fn try_extract_id_pattern(condition_str: &str, pattern: &str, pattern_len: usize) -> Option<i32> {
+            condition_str.find(pattern).and_then(|id_start| {
+                let after_pattern = &condition_str[id_start + pattern_len..];
+                let id_end = after_pattern.find(')').or_else(|| after_pattern.find(' '))?;
+                let id_str = &after_pattern[..id_end];
+                id_str.parse::<i32>().ok()
+            })
+        }
+
+        let extracted_id = try_extract_id_pattern(&condition_str, "Id = ", 5)
+            .or_else(|| try_extract_id_pattern(&condition_str, "Value(Int(Some(", 15))
+            .or_else(|| try_extract_id_pattern(&condition_str, "IdEquals(", 9))
+            .or_else(|| try_extract_id_pattern(&condition_str, "Equal, Value(Int(Some(", 22))
+            .or_else(|| try_extract_id_pattern(&condition_str, "Value(Int(Some(", 15))
+            .or_else(|| try_extract_id_pattern(&condition_str, " = ", 3));
+
+        extracted_id.map(|id| sea_orm::Value::Int(Some(id)))
+    }
+}
+
+// (Old per-operation tuple macros were removed; unified macro below is used instead.)
+
+// Generate tuple impls up to arity 16
+
+impl_tuple_batch_container!(a);
+
+impl_tuple_batch_container!(a, b);
+
+impl_tuple_batch_container!(a, b, c);
+
+impl_tuple_batch_container!(a, b, c, d);
+
+impl_tuple_batch_container!(a, b, c, d, e);
+
+impl_tuple_batch_container!(a, b, c, d, e, f);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l, m);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
+
+impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p);

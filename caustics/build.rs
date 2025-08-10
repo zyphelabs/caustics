@@ -25,8 +25,14 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
     for entry in WalkDir::new(dir) {
         let entry = entry.unwrap();
         if entry.path().extension().map_or(false, |ext| ext == "rs") {
-            let content = fs::read_to_string(entry.path()).unwrap();
-            let file = parse_file(&content).unwrap();
+            let content = match fs::read_to_string(entry.path()) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let file = match parse_file(&content) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
 
             for item in file.items {
                 if let Item::Mod(module) = &item {
@@ -86,8 +92,14 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
         for entry in WalkDir::new(dir) {
             let entry = entry.unwrap();
             if entry.path().extension().map_or(false, |ext| ext == "rs") {
-                let content = fs::read_to_string(entry.path()).unwrap();
-                let file = parse_file(&content).unwrap();
+                let content = match fs::read_to_string(entry.path()) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let file = match parse_file(&content) {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
 
                 for item in file.items {
                     if let Item::Mod(module) = &item {
@@ -151,8 +163,14 @@ fn generate_per_namespace_files(dirs: &[&str]) {
         for entry in WalkDir::new(dir) {
             let entry = entry.unwrap();
             if entry.path().extension().map_or(false, |ext| ext == "rs") {
-                let content = fs::read_to_string(entry.path()).unwrap();
-                let file = parse_file(&content).unwrap();
+                let content = match fs::read_to_string(entry.path()) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let file = match parse_file(&content) {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
 
                 for item in file.items {
                     if let Item::Mod(module) = &item {

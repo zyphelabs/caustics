@@ -608,7 +608,7 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
-    async fn test_batch_operations() {
+    async fn test_batch_insert_operations() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
@@ -639,6 +639,204 @@ mod query_builder_tests {
 
         let found_users = client.user().find_many(vec![]).exec().await.unwrap();
         assert_eq!(found_users.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_operations() {
+        // no explicit caustics types here
+        use chrono::DateTime;
+        use std::str::FromStr;
+
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Seed users
+        let u1 = client
+            .user()
+            .create(
+                "u1@example.com".to_string(),
+                "U1".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(20))],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let u2 = client
+            .user()
+            .create(
+                "u2@example.com".to_string(),
+                "U2".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(30))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Batch update both (tuple style, fluent)
+        let (_u1_after, _u2_after) = client
+            ._batch((
+                client
+                    .user()
+                    .update(user::id::equals(u1.id), vec![user::age::increment(5)]),
+                client
+                    .user()
+                    .update(user::id::equals(u2.id), vec![user::name::set("U2-upd"), user::age::decrement(10)]),
+            ))
+            .await
+            .unwrap();
+
+        // Verify
+        let u1_after = client
+            .user()
+            .find_unique(user::id::equals(u1.id))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(u1_after.age, Some(25));
+
+        let u2_after = client
+            .user()
+            .find_unique(user::id::equals(u2.id))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(u2_after.name, "U2-upd");
+        assert_eq!(u2_after.age, Some(20));
+    }
+
+    #[tokio::test]
+    async fn test_batch_delete_operations() {
+        use chrono::DateTime;
+        use std::str::FromStr;
+
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Seed users
+        let u1 = client
+            .user()
+            .create(
+                "del1@example.com".to_string(),
+                "Del1".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let u2 = client
+            .user()
+            .create(
+                "del2@example.com".to_string(),
+                "Del2".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Batch delete both (tuple style, fluent; no local query var)
+        let ((), ()) = client
+            ._batch::<
+                user::Entity,
+                user::ActiveModel,
+                user::ModelWithRelations,
+                (),
+                (
+                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity>,
+                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity>,
+                ),
+            >((
+                client.user().delete(user::id::equals(u1.id)),
+                client.user().delete(user::id::equals(u2.id)),
+            ))
+            .await
+            .unwrap();
+
+        // Verify deletion
+        let left = client
+            .user()
+            .find_many(vec![])
+            .exec()
+            .await
+            .unwrap();
+        assert!(left.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_batch_upsert_operations() {
+        // no explicit caustics types here
+        use chrono::DateTime;
+        use std::str::FromStr;
+
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // First upserts will insert (tuple style, fluent)
+        let (_ins1, _ins2) = client
+            ._batch((
+                client.user().upsert(
+                    user::email::equals("bus1@example.com"),
+                    user::Create {
+                        name: "Bus1".to_string(),
+                        email: "bus1@example.com".to_string(),
+                        created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        _params: vec![],
+                    },
+                    vec![user::age::set(10)],
+                ),
+                client.user().upsert(
+                    user::email::equals("bus2@example.com"),
+                    user::Create {
+                        name: "Bus2".to_string(),
+                        email: "bus2@example.com".to_string(),
+                        created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        _params: vec![],
+                    },
+                    vec![user::age::set(20)],
+                ),
+            ))
+            .await
+            .unwrap();
+
+        // Second upserts will update (tuple arity 1 supported)
+        let (_upd1,) = client
+            ._batch((client.user().upsert(
+                user::email::equals("bus1@example.com"),
+                user::Create {
+                    name: "Bus1".to_string(),
+                    email: "bus1@example.com".to_string(),
+                    created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    _params: vec![],
+                },
+                vec![user::name::set("Bus1-upd"), user::age::increment(5)],
+            ),))
+            .await
+            .unwrap();
+
+        // Verify
+        let u1 = client
+            .user()
+            .find_unique(user::email::equals("bus1@example.com"))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(u1.name, "Bus1-upd");
+        assert_eq!(u1.age, Some(15));
     }
 
     #[tokio::test]
