@@ -1851,7 +1851,7 @@ pub fn generate_entity(
                 }
             }
 
-            pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity> {
+            pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity, ModelWithRelations> {
                 caustics::DeleteQueryBuilder {
                     condition: condition.into(),
                     conn: self.conn,
@@ -2142,6 +2142,32 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
             quote! {}
         };
 
+        // Generate disconnect only for optional belongs_to (nullable FK on current entity)
+        let disconnect_fn = if matches!(relation.kind, RelationKind::BelongsTo)
+            && relation.foreign_key_field.is_some()
+        {
+            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+            let is_optional = if let Some(field) = fields
+                .iter()
+                .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+            {
+                is_option(&field.ty)
+            } else {
+                false
+            };
+            if is_optional {
+                quote! {
+                    pub fn disconnect() -> super::SetParam {
+                        super::SetParam::#disconnect_variant
+                    }
+                }
+            } else {
+                quote! {}
+            }
+        } else {
+            quote! {}
+        };
+
         // Get foreign key column information from relation metadata
         let foreign_key_column_ident = if let Some(fk_col) = &relation.foreign_key_column {
             format_ident!("{}", fk_col)
@@ -2175,6 +2201,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                 }
 
                 #set_fn
+                #disconnect_fn
 
                 // Advanced relation operations for filtering
                 pub fn some(filters: Vec<super::#target::WhereParam>) -> super::WhereParam {

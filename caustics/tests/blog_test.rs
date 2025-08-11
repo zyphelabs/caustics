@@ -823,15 +823,15 @@ mod query_builder_tests {
             .unwrap();
 
         // Batch delete both (tuple style, fluent; no local query var)
-        let ((), ()) = client
+        let (_d1, _d2) = client
             ._batch::<
                 user::Entity,
                 user::ActiveModel,
                 user::ModelWithRelations,
                 (),
                 (
-                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity>,
-                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity>,
+                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity, user::ModelWithRelations>,
+                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity, user::ModelWithRelations>,
                 ),
             >((
                 client.user().delete(user::id::equals(u1.id)),

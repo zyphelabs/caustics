@@ -14,7 +14,7 @@ pub enum BatchQuery<
 > {
     Insert(CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations>),
     Update(UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>),
-    Delete(DeleteQueryBuilder<'a, C, Entity>),
+    Delete(DeleteQueryBuilder<'a, C, Entity, ModelWithRelations>),
     Upsert(UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>),
 }
 
@@ -22,7 +22,7 @@ pub enum BatchQuery<
 pub enum BatchResult<ModelWithRelations> {
     Insert(ModelWithRelations),
     Update(ModelWithRelations),
-    Delete(()),
+    Delete(ModelWithRelations),
     Upsert(ModelWithRelations),
 }
 

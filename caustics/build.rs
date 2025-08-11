@@ -472,8 +472,8 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
                             #batch_result::Update(result)
                         }
                         #batch_query::Delete(q) => {
-                            q.exec_in_txn(&txn).await?;
-                            #batch_result::Delete(())
+                            let result = q.exec_in_txn(&txn).await?;
+                            #batch_result::Delete(result)
                         }
                         #batch_query::Upsert(q) => {
                             // For Upsert, use exec_in_txn to use the transaction

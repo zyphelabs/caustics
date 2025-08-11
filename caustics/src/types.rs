@@ -3,6 +3,8 @@
 use std::any::Any;
 
 pub type QueryError = sea_orm::DbErr;
+// Crate-wide result alias for ergonomics (non-conflicting)
+pub type CausticsResult<T> = std::result::Result<T, sea_orm::DbErr>;
 
 // Import query builder types for batch operations
 use crate::query_builders::{BatchQuery, BatchResult};
@@ -311,8 +313,8 @@ where
                 BatchResult::Update(result)
             }
             BatchQuery::Delete(q) => {
-                q.exec_in_txn(&txn).await?;
-                BatchResult::Delete(())
+                let result = q.exec_in_txn(&txn).await?;
+                BatchResult::Delete(result)
             }
             BatchQuery::Upsert(q) => {
                 let result = q.exec_in_txn(&txn).await?;
@@ -432,20 +434,20 @@ where
 
 impl<'a, C, Entity, ActiveModel, ModelWithRelations>
     BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, ()>
-    for crate::query_builders::DeleteQueryBuilder<'a, C, Entity>
+    for crate::query_builders::DeleteQueryBuilder<'a, C, Entity, ModelWithRelations>
 where
     C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
     ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
 {
-    type Output = ();
+    type Output = ModelWithRelations;
     fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, ()> {
         BatchQuery::Delete(self)
     }
     fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
         match result {
-            BatchResult::Delete(()) => (),
+            BatchResult::Delete(m) => m,
             _ => panic!("Expected Delete"),
         }
     }
