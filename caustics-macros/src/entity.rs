@@ -168,6 +168,13 @@ pub fn generate_entity(
         })
         .collect();
 
+    // Determine current entity primary key field ident (default to `id`)
+    let current_primary_key_ident = if let Some(pk_field) = primary_key_fields.first() {
+        pk_field.ident.as_ref().unwrap().clone()
+    } else {
+        format_ident!("id")
+    };
+
     // Filter out unique fields (including primary keys)
     let unique_fields: Vec<&syn::Field> = fields
         .iter()
@@ -629,6 +636,81 @@ pub fn generate_entity(
             }
         })
         .collect::<Vec<_>>();
+
+    // Generate typed WhereParam -> Filter conversion match arms (no string parsing)
+    let filter_conversion_match_arms = fields
+        .iter()
+        .map(|field| {
+            let name_ident = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name_ident.to_string().to_pascal_case());
+            let field_name_lit = syn::LitStr::new(&name_ident.to_string(), name_ident.span());
+            let is_opt = is_option(&field.ty);
+            if is_opt {
+                quote! {
+                    WhereParam::#pascal_name(op) => {
+                        let field = #field_name_lit.to_string();
+                        let operation = match op {
+                            caustics::FieldOp::Equals(v) => match v { Some(v) => caustics::FieldOp::Equals(v.to_string()), None => caustics::FieldOp::IsNull },
+                            caustics::FieldOp::NotEquals(v) => match v { Some(v) => caustics::FieldOp::NotEquals(v.to_string()), None => caustics::FieldOp::IsNotNull },
+                            caustics::FieldOp::Gt(v) => match v { Some(v) => caustics::FieldOp::Gt(v.to_string()), None => caustics::FieldOp::IsNotNull },
+                            caustics::FieldOp::Lt(v) => match v { Some(v) => caustics::FieldOp::Lt(v.to_string()), None => caustics::FieldOp::IsNull },
+                            caustics::FieldOp::Gte(v) => match v { Some(v) => caustics::FieldOp::Gte(v.to_string()), None => caustics::FieldOp::IsNotNull },
+                            caustics::FieldOp::Lte(v) => match v { Some(v) => caustics::FieldOp::Lte(v.to_string()), None => caustics::FieldOp::IsNull },
+                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().filter_map(|v| v.map(|x| x.to_string())).collect()),
+                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().filter_map(|v| v.map(|x| x.to_string())).collect()),
+                            caustics::FieldOp::Contains(s) => caustics::FieldOp::Contains(s),
+                            caustics::FieldOp::StartsWith(s) => caustics::FieldOp::StartsWith(s),
+                            caustics::FieldOp::EndsWith(s) => caustics::FieldOp::EndsWith(s),
+                            caustics::FieldOp::IsNull => caustics::FieldOp::IsNull,
+                            caustics::FieldOp::IsNotNull => caustics::FieldOp::IsNotNull,
+                            caustics::FieldOp::JsonPath(path) => caustics::FieldOp::JsonPath(path),
+                            caustics::FieldOp::JsonStringContains(s) => caustics::FieldOp::JsonStringContains(s),
+                            caustics::FieldOp::JsonStringStartsWith(s) => caustics::FieldOp::JsonStringStartsWith(s),
+                            caustics::FieldOp::JsonStringEndsWith(s) => caustics::FieldOp::JsonStringEndsWith(s),
+                            caustics::FieldOp::JsonArrayContains(v) => caustics::FieldOp::JsonArrayContains(v),
+                            caustics::FieldOp::JsonArrayStartsWith(v) => caustics::FieldOp::JsonArrayStartsWith(v),
+                            caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
+                            caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
+                            caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => unreachable!(),
+                        };
+                        caustics::Filter { field, operation }
+                    }
+                }
+            } else {
+                quote! {
+                    WhereParam::#pascal_name(op) => {
+                        let field = #field_name_lit.to_string();
+                        let operation = match op {
+                            caustics::FieldOp::Equals(v) => caustics::FieldOp::Equals(v.to_string()),
+                            caustics::FieldOp::NotEquals(v) => caustics::FieldOp::NotEquals(v.to_string()),
+                            caustics::FieldOp::Gt(v) => caustics::FieldOp::Gt(v.to_string()),
+                            caustics::FieldOp::Lt(v) => caustics::FieldOp::Lt(v.to_string()),
+                            caustics::FieldOp::Gte(v) => caustics::FieldOp::Gte(v.to_string()),
+                            caustics::FieldOp::Lte(v) => caustics::FieldOp::Lte(v.to_string()),
+                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().map(|v| v.to_string()).collect()),
+                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().map(|v| v.to_string()).collect()),
+                            caustics::FieldOp::Contains(s) => caustics::FieldOp::Contains(s),
+                            caustics::FieldOp::StartsWith(s) => caustics::FieldOp::StartsWith(s),
+                            caustics::FieldOp::EndsWith(s) => caustics::FieldOp::EndsWith(s),
+                            caustics::FieldOp::IsNull => caustics::FieldOp::IsNull,
+                            caustics::FieldOp::IsNotNull => caustics::FieldOp::IsNotNull,
+                            caustics::FieldOp::JsonPath(path) => caustics::FieldOp::JsonPath(path),
+                            caustics::FieldOp::JsonStringContains(s) => caustics::FieldOp::JsonStringContains(s),
+                            caustics::FieldOp::JsonStringStartsWith(s) => caustics::FieldOp::JsonStringStartsWith(s),
+                            caustics::FieldOp::JsonStringEndsWith(s) => caustics::FieldOp::JsonStringEndsWith(s),
+                            caustics::FieldOp::JsonArrayContains(v) => caustics::FieldOp::JsonArrayContains(v),
+                            caustics::FieldOp::JsonArrayStartsWith(v) => caustics::FieldOp::JsonArrayStartsWith(v),
+                            caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
+                            caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
+                            caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => unreachable!(),
+                        };
+                        caustics::Filter { field, operation }
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
 
     // Generate UniqueWhereParam enum for unique fields
     let unique_where_variants = unique_fields
@@ -1459,6 +1541,7 @@ pub fn generate_entity(
         use sea_query::{Condition, Expr};
         use sea_orm::ColumnTrait;
         use serde_json;
+        use std::sync::Arc;
 
         pub struct EntityClient<'a, C: sea_orm::ConnectionTrait> {
             conn: &'a C,
@@ -1482,6 +1565,23 @@ pub fn generate_entity(
         }
 
         #(#field_ops)*
+
+        // Typed conversion of WhereParam list to Filters (no string parsing)
+        #[allow(dead_code)]
+        pub fn where_params_to_filters(params: Vec<WhereParam>) -> Vec<caustics::Filter> {
+            let mut out = Vec::with_capacity(params.len());
+            for p in params {
+                let filter = match p {
+                    #(#filter_conversion_match_arms,)*
+                    // Ignore logical and relation conditions here; those are handled elsewhere
+                    WhereParam::And(_) | WhereParam::Or(_) | WhereParam::Not(_) | WhereParam::RelationCondition(_) => continue,
+                    // Ignore string mode variants (they affect query mode, not a field filter)
+                    _ => continue,
+                };
+                out.push(filter);
+            }
+            out
+        }
 
         impl MergeInto<ActiveModel> for SetParam {
             fn merge_into(&self, model: &mut ActiveModel) {
@@ -1646,10 +1746,45 @@ pub fn generate_entity(
             }
 
             pub fn update_with_has_many_set(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+                let cond: Condition = condition.into();
+                let cond_arc = Arc::new(cond.clone());
+                let resolver: Box<
+                    dyn for<'b> Fn(
+                            &'b C,
+                        ) -> std::pin::Pin<
+                            Box<
+                                dyn std::future::Future<Output = Result<sea_orm::Value, sea_orm::DbErr>>
+                                    + Send
+                                    + 'b,
+                            >,
+                        > + Send,
+                > = Box::new({
+                    let cond_arc_outer = Arc::clone(&cond_arc);
+                    move |conn: &C| {
+                        // Clone the Arc inside the Fn each call to preserve Fn semantics
+                        let cond_arc_inner = Arc::clone(&cond_arc_outer);
+                        let fut = async move {
+                            use sea_orm::{EntityTrait, QueryFilter};
+                            let cond_local = (*cond_arc_inner).clone();
+                            let found = <Entity as EntityTrait>::find()
+                                .filter::<Condition>(cond_local)
+                                .one(conn)
+                                .await?;
+                            if let Some(model) = found {
+                                let id_val: i32 = model.#current_primary_key_ident;
+                                Ok(sea_orm::Value::Int(Some(id_val)))
+                            } else {
+                                Err(sea_orm::DbErr::RecordNotFound("No record matched for has_many set".to_string()))
+                            }
+                        };
+                        Box::pin(fut)
+                    }
+                });
                 caustics::HasManySetUpdateQueryBuilder {
-                    condition: condition.into(),
+                    condition: cond,
                     changes,
                     conn: self.conn,
+                    entity_id_resolver: Some(resolver),
                     _phantom: std::marker::PhantomData,
                 }
             }
@@ -1953,96 +2088,13 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
             pub mod #relation_name_ident {
                 use super::*;
 
-                // Type-safe conversion function that handles WhereParam variants properly
+                // Typed conversion function for relation filters (no string parsing)
                 fn convert_where_param_to_filter_generic(filter: super::#target::WhereParam) -> caustics::Filter {
-                    // Use a structured approach that works with any WhereParam variant
-                    let filter_str = format!("{:?}", filter);
-
-                    // Extract field name from the WhereParam variant
-                    // Format is typically "FieldName(FieldOp::Operation(value))"
-                    let field_name_snake = if let Some(start) = filter_str.find('(') {
-                        let field_name = &filter_str[..start];
-                        // Convert PascalCase to snake_case for database column name
-                        field_name.to_lowercase()
-                    } else {
-                        // Fallback field name if we can't parse the variant
-                        "unknown_field".to_string()
-                    };
-
-                    // Extract the operation and value using a more robust approach
-                    let operation = if filter_str.contains("IsNull") {
-                        caustics::FieldOp::IsNull
-                    } else if filter_str.contains("IsNotNull") {
-                        caustics::FieldOp::IsNotNull
-                    } else if filter_str.contains("Contains(") {
-                        let value = extract_quoted_value(&filter_str, "Contains(");
-                        caustics::FieldOp::Contains(value)
-                    } else if filter_str.contains("StartsWith(") {
-                        let value = extract_quoted_value(&filter_str, "StartsWith(");
-                        caustics::FieldOp::StartsWith(value)
-                    } else if filter_str.contains("EndsWith(") {
-                        let value = extract_quoted_value(&filter_str, "EndsWith(");
-                        caustics::FieldOp::EndsWith(value)
-                    } else if filter_str.contains("Equals(") {
-                        let value = extract_quoted_value(&filter_str, "Equals(");
-                        caustics::FieldOp::Equals(value)
-                    } else if filter_str.contains("NotEquals(") {
-                        let value = extract_quoted_value(&filter_str, "NotEquals(");
-                        caustics::FieldOp::NotEquals(value)
-                    } else if filter_str.contains("Gt(") {
-                        let value = extract_quoted_value(&filter_str, "Gt(");
-                        caustics::FieldOp::Gt(value)
-                    } else if filter_str.contains("Lt(") {
-                        let value = extract_quoted_value(&filter_str, "Lt(");
-                        caustics::FieldOp::Lt(value)
-                    } else if filter_str.contains("Gte(") {
-                        let value = extract_quoted_value(&filter_str, "Gte(");
-                        caustics::FieldOp::Gte(value)
-                    } else if filter_str.contains("Lte(") {
-                        let value = extract_quoted_value(&filter_str, "Lte(");
-                        caustics::FieldOp::Lte(value)
-                    } else if filter_str.contains("InVec(") {
-                        let value = extract_quoted_value(&filter_str, "InVec(");
-                        caustics::FieldOp::InVec(vec![value])
-                    } else if filter_str.contains("NotInVec(") {
-                        let value = extract_quoted_value(&filter_str, "NotInVec(");
-                        caustics::FieldOp::NotInVec(vec![value])
-                    } else {
-                        // Fallback: try to extract any quoted string
-                        let value = extract_quoted_value(&filter_str, "");
-                        caustics::FieldOp::Equals(value)
-                    };
-
-                    caustics::Filter {
-                        field: field_name_snake,
-                        operation,
-                    }
-                }
-
-                // Helper function to extract quoted values from debug strings
-                fn extract_quoted_value(filter_str: &str, operation: &str) -> String {
-                    if operation.is_empty() {
-                        // Fallback: try to extract any quoted string
-                        if let Some(quote_start) = filter_str.rfind('"') {
-                            if let Some(quote_end) = filter_str[quote_start + 1..].find('"') {
-                                return filter_str[quote_start + 1..quote_start + 1 + quote_end].to_string();
-                            }
-                        }
-                        return String::new();
-                    }
-
-                    if let Some(operation_start) = filter_str.find(operation) {
-                        let start_pos = operation_start + operation.len();
-                        if let Some(end_pos) = filter_str[start_pos..].find(')') {
-                            let value_str = &filter_str[start_pos..start_pos + end_pos];
-                            // Remove quotes if present
-                            if value_str.starts_with('"') && value_str.ends_with('"') {
-                                return value_str[1..value_str.len() - 1].to_string();
-                            }
-                            return value_str.to_string();
-                        }
-                    }
-                    String::new()
+                    // Delegate to the target module's typed converter
+                    super::#target::where_params_to_filters(vec![filter])
+                        .into_iter()
+                        .next()
+                        .unwrap_or(caustics::Filter { field: String::new(), operation: caustics::FieldOp::IsNull })
                 }
 
                 // Basic relation functions for compatibility

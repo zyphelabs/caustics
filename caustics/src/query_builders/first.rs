@@ -88,9 +88,8 @@ where
         // Get the foreign key value from the model
         let foreign_key_value = (descriptor.get_foreign_key)(model_with_relations);
 
-        // Get the target entity name from the descriptor
-        let extracted_entity_name = super::utils::extract_entity_name_from_path(&descriptor.target_entity);
-        let extracted_entity_name = extracted_entity_name.clone();
+        // Get the target entity name from the descriptor (typed)
+        let extracted_entity_name = descriptor.target_entity.to_string();
 
         // Get the foreign key column name from the descriptor
         let foreign_key_column = descriptor.foreign_key_column;

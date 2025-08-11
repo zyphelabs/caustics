@@ -14,6 +14,17 @@ where
     pub condition: sea_orm::Condition,
     pub changes: Vec<T>,
     pub conn: &'a C,
+        pub entity_id_resolver: Option<Box<
+            dyn for<'b> Fn(
+                    &'b C,
+                ) -> std::pin::Pin<
+                    Box<
+                        dyn std::future::Future<Output = Result<sea_orm::Value, sea_orm::DbErr>>
+                            + Send
+                            + 'b,
+                    >,
+                > + Send,
+        >>,
     pub _phantom: std::marker::PhantomData<(Entity, ActiveModel, ModelWithRelations)>,
 }
 
@@ -43,8 +54,15 @@ where
             }
         }
 
-        // Extract entity ID from condition
-        let entity_id = self.extract_entity_id_from_condition()?;
+        // Resolve entity ID using typed resolver
+        let entity_id = match &self.entity_id_resolver {
+            Some(resolver) => (resolver)(self.conn).await?,
+            None => {
+                return Err(sea_orm::DbErr::Custom(
+                    "Missing entity id resolver for has_many set".to_string(),
+                ))
+            }
+        };
 
         // Process has_many set operations first
         if !has_many_changes.is_empty() {
@@ -67,34 +85,7 @@ where
         change.is_has_many_set_operation()
     }
 
-    /// Extract entity ID from the condition
-    fn extract_entity_id_from_condition(&self) -> Result<sea_orm::Value, sea_orm::DbErr> {
-        // Currently we don't have a `ConditionInfo` impl; use string parsing.
-        let condition_str = format!("{:?}", self.condition);
-        let extracted_id = Self::try_extract_id_pattern(&condition_str, "Id = ", 5)
-            .or_else(|| Self::try_extract_id_pattern(&condition_str, "Value(Int(Some(", 15))
-            .or_else(|| Self::try_extract_id_pattern(&condition_str, "IdEquals(", 9))
-            .or_else(|| Self::try_extract_id_pattern(&condition_str, "Equal, Value(Int(Some(", 22))
-            .or_else(|| Self::try_extract_id_pattern(&condition_str, "Value(Int(Some(", 15))
-            .or_else(|| Self::try_extract_id_pattern(&condition_str, " = ", 3));
-        match extracted_id {
-            Some(id) => Ok(sea_orm::Value::Int(Some(id))),
-            None => Err(sea_orm::DbErr::Custom(format!(
-                "Could not extract entity ID from condition: {}",
-                condition_str
-            ))),
-        }
-    }
-
-    /// Helper method to try extracting ID from a specific pattern
-    fn try_extract_id_pattern(condition_str: &str, pattern: &str, pattern_len: usize) -> Option<i32> {
-        condition_str.find(pattern).and_then(|id_start| {
-            let after_pattern = &condition_str[id_start + pattern_len..];
-            let id_end = after_pattern.find(')').or_else(|| after_pattern.find(' '))?;
-            let id_str = &after_pattern[..id_end];
-            id_str.parse::<i32>().ok()
-        })
-    }
+    // entity id resolution is provided by codegen closure
 
     /// Process has_many set operations
     async fn process_has_many_set_operations(

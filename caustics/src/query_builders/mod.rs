@@ -9,7 +9,6 @@ pub mod delete;
 pub mod upsert;
 pub mod has_many_set;
 pub mod relation_fetcher;
-pub mod utils;
 pub mod batch;
 
 pub use create::CreateQueryBuilder;
