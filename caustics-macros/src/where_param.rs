@@ -473,8 +473,8 @@ fn generate_where_params_to_condition_function(
 
                         Condition::all().add(sea_query::Expr::exists(filtered_subquery.into_query()).not())
                     },
-                    // Catch-all for unsupported relation operations
-                    _ => panic!("Unsupported FieldOp operation for relation conditions"),
+                    // Catch-all for unsupported relation operations: no-op condition
+                    _ => Condition::all(),
                 }
             }
         };
@@ -489,7 +489,7 @@ fn generate_where_params_to_condition_function(
             use sea_query::Condition;
 
             // Type-safe field handling - direct FieldOp matching
-            // This approach eliminates string parsing and is fully type-safe
+            // Fallback to no-op Condition for unsupported operations
             match &filter.operation {
                 caustics::FieldOp::Equals(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
@@ -621,10 +621,8 @@ fn generate_where_params_to_condition_function(
                         [format!("$.{}", key)]
                     ))
                 },
-                // Relation operations (these should not be used in field mappings)
-                caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => {
-                    panic!("Relation operations should not be used in field mappings")
-                }
+                // Relation operations (should not be used in field mappings) -> no-op
+                caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => Condition::all(),
             }
         }
 

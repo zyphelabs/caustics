@@ -318,6 +318,83 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    async fn test_count_server_side() {
+        use std::str::FromStr;
+        use chrono::{DateTime, FixedOffset};
+
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Count on empty table
+        let total0 = client.user().count(vec![]).exec().await.unwrap();
+        assert_eq!(total0, 0);
+
+        let now = DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap();
+
+        // Seed users
+        let _u1 = client
+            .user()
+            .create(
+                "c1@example.com".to_string(),
+                "C1".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(20)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _u2 = client
+            .user()
+            .create(
+                "c2@example.com".to_string(),
+                "C2".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _u3 = client
+            .user()
+            .create(
+                "c3@example.com".to_string(),
+                "C3".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Count all
+        let total_all = client.user().count(vec![]).exec().await.unwrap();
+        assert_eq!(total_all, 3);
+
+        // Count with filter: age > 25
+        let total_adults = client
+            .user()
+            .count(vec![user::age::gt(Some(25))])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(total_adults, 1);
+
+        // Count with filter: age is null
+        let total_null_age = client
+            .user()
+            .count(vec![user::age::is_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(total_null_age, 1);
+    }
+
+    #[tokio::test]
     async fn test_delete_operations() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());

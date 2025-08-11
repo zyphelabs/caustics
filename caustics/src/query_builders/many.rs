@@ -18,15 +18,17 @@ where
     ModelWithRelations:
         FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + Send + 'static,
 {
-    /// Limit the number of results
-    pub fn take(mut self, limit: u64) -> Self {
-        self.query = self.query.limit(limit);
+    /// Limit the number of results (aligned with Prisma's i64 API)
+    pub fn take(mut self, limit: i64) -> Self {
+        let limit_u = if limit < 0 { 0 } else { limit as u64 };
+        self.query = self.query.limit(limit_u);
         self
     }
 
-    /// Skip a number of results (for pagination)
-    pub fn skip(mut self, offset: u64) -> Self {
-        self.query = self.query.offset(offset);
+    /// Skip a number of results (for pagination, aligned with Prisma's i64 API)
+    pub fn skip(mut self, offset: i64) -> Self {
+        let offset_u = if offset < 0 { 0 } else { offset as u64 };
+        self.query = self.query.offset(offset_u);
         self
     }
 

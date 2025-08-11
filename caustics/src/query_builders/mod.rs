@@ -10,6 +10,7 @@ pub mod upsert;
 pub mod has_many_set;
 pub mod relation_fetcher;
 pub mod batch;
+pub mod count;
 
 pub use create::CreateQueryBuilder;
 pub use delete::DeleteQueryBuilder;
@@ -23,4 +24,5 @@ pub use deferred_lookup::DeferredLookup;
 pub use has_many_set::{DefaultHasManySetHandler, HasManySetHandler, HasManySetUpdateQueryBuilder};
 pub use relation_fetcher::SeaOrmRelationFetcher;
 pub use batch::{BatchQuery, BatchResult};
+pub use count::CountQueryBuilder;
 

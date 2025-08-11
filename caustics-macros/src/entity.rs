@@ -55,9 +55,13 @@ pub fn generate_entity(
     let fields = match &model_ast.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields_named) => fields_named.named.iter().collect::<Vec<_>>(),
-            _ => panic!("Expected named fields"),
+            _ => {
+                return quote! { compile_error!("#[caustics] requires a named-field struct for the Model"); };
+            }
         },
-        _ => panic!("Expected a struct"),
+        _ => {
+            return quote! { compile_error!("#[caustics] must be applied to a struct"); };
+        }
     };
 
     // Extract current entity's table name
@@ -168,7 +172,7 @@ pub fn generate_entity(
         })
         .collect();
 
-    // Determine current entity primary key field ident (default to `id`)
+    // Determine current entity primary key field ident (default to `id` if not annotated)
     let current_primary_key_ident = if let Some(pk_field) = primary_key_fields.first() {
         pk_field.ident.as_ref().unwrap().clone()
     } else {
@@ -410,11 +414,16 @@ pub fn generate_entity(
                         deferred_lookups.push(caustics::DeferredLookup::new(
                             Box::new(other.clone()),
                             |model, value| {
-                                let model = model.downcast_mut::<ActiveModel>().unwrap();
+                                let Some(model) = model.downcast_mut::<ActiveModel>() else {
+                                    panic!("SetParam relation assign: ActiveModel type mismatch");
+                                };
                                 model.#fk_field_ident = sea_orm::ActiveValue::Set(value);
                             },
                             |conn: & sea_orm::DatabaseConnection, param| {
-                                let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                let Some(param) = param.downcast_ref::<#target_module::UniqueWhereParam>() else {
+                                    panic!("Deferred FK: UniqueWhereParam type mismatch");
+                                };
+                                let param = param.clone();
                                 Box::pin(async move {
                                     let condition: sea_query::Condition = param.clone().into();
                                     let result = #target_module::Entity::find()
@@ -431,7 +440,10 @@ pub fn generate_entity(
                                 })
                             },
                             |txn: & sea_orm::DatabaseTransaction, param| {
-                                let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                let Some(param) = param.downcast_ref::<#target_module::UniqueWhereParam>() else {
+                                    panic!("Deferred FK: UniqueWhereParam type mismatch");
+                                };
+                                let param = param.clone();
                                 Box::pin(async move {
                                     let condition: sea_query::Condition = param.clone().into();
                                     let result = #target_module::Entity::find()
@@ -1041,8 +1053,9 @@ pub fn generate_entity(
                 )
             }
         };
+        let target_entity_debug_string = format!("{:?}", relation.target);
         let target_entity = syn::LitStr::new(
-            &format!("{:?}", relation.target),
+            &target_entity_debug_string,
             proc_macro2::Span::call_site(),
         );
         let foreign_key_column = syn::LitStr::new(&foreign_key_column, proc_macro2::Span::call_site());
@@ -1061,19 +1074,19 @@ pub fn generate_entity(
         
         let target_table_name_lit = syn::LitStr::new(target_table_name, proc_macro2::Span::call_site());
         let current_table_name_lit = syn::LitStr::new(current_table_name, proc_macro2::Span::call_site());
-        // Extract primary key column names dynamically
+        // Extract primary key column names dynamically (default to "id" if not annotated)
         let current_primary_key_column = if let Some(pk_field) = primary_key_fields.first() {
             pk_field.ident.as_ref().unwrap().to_string()
         } else {
-            "id".to_string() // fallback
+            "id".to_string()
         };
         let current_primary_key_column_lit = syn::LitStr::new(&current_primary_key_column, proc_macro2::Span::call_site());
         
-        // For target primary key, we'll use the relation's primary_key_field or default to "id"
+        // For target primary key, use the relation's primary_key_field or default to "id"
         let target_primary_key_column = if let Some(pk_field) = &relation.primary_key_field {
             pk_field.clone()
         } else {
-            "id".to_string() // fallback
+            "id".to_string()
         };
         let target_primary_key_column_lit = syn::LitStr::new(&target_primary_key_column, proc_macro2::Span::call_site());
         let is_foreign_key_nullable_lit = syn::LitBool::new(relation.is_nullable, proc_macro2::Span::call_site());
@@ -1150,8 +1163,48 @@ pub fn generate_entity(
                                 model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(id.clone()));
                             }
                             other => {
-                                // For now, we'll skip complex deferred lookups in batch mode
-                                // This simplifies the implementation for the test case
+                                // Store deferred lookup instead of executing (optional FK -> wrap in Some)
+                                deferred_lookups.push(caustics::DeferredLookup::new(
+                                    Box::new(other.clone()),
+                                    |model, value| {
+                                        let model = model.downcast_mut::<ActiveModel>().unwrap();
+                                        model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(value));
+                                    },
+                                    |conn: & sea_orm::DatabaseConnection, param| {
+                                        let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                        Box::pin(async move {
+                                            let condition: sea_query::Condition = param.clone().into();
+                                            let result = #target_module::Entity::find()
+                                                .filter::<sea_query::Condition>(condition)
+                                                .one(conn)
+                                                .await?;
+                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                                sea_orm::DbErr::Custom(format!(
+                                                    "No {} found for condition: {:?}",
+                                                    stringify!(#target_module),
+                                                    param
+                                                ))
+                                            })
+                                        })
+                                    },
+                                    |txn: & sea_orm::DatabaseTransaction, param| {
+                                        let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                        Box::pin(async move {
+                                            let condition: sea_query::Condition = param.clone().into();
+                                            let result = #target_module::Entity::find()
+                                                .filter::<sea_query::Condition>(condition)
+                                                .one(txn)
+                                                .await?;
+                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                                sea_orm::DbErr::Custom(format!(
+                                                    "No {} found for condition: {:?}",
+                                                    stringify!(#target_module),
+                                                    param
+                                                ))
+                                            })
+                                        })
+                                    },
+                                ));
                             }
                         }
                     }
@@ -1195,16 +1248,16 @@ pub fn generate_entity(
                                              let result = #target_module::Entity::find()
                                                  .filter::<sea_query::Condition>(condition)
                                                  .one(txn)
-                                                 .await?;
-                                             result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
-                                                 sea_orm::DbErr::Custom(format!(
-                                                     "No {} found for condition: {:?}",
-                                                     stringify!(#target_module),
-                                                     param
-                                                 ))
-                                             })
-                                         })
-                                     },
+                                                .await?;
+                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                                sea_orm::DbErr::Custom(format!(
+                                                    "No {} found for condition: {:?}",
+                                                    stringify!(#target_module),
+                                                    param
+                                                ))
+                                            })
+                                        })
+                                    },
                                 ));
                             }
                         }
@@ -1548,6 +1601,15 @@ pub fn generate_entity(
             database_backend: sea_orm::DatabaseBackend,
         }
 
+        // Centralize registry selection to avoid scattered cfg(test) blocks
+        #[allow(dead_code)]
+        fn __caustics_fetch_registry<'a>() -> &'a super::CompositeEntityRegistry {
+            #[cfg(test)]
+            { super::get_registry() }
+            #[cfg(not(test))]
+            { crate::get_registry() }
+        }
+
         #[derive(Debug)]
         pub enum SetParam {
             #(#all_set_param_variants,)*
@@ -1676,10 +1738,7 @@ pub fn generate_entity(
             }
 
             pub fn find_unique(&self, condition: UniqueWhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                #[cfg(test)]
-                let registry = super::get_registry();
-                #[cfg(not(test))]
-                let registry = crate::get_registry();
+                let registry = __caustics_fetch_registry();
                 caustics::UniqueQueryBuilder {
                     query: <Entity as EntityTrait>::find().filter::<Condition>(condition.clone().into()),
                     conn: self.conn,
@@ -1690,10 +1749,7 @@ pub fn generate_entity(
             }
 
             pub fn find_first(&self, conditions: Vec<WhereParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                #[cfg(test)]
-                let registry = super::get_registry();
-                #[cfg(not(test))]
-                let registry = crate::get_registry();
+                let registry = __caustics_fetch_registry();
                 let query = <Entity as EntityTrait>::find().filter::<Condition>(where_params_to_condition(conditions, self.database_backend));
                 caustics::FirstQueryBuilder {
                     query,
@@ -1706,10 +1762,7 @@ pub fn generate_entity(
             }
 
             pub fn find_many(&self, conditions: Vec<WhereParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                #[cfg(test)]
-                let registry = super::get_registry();
-                #[cfg(not(test))]
-                let registry = crate::get_registry();
+                let registry = __caustics_fetch_registry();
                 let query = <Entity as EntityTrait>::find().filter::<Condition>(where_params_to_condition(conditions, self.database_backend));
                 caustics::ManyQueryBuilder {
                     query,
@@ -1717,6 +1770,15 @@ pub fn generate_entity(
                     relations_to_fetch: vec![],
                     registry,
                     database_backend: self.database_backend,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn count(&self, conditions: Vec<WhereParam>) -> caustics::CountQueryBuilder<'a, C, Entity> {
+                let condition = where_params_to_condition(conditions, self.database_backend);
+                caustics::CountQueryBuilder {
+                    condition,
+                    conn: self.conn,
                     _phantom: std::marker::PhantomData,
                 }
             }
@@ -1853,7 +1915,10 @@ pub fn generate_entity(
                         #(
                         #relation_names => { #relation_fetcher_bodies }
                         )*
-                        _ => Err(sea_orm::DbErr::Custom(format!("Unknown relation: {}", relation_name))),
+                        _ => Err(sea_orm::DbErr::Custom(format!(
+                            "Unknown relation '{}': ensure relation name matches generated metadata",
+                            relation_name
+                        ))),
                     }
                 })
             }
