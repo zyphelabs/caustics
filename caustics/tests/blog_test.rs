@@ -433,6 +433,45 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    async fn test_delete_many_returns_count() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create three users
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+        for i in 0..3 {
+            let _ = client
+                .user()
+                .create(
+                    format!("delmany{}@example.com", i),
+                    format!("DelMany{}", i),
+                    now,
+                    now,
+                    vec![user::age::set(Some(20 + i)), user::deleted_at::set(None)],
+                )
+                .exec()
+                .await
+                .unwrap();
+        }
+
+        // Delete where age > 20 (two rows)
+        let deleted = client
+            .user()
+            .delete_many(vec![user::age::gt(Some(20))])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(deleted, 2);
+
+        // Remaining count should be 1
+        let remaining = client.user().count(vec![]).exec().await.unwrap();
+        assert_eq!(remaining, 1);
+    }
+
+    #[tokio::test]
     async fn test_upsert_operations() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());

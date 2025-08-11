@@ -6,6 +6,7 @@ pub mod many;
 pub mod create;
 pub mod update;
 pub mod delete;
+pub mod delete_many;
 pub mod upsert;
 pub mod has_many_set;
 pub mod relation_fetcher;
@@ -14,6 +15,7 @@ pub mod count;
 
 pub use create::CreateQueryBuilder;
 pub use delete::DeleteQueryBuilder;
+pub use delete_many::DeleteManyQueryBuilder;
 pub use first::FirstQueryBuilder;
 pub use many::ManyQueryBuilder;
 pub use unique::UniqueQueryBuilder;

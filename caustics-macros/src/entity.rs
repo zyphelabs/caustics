@@ -1770,6 +1770,8 @@ pub fn generate_entity(
                     relations_to_fetch: vec![],
                     registry,
                     database_backend: self.database_backend,
+                    reverse_order: false,
+                    pending_order_bys: Vec::new(),
                     _phantom: std::marker::PhantomData,
                 }
             }
@@ -1854,6 +1856,15 @@ pub fn generate_entity(
             pub fn delete(&self, condition: UniqueWhereParam) -> caustics::DeleteQueryBuilder<'a, C, Entity, ModelWithRelations> {
                 caustics::DeleteQueryBuilder {
                     condition: condition.into(),
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
+            pub fn delete_many(&self, conditions: Vec<WhereParam>) -> caustics::DeleteManyQueryBuilder<'a, C, Entity> {
+                let cond = where_params_to_condition(conditions, self.database_backend);
+                caustics::DeleteManyQueryBuilder {
+                    condition: cond,
                     conn: self.conn,
                     _phantom: std::marker::PhantomData,
                 }

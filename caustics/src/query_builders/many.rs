@@ -1,6 +1,7 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use crate::types::{EntityRegistry, Filter};
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryOrder, QuerySelect, Select};
+use sea_orm::sea_query::SimpleExpr;
 
 /// Query builder for finding multiple entity records matching conditions
 pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
@@ -9,6 +10,8 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub relations_to_fetch: Vec<RelationFilter>,
     pub registry: &'a dyn EntityRegistry<C>,
     pub database_backend: DatabaseBackend,
+    pub reverse_order: bool,
+    pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -20,7 +23,12 @@ where
 {
     /// Limit the number of results (aligned with Prisma's i64 API)
     pub fn take(mut self, limit: i64) -> Self {
-        let limit_u = if limit < 0 { 0 } else { limit as u64 };
+        let limit_u = if limit < 0 {
+            self.reverse_order = true;
+            (-limit) as u64
+        } else {
+            limit as u64
+        };
         self.query = self.query.limit(limit_u);
         self
     }
@@ -38,7 +46,8 @@ where
         Col: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr,
     {
         let (col, order) = col_and_order.into();
-        self.query = self.query.order_by(col, order);
+        let expr = col.into_simple_expr();
+        self.pending_order_bys.push((expr, order));
         self
     }
 
@@ -47,15 +56,32 @@ where
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
+        let mut query = self.query.clone();
+        // Apply any pending orderings here, so reversal is respected regardless of call order
+        if !self.pending_order_bys.is_empty() {
+            for (expr, order) in &self.pending_order_bys {
+                let effective = if self.reverse_order {
+                    match order {
+                        sea_orm::Order::Asc => sea_orm::Order::Desc,
+                        sea_orm::Order::Desc => sea_orm::Order::Asc,
+                        other => other.clone(),
+                    }
+                } else {
+                    order.clone()
+                };
+                query = query.order_by(expr.clone(), effective);
+            }
+        }
+
         if self.relations_to_fetch.is_empty() {
-            self.query.all(self.conn).await.map(|models| {
+            query.all(self.conn).await.map(|models| {
                 models
                     .into_iter()
                     .map(|model| ModelWithRelations::from_model(model))
                     .collect()
             })
         } else {
-            self.exec_with_relations().await
+            self.exec_with_relations_with_query(query).await
         }
     }
 
@@ -66,12 +92,12 @@ where
     }
 
     /// Execute query with relations
-    async fn exec_with_relations(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
+    async fn exec_with_relations_with_query(self, query: Select<Entity>) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
         let Self {
-            query,
+            
             conn,
             relations_to_fetch,
             registry,
