@@ -146,6 +146,7 @@ mod query_builder_tests {
     use caustics::{QueryError, SortOrder};
     use chrono::{DateTime, FixedOffset, TimeZone};
     use serde_json;
+    use super::user::ManyCursorExt;
 
     use super::helpers::setup_test_db;
 
@@ -315,6 +316,62 @@ mod query_builder_tests {
         assert_eq!(users.len(), 2);
         assert_eq!(users[0].age, Some(23));
         assert_eq!(users[1].age, Some(22));
+    }
+
+    #[tokio::test]
+    async fn test_cursor_pagination_basic() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Seed deterministic users with ascending ages
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+        let mut created = Vec::new();
+        for i in 0..5 {
+            let u = client
+                .user()
+                .create(
+                    format!("cursor{}@example.com", i),
+                    format!("Cursor {}", i),
+                    now,
+                    now,
+                    vec![user::age::set(Some(20 + i)), user::deleted_at::set(None)],
+                )
+                .exec()
+                .await
+                .unwrap();
+            created.push(u);
+        }
+
+        // Order by id ascending, take first 2
+        let first_page = client
+            .user()
+            .find_many(vec![])
+            .order_by(user::id::order(SortOrder::Asc))
+            .take(2)
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(first_page.len(), 2);
+
+        // Next page using cursor: last id from previous page
+        let cursor_id = first_page.last().unwrap().id;
+        let second_page = client
+            .user()
+            .find_many(vec![])
+            .order_by(user::id::order(SortOrder::Asc))
+            .cursor(user::id::equals(cursor_id))
+            .take(2)
+            .exec()
+            .await
+            .unwrap();
+
+        // Should skip the cursor row and return the next two
+        assert_eq!(second_page.len(), 2);
+        assert!(second_page.iter().all(|u| u.id > cursor_id));
     }
 
     #[tokio::test]

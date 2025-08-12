@@ -617,6 +617,23 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate match arms to convert UniqueWhereParam into a cursor (expr, value)
+    // Each arm evaluates to a new builder (Self)
+    let unique_cursor_match_arms = unique_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            let equals_variant = format_ident!("{}Equals", pascal_name);
+            quote! {
+                UniqueWhereParam::#equals_variant(value) => {
+                    let expr = <Entity as EntityTrait>::Column::#pascal_name.into_simple_expr();
+                    self.with_cursor(expr, sea_orm::Value::from(value))
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Generate field variants for OrderByParam enum (all fields)
     let order_by_field_variants = fields
         .iter()
@@ -1700,6 +1717,22 @@ pub fn generate_entity(
             }
         }
 
+        // Entity-specific extension trait on ManyQueryBuilder to accept a typed UniqueWhereParam as cursor
+        pub trait ManyCursorExt<'a, C: sea_orm::ConnectionTrait> {
+            fn cursor(self, unique: UniqueWhereParam) -> Self;
+        }
+
+        impl<'a, C: sea_orm::ConnectionTrait> ManyCursorExt<'a, C>
+            for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
+        {
+            fn cursor(mut self, unique: UniqueWhereParam) -> Self {
+                use sea_orm::IntoSimpleExpr;
+                match unique {
+                    #(#unique_cursor_match_arms)*
+                }
+            }
+        }
+
         pub struct Create {
             #(#required_struct_fields,)*
             #(#foreign_key_relation_fields,)*
@@ -1772,9 +1805,12 @@ pub fn generate_entity(
                     database_backend: self.database_backend,
                     reverse_order: false,
                     pending_order_bys: Vec::new(),
+                    cursor: None,
                     _phantom: std::marker::PhantomData,
                 }
             }
+
+            
 
             pub fn count(&self, conditions: Vec<WhereParam>) -> caustics::CountQueryBuilder<'a, C, Entity> {
                 let condition = where_params_to_condition(conditions, self.database_backend);

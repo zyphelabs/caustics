@@ -1,7 +1,7 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use crate::types::{EntityRegistry, Filter, CausticsError};
-use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryOrder, QuerySelect, Select};
-use sea_orm::sea_query::SimpleExpr;
+use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select};
+use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
 
 /// Query builder for finding multiple entity records matching conditions
 pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
@@ -12,6 +12,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub database_backend: DatabaseBackend,
     pub reverse_order: bool,
     pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
+    pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -51,12 +52,45 @@ where
         self
     }
 
+    /// Internal helper used by generated code to provide a cursor column/value
+    pub fn with_cursor(mut self, expr: SimpleExpr, value: sea_orm::Value) -> Self {
+        self.cursor = Some((expr, value));
+        self
+    }
+
     /// Execute the query and return multiple results
     pub async fn exec(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
         let mut query = self.query.clone();
+        // Apply cursor filtering if provided
+        if let Some((cursor_expr, cursor_value)) = &self.cursor {
+            // Determine effective order to derive comparison operator
+            let first_order = self
+                .pending_order_bys
+                .get(0)
+                .map(|(_, ord)| ord.clone())
+                .unwrap_or(sea_orm::Order::Asc);
+            let effective_order = if self.reverse_order {
+                match first_order {
+                    sea_orm::Order::Asc => sea_orm::Order::Desc,
+                    sea_orm::Order::Desc => sea_orm::Order::Asc,
+                    other => other,
+                }
+            } else {
+                first_order
+            };
+
+            let cmp_expr = match effective_order {
+                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
+                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lt(cursor_value.clone()),
+                // Fallback behaves like Asc
+                _ => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
+            };
+
+            query = query.filter(Condition::all().add(cmp_expr));
+        }
         // Apply any pending orderings here, so reversal is respected regardless of call order
         if !self.pending_order_bys.is_empty() {
             for (expr, order) in &self.pending_order_bys {
