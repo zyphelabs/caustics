@@ -1,5 +1,5 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter};
-use crate::types::{EntityRegistry, Filter};
+use crate::types::{EntityRegistry, Filter, CausticsError};
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryOrder, QuerySelect, Select};
 use sea_orm::sea_query::SimpleExpr;
 
@@ -134,10 +134,8 @@ where
         registry: &dyn EntityRegistry<C>,
     ) -> Result<(), sea_orm::DbErr> {
         // Use the actual relation fetcher implementation
-        let descriptor =
-            ModelWithRelations::get_relation_descriptor(relation_name).ok_or_else(|| {
-                sea_orm::DbErr::Custom(format!("Relation '{}' not found", relation_name))
-            })?;
+        let descriptor = ModelWithRelations::get_relation_descriptor(relation_name)
+            .ok_or_else(|| CausticsError::RelationNotFound { relation: relation_name.to_string() })?;
 
         // Get the foreign key value from the model
         let foreign_key_value = (descriptor.get_foreign_key)(model_with_relations);
@@ -157,12 +155,8 @@ where
         } else {
             extracted_entity_name.clone()
         };
-        let fetcher = registry.get_fetcher(&fetcher_entity_name).ok_or_else(|| {
-            sea_orm::DbErr::Custom(format!(
-                "No fetcher found for entity: {}",
-                fetcher_entity_name
-            ))
-        })?;
+        let fetcher = registry.get_fetcher(&fetcher_entity_name)
+            .ok_or_else(|| CausticsError::EntityFetcherMissing { entity: fetcher_entity_name.clone() })?;
 
         // Fetch the relation data
         let fetched_result = fetcher

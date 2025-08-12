@@ -6,6 +6,36 @@ pub type QueryError = sea_orm::DbErr;
 // Crate-wide result alias for ergonomics (non-conflicting)
 pub type CausticsResult<T> = std::result::Result<T, sea_orm::DbErr>;
 
+/// Typed Caustics errors that can be converted into `sea_orm::DbErr`
+#[derive(Debug, Clone)]
+pub enum CausticsError {
+    RelationNotFound { relation: String },
+    EntityFetcherMissing { entity: String },
+    DeferredLookupFailed { target: String, detail: String },
+}
+
+impl core::fmt::Display for CausticsError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            CausticsError::RelationNotFound { relation } => {
+                write!(f, "CausticsError::RelationNotFound: relation='{}'", relation)
+            }
+            CausticsError::EntityFetcherMissing { entity } => {
+                write!(f, "CausticsError::EntityFetcherMissing: entity='{}'", entity)
+            }
+            CausticsError::DeferredLookupFailed { target, detail } => {
+                write!(f, "CausticsError::DeferredLookupFailed: target='{}' detail='{}'", target, detail)
+            }
+        }
+    }
+}
+
+impl From<CausticsError> for sea_orm::DbErr {
+    fn from(err: CausticsError) -> Self {
+        sea_orm::DbErr::Custom(err.to_string())
+    }
+}
+
 // Import query builder types for batch operations
 use crate::query_builders::{BatchQuery, BatchResult};
 

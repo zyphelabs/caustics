@@ -444,6 +444,11 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
                 }
             }
 
+            // Prisma-style name (without $): alias to _transaction
+            pub fn transaction(&self) -> TransactionBuilder {
+                self._transaction()
+            }
+
             pub async fn _batch<'a, Entity, ActiveModel, ModelWithRelations, T, Container>(
                 &self,
                 queries: Container,

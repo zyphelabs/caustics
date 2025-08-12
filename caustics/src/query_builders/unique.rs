@@ -1,5 +1,5 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter, types};
-use crate::types::EntityRegistry;
+use crate::types::{EntityRegistry, CausticsError};
 use heck::ToSnakeCase;
 use sea_orm::{ConnectionTrait, EntityTrait, Select};
 
@@ -81,19 +81,14 @@ where
     ) -> Result<(), sea_orm::DbErr> {
         // Convert relation_name to snake_case for lookup
         let relation_name_snake = ToSnakeCase::to_snake_case(relation_name);
-        let descriptor = ModelWithRelations::get_relation_descriptor(&relation_name_snake).ok_or_else(|| {
-            sea_orm::DbErr::Custom(format!("Relation '{}' not found", relation_name))
-        })?;
+        let descriptor = ModelWithRelations::get_relation_descriptor(&relation_name_snake)
+            .ok_or_else(|| CausticsError::RelationNotFound { relation: relation_name.to_string() })?;
 
         // Always use the current entity's name for the fetcher
         let type_name = std::any::type_name::<ModelWithRelations>();
         let fetcher_entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
-        let fetcher = registry.get_fetcher(&fetcher_entity_name).ok_or_else(|| {
-            sea_orm::DbErr::Custom(format!(
-                "No fetcher found for entity: {}",
-                fetcher_entity_name
-            ))
-        })?;
+        let fetcher = registry.get_fetcher(&fetcher_entity_name)
+            .ok_or_else(|| CausticsError::EntityFetcherMissing { entity: fetcher_entity_name.clone() })?;
 
         // Fetch the relation data
         let fetched_result = fetcher
