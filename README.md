@@ -397,6 +397,41 @@ let result = client
     .await?;
 ```
 
+#### Aggregates and Group By
+
+Caustics provides Prisma-like aggregate and group-by APIs with typed field selectors.
+
+```rust
+// Aggregates with typed selectors
+let agg = client
+    .user()
+    .aggregate(vec![user::age::is_not_null()])
+    .select_count()
+    .select_avg(user::AvgSelect::Age, "age_avg")
+    .select_min(user::MinSelect::Age, "age_min")
+    .select_max(user::MaxSelect::Age, "age_max")
+    .exec()
+    .await?;
+
+// Access aggregate values by alias
+let avg = agg.values.get("age_avg");
+
+// Group by with typed fields, aggregates and HAVING using plain Rust types
+let rows = client
+    .user()
+    .group_by(vec![user::GroupByFieldParam::Age], vec![])
+    .select_count("cnt")
+    .select_sum(user::SumSelect::Age, "age_sum")
+    .having_sum_gte(user::SumSelect::Age, 20)
+    .exec()
+    .await?;
+```
+
+Notes:
+- The typed selectors are enums generated per-entity: `SumSelect`, `AvgSelect`, `MinSelect`, `MaxSelect`.
+- For historical compatibility, non-typed aggregate toggles on `aggregate()` are available as `select_min_any/select_max_any/select_sum_any/select_avg_any` and apply to the first column.
+- Group-by HAVING helpers accept plain Rust numeric types via `Into<sea_orm::Value>`.
+
 ### Advanced Filtering
 
 #### String Search with Case-Insensitive Mode

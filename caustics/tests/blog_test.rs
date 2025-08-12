@@ -147,6 +147,8 @@ mod query_builder_tests {
     use chrono::{DateTime, FixedOffset, TimeZone};
     use serde_json;
     use super::user::ManyCursorExt;
+    // Bring typed aggregate extension traits into scope
+    use super::user::{AggregateAggExt as UserAggregateAggExt, GroupByHavingAggExt as UserGroupByHavingAggExt};
 
     use super::helpers::setup_test_db;
 
@@ -2898,6 +2900,73 @@ mod query_builder_tests {
         
         // For now, we just verify it compiles and runs without panicking
         // The actual functionality will be implemented later
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_and_group_by_smoke() {
+        use chrono::TimeZone;
+
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Seed
+        let _u1 = client
+            .user()
+            .create(
+                "agg1@example.com".to_string(),
+                "Agg1".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(10)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _u2 = client
+            .user()
+            .create(
+                "agg2@example.com".to_string(),
+                "Agg2".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(20)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Aggregate: count + typed aggregates
+        let agg = client
+            .user()
+            .aggregate(vec![])
+            .select_count()
+            .select_avg(user::AvgSelect::Age, "age_avg")
+            .select_min(user::MinSelect::Age, "age_min")
+            .select_max(user::MaxSelect::Age, "age_max")
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(agg.count, Some(2));
+        assert!(agg.values.get("age_avg").is_some());
+        assert!(agg.values.get("age_min").is_some());
+        assert!(agg.values.get("age_max").is_some());
+
+        // Group by age with count
+        let rows = client
+            .user()
+            .group_by(vec![user::GroupByFieldParam::Age], vec![])
+            .select_count("cnt")
+            .select_sum(user::SumSelect::Age, "age_sum")
+            .having_sum_gte(user::SumSelect::Age, 20)
+            .exec()
+            .await
+            .unwrap();
+        assert!(!rows.is_empty());
+        assert!(rows.len() <= 2);
     }
 
     #[tokio::test]
