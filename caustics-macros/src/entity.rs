@@ -1806,6 +1806,7 @@ pub fn generate_entity(
                     reverse_order: false,
                     pending_order_bys: Vec::new(),
                     cursor: None,
+                    is_distinct: false,
                     _phantom: std::marker::PhantomData,
                 }
             }

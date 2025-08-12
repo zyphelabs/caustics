@@ -375,6 +375,48 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    async fn test_distinct_compiles_and_runs() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        // Seed a few users
+        for i in 0..3 {
+            let _ = client
+                .user()
+                .create(
+                    format!("distinct{}@example.com", i),
+                    format!("Distinct {}", i),
+                    now,
+                    now,
+                    vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+                )
+                .exec()
+                .await
+                .unwrap();
+        }
+
+        // Using distinct() should still return rows successfully
+        let rows = client
+            .user()
+            .find_many(vec![])
+            .order_by(user::id::order(SortOrder::Asc))
+            .distinct()
+            .exec()
+            .await
+            .unwrap();
+
+        // Since we select all columns (including unique id), distinct currently behaves as no-op
+        // Assert we got the inserted rows (3)
+        assert!(rows.len() >= 3);
+    }
+
+    #[tokio::test]
     async fn test_count_server_side() {
         use std::str::FromStr;
         use chrono::{DateTime, FixedOffset};

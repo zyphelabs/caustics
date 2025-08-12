@@ -13,6 +13,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub reverse_order: bool,
     pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
     pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
+    pub is_distinct: bool,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -49,6 +50,13 @@ where
         let (col, order) = col_and_order.into();
         let expr = col.into_simple_expr();
         self.pending_order_bys.push((expr, order));
+        self
+    }
+
+    /// Return distinct rows (across all selected columns)
+    pub fn distinct(mut self) -> Self {
+        self.query = self.query.distinct();
+        self.is_distinct = true;
         self
     }
 
