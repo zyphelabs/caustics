@@ -167,3 +167,24 @@
 - [x] Comparison operators (lt, lte, gt, gte, not_equals)
 - [x] Collection operators (in_vec, not_in_vec)
 - [x] Logical operators (and, or, not)
+
+### PCR Parity: What’s Done vs Remaining
+
+Completed parity
+- [x] Select on find_many/find_unique/find_first returns per-entity `Selected` holder (only requested scalars populated)
+- [x] Include on select-builders (Many/First/Unique) with implicit key auto-append
+- [x] Include on full-model builders (Many/First/Unique)
+- [x] Cursor pagination, orderBy, take/skip semantics (negative take flips order)
+- [x] Aggregate and groupBy typed enums and helpers
+
+Remaining gaps
+- [ ] Nested select/include trees (selecting scalars on included relations; nested includes)
+- [ ] Relation-level orderBy/take/skip inside include args (e.g., include: { posts: { take: 5, orderBy: ... } })
+- [ ] Distinct on specific fields with native backend support (currently emulated via GROUP BY)
+- [ ] Error surface parity (typed errors like RelationNotFetched, QueryValidation) and error messages
+- [ ] Raw SQL APIs (`_queryRaw`, `_executeRaw`) and result typing
+- [ ] Full batch API parity (batch update/delete/upsert builders consolidated)
+- [ ] Middlewares/hooks and transaction API parity with PCR
+- [ ] JSON null handling flags (JsonNullValueFilter/DbNull/JsonNull/AnyNull)
+- [ ] Schema introspection exposure (DATAMODEL_STR/DATABASE_STR) and validation helpers
+- [ ] Advanced ordering options (NullsOrder First/Last, relation aggregates in orderBy)

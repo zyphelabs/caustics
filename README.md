@@ -4,16 +4,6 @@ A Prisma-like DSL for SeaORM that provides a type-safe and ergonomic way to buil
 
 > Caustics are the shimmering patterns of light that form when sunlight passes through water and reflects off the sea bed. Similarly, this crate bends and focuses SeaORM's query interface into a more ergonomic shape, offering an alternative to SeaORM's native DSL with a familiar Prisma-like syntax deduced by reflection on SeaORM's datamodel.
 
-## Features
-
-- Type-safe query building
-- Prisma-like syntax
-- Support for complex queries and relations
-- Advanced filtering operators (comparison, string, collection, logical, and null operators)
-- Automatic SQL generation
-- Transaction support
-- Batch operations
-
 ## Installation
 
 Add this to your `Cargo.toml`:
@@ -25,21 +15,15 @@ caustics = { path = "../caustics" }
 
 ## Usage
 
-### Client Initialization
+### Quick start
 
 ```rust
-use caustics::{Caustics, CausticsClient};
-use sea_orm::DatabaseConnection;
-
-// Initialize the client
-let client = CausticsClient::new(db);
-
-// Or use the extension trait
 use caustics::CausticsExt;
-let client = db.caustics();
-```
 
-### Basic Entity Definition
+let client = db.caustics();
+``` 
+
+### Define entities
 
 ```rust
 use caustics_macros::caustics;
@@ -127,9 +111,7 @@ pub mod post {
 }
 ```
 
-### Query Operations
-
-#### Find Operations
+### Find
 
 ```rust
 // Find a unique record
@@ -158,29 +140,19 @@ let users = client
     .exec()
     .await?;
 
-// Find with relations
-let user = client
+// Include relations
+let user_with_posts = client
     .user()
     .find_unique(user::id::equals(1))
     .with(user::posts::fetch(vec![]))
     .exec()
     .await?;
-
-// Find posts with user
-let posts = client
-    .post()
-    .find_many(vec![
-        post::user_id::equals(1),
-    ])
-    .with(post::user::fetch(vec![]))
-    .exec()
-    .await?;
 ```
 
-#### Include and Select (PCR-style)
+#### Include and Select
 
 ```rust
-// Include relations (PCR-like)
+// Include relations
 let users_with_posts = client
     .user()
     .find_many(vec![])
@@ -188,8 +160,7 @@ let users_with_posts = client
     .exec()
     .await?;
 
-// Select scalar fields (PCR-like)
-// Note: currently returns the full model; selection is an API placeholder for parity
+// Select scalar fields (returns a Selected holder)
 let users_basic = client
     .user()
     .find_many(vec![])
@@ -198,7 +169,7 @@ let users_basic = client
     .await?;
 ```
 
-#### Create Operations
+### Create
 
 ```rust
 // Create a new record
@@ -228,7 +199,7 @@ let post = client
     .await?;
 ```
 
-#### Update Operations
+### Update
 
 ```rust
 // Update a record
@@ -258,7 +229,7 @@ let post = client
     .await?;
 ```
 
-#### Atomic Operations
+### Atomic
 
 Caustics supports atomic numeric operations that are performed at the database level for safe concurrent updates:
 
@@ -316,7 +287,7 @@ let user = client
     .await?;
 ```
 
-#### Delete Operations
+### Delete
 
 ```rust
 // Delete a record
@@ -336,7 +307,7 @@ client
 
 ### Advanced Operations
 
-#### Upsert
+### Upsert
 
 ```rust
 let user = client
@@ -356,7 +327,7 @@ let user = client
     .await?;
 ```
 
-#### Batch Operations
+### Batch
 
 ```rust
 let (user1, user2) = client
@@ -379,7 +350,7 @@ let (user1, user2) = client
     .await?;
 ```
 
-#### Transaction
+### Transaction
 
 ```rust
 let result = client
@@ -418,7 +389,7 @@ let result = client
     .await?;
 ```
 
-#### Aggregates and Group By
+### Aggregates and Group By
 
 Caustics provides Prisma-like aggregate and group-by APIs with typed field selectors.
 
@@ -450,12 +421,11 @@ let rows = client
 
 Notes:
 - The typed selectors are enums generated per-entity: `SumSelect`, `AvgSelect`, `MinSelect`, `MaxSelect`.
-- For historical compatibility, non-typed aggregate toggles on `aggregate()` are available as `select_min_any/select_max_any/select_sum_any/select_avg_any` and apply to the first column.
 - Group-by HAVING helpers accept plain Rust numeric types via `Into<sea_orm::Value>`.
 
-### Advanced Filtering
+### Filtering
 
-#### String Search with Case-Insensitive Mode
+### String search (case-insensitive)
 
 ```rust
 // Case-sensitive search (default)
@@ -478,7 +448,7 @@ let users = client
     .await?;
 ```
 
-#### Complex Logical Queries
+### Logical
 
 ```rust
 // Find users who are either young or old, but not middle-aged
@@ -518,7 +488,7 @@ let users = client
     .await?;
 ```
 
-#### Collection Queries
+### Collections
 
 ```rust
 // Find users with specific IDs
@@ -540,7 +510,7 @@ let users = client
     .await?;
 ```
 
-#### Null Value Filtering
+### Nulls
 
 ```rust
 // Find users who haven't set their age
@@ -585,9 +555,7 @@ let active_adults = client
 ```
 
 
-### Available Operators
-
-#### Comparison Operators
+### Operators: Comparison
 
 ```rust
 // Equals
@@ -609,7 +577,7 @@ user::age::lt(18)
 user::age::lte(18)
 ```
 
-#### String Operators
+### Operators: String
 
 ```rust
 // Contains
@@ -625,7 +593,7 @@ user::name::ends_with("Doe")
 user::name::mode(caustics::QueryMode::Insensitive)
 ```
 
-#### Collection Operators
+### Operators: Collection
 
 ```rust
 // In
@@ -635,7 +603,7 @@ user::id::in_vec(vec![1, 2, 3])
 user::id::not_in_vec(vec![1, 2, 3])
 ```
 
-#### Logical Operators
+### Operators: Logical
 
 ```rust
 // AND - combine multiple conditions (all must be true)
@@ -656,7 +624,7 @@ user::not(vec![
 ])
 ```
 
-#### Null Operators
+### Operators: Null
 
 ```rust
 // Is Null - check if a nullable field is null
@@ -705,11 +673,11 @@ let posts = client
     .await?;
 ```
 
-### JSON Field Support
+### JSON
 
 Caustics provides comprehensive support for JSON field operations.
 
-#### Basic JSON Operations
+### JSON basics
 
 ```rust
 // Check if JSON field exists
@@ -726,7 +694,7 @@ let posts = client.post()
     .exec().await?;
 ```
 
-#### JSON Path Access
+### JSON path
 
 ```rust
 // Check if nested JSON path exists
@@ -738,7 +706,7 @@ let posts = client.post()
     .exec().await?;
 ```
 
-#### JSON String Operations
+### JSON string
 
 ```rust
 // Search within JSON string values
@@ -752,7 +720,7 @@ let posts = client.post()
     .exec().await?;
 ```
 
-#### JSON Array Operations
+### JSON array
 
 ```rust
 // Check if array contains a specific value
@@ -770,7 +738,28 @@ let posts = client.post()
     .exec().await?;
 ```
 
-#### JSON Object Operations
+### JSON object
+
+### Select and Include
+
+```rust
+// Select scalars – returns a Selected holder with only requested fields populated
+let students = client
+    .student()
+    .find_many(vec![])
+    .select(vec![student::SelectParam::Id, student::SelectParam::FirstName])
+    .exec()
+    .await?;
+
+// Include on selections – implicit keys are fetched automatically when needed
+let students = client
+    .student()
+    .find_many(vec![])
+    .select(vec![student::SelectParam::FirstName])
+    .include(vec![student::IncludeParam::Enrollments])
+    .exec()
+    .await?;
+```
 
 ```rust
 // Check if object contains a specific key
@@ -793,7 +782,7 @@ let posts = client.post()
 
 ## Acknowledgments
 
-This project is inspired by the excellent work done on [Prisma Client Rust](https://github.com/Brendonovich/prisma-client-rust), which provides a type-safe database client for Rust. While Caustics is not derived from Prisma Client Rust, it shares similar design goals of providing an ergonomic, type-safe database interface and is intended to be a drop-in replacement for most of the features.
+This project is inspired by the excellent work done on [Prisma Client Rust](https://github.com/Brendonovich/prisma-client-rust), which provides a type-safe database client for Rust. While Caustics is not derived from Prisma Client Rust, it shares similar design goals of providing an ergonomic, type-safe database interface and is intended to be a drop-in replacement for most of its features.
 
 ## License
 
