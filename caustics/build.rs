@@ -372,8 +372,35 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         )
     };
 
+    let entity_prelude_uses: Vec<_> = entities
+        .iter()
+        .map(|(_, module_path)| {
+            let module_ident = format_ident!("{}", module_path);
+            quote! { pub use self::#module_ident::prelude::*; }
+        })
+        .collect();
+
+    let (prelude_use, prelude_block) = if is_test {
+        (
+            quote! { #[allow(unused_imports)] use self::prelude::*; },
+            quote! { #[allow(ambiguous_glob_reexports)] pub mod prelude {} },
+        )
+    } else {
+        (
+            quote! { #[allow(unused_imports)] use self::prelude::*; },
+            quote! {
+                #[allow(ambiguous_glob_reexports)]
+                pub mod prelude {
+                    #(#entity_prelude_uses)*
+                }
+            },
+        )
+    };
+
     let client_code = quote! {
         #imports
+        // Bring all extension traits into scope automatically (generated)
+        #prelude_use
         // Arc is used directly to avoid conflicts with test imports
 
         #[allow(dead_code)]
@@ -495,6 +522,9 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
 
             #(#entity_methods)*
         }
+
+        // Crate-level prelude that re-exports all entity extension traits collected from entity modules
+        #prelude_block
 
         #[allow(dead_code)]
         impl TransactionCausticsClient {

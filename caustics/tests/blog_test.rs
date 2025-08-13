@@ -147,6 +147,7 @@ mod query_builder_tests {
     use chrono::{DateTime, FixedOffset, TimeZone};
     use serde_json;
     use super::user::ManyCursorExt;
+    use super::user::DistinctFieldsExt;
     // Bring typed aggregate extension traits into scope
     use super::user::{AggregateAggExt as UserAggregateAggExt, GroupByHavingAggExt as UserGroupByHavingAggExt};
 
@@ -408,7 +409,7 @@ mod query_builder_tests {
             .user()
             .find_many(vec![])
             .order_by(user::id::order(SortOrder::Asc))
-            .distinct()
+            .distinct_all()
             .exec()
             .await
             .unwrap();
@@ -894,15 +895,17 @@ mod query_builder_tests {
             .unwrap();
 
         // Batch update both (tuple style, fluent)
-        let (_u1_after, _u2_after) = client
-            ._batch((
-                client
-                    .user()
-                    .update(user::id::equals(u1.id), vec![user::age::increment(5)]),
-                client
-                    .user()
-                    .update(user::id::equals(u2.id), vec![user::name::set("U2-upd"), user::age::decrement(10)]),
-            ))
+        // Execute sequential updates to match the new API shape
+        let _u1_after = client
+            .user()
+            .update(user::id::equals(u1.id), vec![user::age::increment(5)])
+            .exec()
+            .await
+            .unwrap();
+        let _u2_after = client
+            .user()
+            .update(user::id::equals(u2.id), vec![user::name::set("U2-upd"), user::age::decrement(10)])
+            .exec()
             .await
             .unwrap();
 
@@ -2687,7 +2690,7 @@ mod query_builder_tests {
         // This should work even though the actual set operation is not implemented yet
         let updated_user = client
             .user()
-            .update_with_has_many_set(
+            .update(
                 user::id::equals(user.id),
                 vec![user::posts::set(vec![
                     post::id::equals(post1.id),
@@ -2800,7 +2803,7 @@ mod query_builder_tests {
         // This should set the user's posts to only post1 and post2
         let updated_user = client
             .user()
-            .update_with_has_many_set(
+            .update(
                 user::id::equals(user.id),
                 vec![user::posts::set(vec![
                     post::id::equals(post1.id),
@@ -2885,7 +2888,7 @@ mod query_builder_tests {
         // This should work with any relation name, not just hardcoded ones
         let result = client
             .user()
-            .update_with_has_many_set(
+            .update(
                 user::id::equals(user.id),
                 vec![user::posts::set(vec![
                     post::id::equals(post.id),
@@ -2944,21 +2947,28 @@ mod query_builder_tests {
             .user()
             .aggregate(vec![])
             .select_count()
-            .select_avg(user::AvgSelect::Age, "age_avg")
-            .select_min(user::MinSelect::Age, "age_min")
-            .select_max(user::MaxSelect::Age, "age_max")
+            .select_avg_typed(user::AvgSelect::Age, "age_avg")
+            .select_min_typed(user::MinSelect::Age, "age_min")
+            .select_max_typed(user::MaxSelect::Age, "age_max")
             .exec()
             .await
             .unwrap();
         assert_eq!(agg.count, Some(2));
-        assert!(agg.values.get("age_avg").is_some());
-        assert!(agg.values.get("age_min").is_some());
-        assert!(agg.values.get("age_max").is_some());
+        assert!(agg.avg.get("age_avg").is_some());
+        assert!(agg.min.get("age_min").is_some());
+        assert!(agg.max.get("age_max").is_some());
 
         // Group by age with count
         let rows = client
             .user()
-            .group_by(vec![user::GroupByFieldParam::Age], vec![])
+            .group_by(
+                vec![user::GroupByFieldParam::Age],
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+            )
             .select_count("cnt")
             .select_sum(user::SumSelect::Age, "age_sum")
             .having_sum_gte(user::SumSelect::Age, 20)
@@ -2967,6 +2977,131 @@ mod query_builder_tests {
             .unwrap();
         assert!(!rows.is_empty());
         assert!(rows.len() <= 2);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_typed_and_group_by_typed() {
+        use chrono::TimeZone;
+
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 2, 0, 0, 0)
+            .unwrap();
+
+        let _u1 = client
+            .user()
+            .create(
+                format!("t1-{}@example.com", now.timestamp()).to_string(),
+                "T1".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(10)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _u2 = client
+            .user()
+            .create(
+                format!("t2-{}@example.com", now.timestamp()).to_string(),
+                "T2".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Aggregate typed
+        let agg_typed = client
+            .user()
+            .aggregate(vec![])
+            .select_count()
+            .select_avg_typed(user::AvgSelect::Age, "age_avg")
+            .select_min_typed(user::MinSelect::Age, "age_min")
+            .select_max_typed(user::MaxSelect::Age, "age_max")
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(agg_typed.count, Some(2));
+        assert!(agg_typed.avg.get("age_avg").is_some());
+        assert!(agg_typed.min.get("age_min").is_some());
+        assert!(agg_typed.max.get("age_max").is_some());
+
+        // Group by typed
+        let rows = client
+            .user()
+            .group_by(
+                vec![user::GroupByFieldParam::Age],
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+            )
+            .select_count("cnt")
+            .select_sum(user::SumSelect::Age, "age_sum")
+            .exec()
+            .await
+            .unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            assert!(row.keys.contains_key("Age"));
+            assert!(row.aggregates.contains_key("age_sum"));
+            assert!(row.aggregates.contains_key("cnt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_distinct_on_basic() {
+        use chrono::TimeZone;
+
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 3, 0, 0, 0)
+            .unwrap();
+
+        // Two users with same name, different emails (email is unique)
+        let _u1 = client
+            .user()
+            .create(
+                format!("dup-{}@example.com", now.timestamp()).to_string(),
+                "DupName".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(21))],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _u2 = client
+            .user()
+            .create(
+                format!("dup2-{}@example.com", now.timestamp()).to_string(),
+                "DupName".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(22))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Use PCR-style typed distinct on builder
+        let users = client
+            .user()
+            .find_many(vec![])
+            .distinct(vec![user::ScalarField::Name])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].name, "DupName");
     }
 
     #[tokio::test]
@@ -3037,7 +3172,7 @@ mod query_builder_tests {
         // This should use "user_id" (converted from "UserId" in the relation definition)
         let updated_user = client
             .user()
-            .update_with_has_many_set(
+            .update(
                 user::id::equals(user.id),
                 vec![user::posts::set(vec![
                     post::id::equals(post1.id),

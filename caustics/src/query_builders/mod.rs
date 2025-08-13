@@ -22,6 +22,7 @@ pub use first::FirstQueryBuilder;
 pub use many::ManyQueryBuilder;
 pub use unique::UniqueQueryBuilder;
 pub use update::UpdateQueryBuilder;
+pub use update::UnifiedUpdateQueryBuilder;
 pub use upsert::UpsertQueryBuilder;
 
 pub use deferred_lookup::DeferredLookup;

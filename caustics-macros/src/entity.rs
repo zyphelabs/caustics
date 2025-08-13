@@ -634,6 +634,25 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate parallel lists of equals-variants and their columns for Into<(expr, value)>
+    let unique_where_equals_variants = unique_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            format_ident!("{}Equals", pascal_name)
+        })
+        .collect::<Vec<_>>();
+
+    let unique_where_equals_columns = unique_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            pascal_name
+        })
+        .collect::<Vec<_>>();
+
     // Generate field variants for OrderByParam enum (all fields)
     let order_by_field_variants = fields
         .iter()
@@ -1696,6 +1715,32 @@ pub fn generate_entity(
         }
 
         #[derive(Debug, Clone)]
+        pub enum DistinctFieldParam {
+            #(#group_by_field_variants,)*
+        }
+
+        // PCR-like scalar field enum alias
+        #[derive(Debug, Clone)]
+        pub enum ScalarField {
+            #(#group_by_field_variants,)*
+        }
+
+        // Allow using UniqueWhereParam directly as a cursor argument on ManyQueryBuilder
+        impl From<UniqueWhereParam> for (sea_query::SimpleExpr, sea_orm::Value) {
+            fn from(value: UniqueWhereParam) -> (sea_query::SimpleExpr, sea_orm::Value) {
+                use sea_orm::IntoSimpleExpr;
+                match value {
+                    #(
+                        UniqueWhereParam::#unique_where_equals_variants(value) => {
+                            let expr = <Entity as EntityTrait>::Column::#unique_where_equals_columns.into_simple_expr();
+                            (expr, sea_orm::Value::from(value))
+                        }
+                    ),*
+                }
+            }
+        }
+
+        #[derive(Debug, Clone)]
         pub enum GroupByOrderByParam {
             #(#group_by_order_by_field_variants,)*
         }
@@ -1797,7 +1842,7 @@ pub fn generate_entity(
         impl sea_orm::IntoSimpleExpr for MinSelect { fn into_simple_expr(self) -> sea_query::SimpleExpr { self.to_expr() } }
         impl sea_orm::IntoSimpleExpr for MaxSelect { fn into_simple_expr(self) -> sea_query::SimpleExpr { self.to_expr() } }
 
-        // Entity-specific extension trait on ManyQueryBuilder to accept a typed UniqueWhereParam as cursor
+        // Provide an entity-specific extension trait on ManyQueryBuilder to accept a typed UniqueWhereParam as cursor
         pub trait ManyCursorExt<'a, C: sea_orm::ConnectionTrait> {
             fn cursor(self, unique: UniqueWhereParam) -> Self;
         }
@@ -1813,19 +1858,164 @@ pub fn generate_entity(
             }
         }
 
+        // Contribute to prelude module for this entity
+        pub mod prelude {
+            pub use super::ManyCursorExt;
+            pub use super::DistinctFieldsExt;
+            pub use super::AggregateSelectorExt;
+            pub use super::GroupBySelectorExt;
+            pub use super::GroupByHavingAggExt;
+            pub use super::GroupByAggExt;
+            pub use super::AggregateAggExt;
+        }
+
+        // PCR-style aggregate selector facade on AggregateQueryBuilder
+        pub trait AggregateSelectorExt<'a, C: sea_orm::ConnectionTrait> {
+            fn _count(self) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
+            fn _avg(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
+            fn _sum(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
+            fn _min(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
+            fn _max(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
+        }
+
+        impl<'a, C: sea_orm::ConnectionTrait> AggregateSelectorExt<'a, C>
+            for caustics::AggregateQueryBuilder<'a, C, Entity>
+        {
+            fn _count(mut self) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
+                self = self.select_count();
+                self
+            }
+
+            fn _avg(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_avg_typed(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
+                        },)*
+                    }
+                }
+                self
+            }
+
+            fn _sum(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_sum_typed(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
+                        },)*
+                    }
+                }
+                self
+            }
+
+            fn _min(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_min_typed(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
+                        },)*
+                    }
+                }
+                self
+            }
+
+            fn _max(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_max_typed(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
+                        },)*
+                    }
+                }
+                self
+            }
+        }
+
+        // PCR-style aggregate selector facade on GroupByQueryBuilder
+        pub trait GroupBySelectorExt<'a, C: sea_orm::ConnectionTrait> {
+            fn _count(self) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
+            fn _avg(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
+            fn _sum(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
+            fn _min(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
+            fn _max(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
+        }
+
+        impl<'a, C: sea_orm::ConnectionTrait> GroupBySelectorExt<'a, C>
+            for caustics::GroupByQueryBuilder<'a, C, Entity>
+        {
+            fn _count(mut self) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
+                self = self.select_count("_count");
+                self
+            }
+
+            fn _avg(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_avg_typed(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
+                        },)*
+                    }
+                }
+                self
+            }
+
+            fn _sum(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_sum_typed(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
+                        },)*
+                    }
+                }
+                self
+            }
+
+            fn _min(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_min_typed(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
+                        },)*
+                    }
+                }
+                self
+            }
+
+            fn _max(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
+                for f in fields {
+                    match f {
+                        #(ScalarField::#group_by_field_variants => {
+                            self = self.select_max_typed(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
+                        },)*
+                    }
+                }
+                self
+            }
+        }
+
         // Extend GroupByQueryBuilder with typed aggregate selectors via a local trait
         pub trait GroupByAggExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select_sum(self, field: SumSelect, alias: &'static str) -> Self;
-            fn select_avg(self, field: AvgSelect, alias: &'static str) -> Self;
-            fn select_min(self, field: MinSelect, alias: &'static str) -> Self;
-            fn select_max(self, field: MaxSelect, alias: &'static str) -> Self;
+            fn select_sum_typed(self, field: SumSelect, alias: &'static str) -> Self;
+            fn select_avg_typed(self, field: AvgSelect, alias: &'static str) -> Self;
+            fn select_min_typed(self, field: MinSelect, alias: &'static str) -> Self;
+            fn select_max_typed(self, field: MaxSelect, alias: &'static str) -> Self;
         }
 
         impl<'a, C: sea_orm::ConnectionTrait> GroupByAggExt<'a, C> for caustics::GroupByQueryBuilder<'a, C, Entity> {
-            fn select_sum(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias)); self }
-            fn select_avg(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias)); self }
-            fn select_min(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias)); self }
-            fn select_max(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias)); self }
+            fn select_sum_typed(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias)); self }
+            fn select_avg_typed(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias)); self }
+            fn select_min_typed(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias)); self }
+            fn select_max_typed(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias)); self }
+        }
+
+        // Typed group-by order by aggregate outputs
+        #[derive(Debug, Clone)]
+        pub enum GroupByAggOrderParam {
+            Count(caustics::SortOrder),
+            Sum(SumSelect, caustics::SortOrder),
+            Avg(AvgSelect, caustics::SortOrder),
+            Min(MinSelect, caustics::SortOrder),
+            Max(MaxSelect, caustics::SortOrder),
         }
 
         // Typed aggregate HAVING helpers
@@ -1891,17 +2081,17 @@ pub fn generate_entity(
 
         // Add typed aggregate selection for non-group aggregate queries via a trait
         pub trait AggregateAggExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select_sum(self, field: SumSelect, alias: &'static str) -> Self;
-            fn select_avg(self, field: AvgSelect, alias: &'static str) -> Self;
-            fn select_min(self, field: MinSelect, alias: &'static str) -> Self;
-            fn select_max(self, field: MaxSelect, alias: &'static str) -> Self;
+            fn select_sum_typed(self, field: SumSelect, alias: &'static str) -> Self;
+            fn select_avg_typed(self, field: AvgSelect, alias: &'static str) -> Self;
+            fn select_min_typed(self, field: MinSelect, alias: &'static str) -> Self;
+            fn select_max_typed(self, field: MaxSelect, alias: &'static str) -> Self;
         }
 
         impl<'a, C: sea_orm::ConnectionTrait> AggregateAggExt<'a, C> for caustics::AggregateQueryBuilder<'a, C, Entity> {
-            fn select_sum(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias)); self }
-            fn select_avg(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias)); self }
-            fn select_min(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias)); self }
-            fn select_max(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias)); self }
+            fn select_sum_typed(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias, "sum")); self }
+            fn select_avg_typed(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias, "avg")); self }
+            fn select_min_typed(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias, "min")); self }
+            fn select_max_typed(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias, "max")); self }
         }
 
         // Removed inherent impl to avoid E0116 in downstream crates; use GroupByAggExt instead
@@ -1937,6 +2127,26 @@ pub fn generate_entity(
 
         #model_with_relations_impl
         #relation_metadata_impl
+
+        // PCR-style typed distinct extension for ManyQueryBuilder at module scope
+        pub trait DistinctFieldsExt<'a, C: sea_orm::ConnectionTrait> {
+            fn distinct(self, fields: Vec<ScalarField>) -> Self;
+        }
+
+        impl<'a, C: sea_orm::ConnectionTrait> DistinctFieldsExt<'a, C>
+            for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
+        {
+            fn distinct(mut self, fields: Vec<ScalarField>) -> Self {
+                let mut exprs: Vec<SimpleExpr> = Vec::with_capacity(fields.len());
+                for f in fields {
+                    let e = match f {
+                        #(ScalarField::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
+                    };
+                    exprs.push(e);
+                }
+                self.distinct_on(exprs)
+            }
+        }
 
         impl<'a, C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait> EntityClient<'a, C> {
             pub fn new(conn: &'a C, database_backend: sea_orm::DatabaseBackend) -> Self {
@@ -1980,9 +2190,27 @@ pub fn generate_entity(
                     pending_order_bys: Vec::new(),
                     cursor: None,
                     is_distinct: false,
+                    distinct_on_fields: None,
                     _phantom: std::marker::PhantomData,
                 }
             }
+
+            pub fn distinct(
+                &self,
+                mut builder: caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>,
+                fields: Vec<DistinctFieldParam>,
+            ) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                let mut exprs: Vec<SimpleExpr> = Vec::with_capacity(fields.len());
+                for f in fields {
+                    let e = match f {
+                        #(DistinctFieldParam::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
+                    };
+                    exprs.push(e);
+                }
+                builder.distinct_on(exprs)
+            }
+
+            // NOTE: PCR-style aggregation and distinct builder facades will be added incrementally
 
             
 
@@ -2006,26 +2234,52 @@ pub fn generate_entity(
                 }
             }
 
-            pub fn group_by(&self, by: Vec<GroupByFieldParam>, conditions: Vec<WhereParam>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                let condition = where_params_to_condition(conditions, self.database_backend);
+            pub fn group_by(
+                &self,
+                by: Vec<GroupByFieldParam>,
+                r#where: Vec<WhereParam>,
+                order_by: Vec<(GroupByFieldParam, caustics::SortOrder)>,
+                take: Option<i64>,
+                skip: Option<i64>,
+                having: Option<sea_orm::sea_query::Condition>,
+            ) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
+                use sea_orm::IntoSimpleExpr;
+                let condition = where_params_to_condition(r#where, self.database_backend);
                 let mut exprs: Vec<SimpleExpr> = Vec::with_capacity(by.len());
+                let mut group_cols: Vec<String> = Vec::with_capacity(by.len());
                 for b in by {
                     let e = match b {
-                        #(GroupByFieldParam::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
+                        #(GroupByFieldParam::#group_by_field_variants => {
+                            group_cols.push(stringify!(#group_by_field_variants).to_string());
+                            <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr()
+                        },)*
                     };
                     exprs.push(e);
                 }
-                caustics::GroupByQueryBuilder {
+                let mut builder = caustics::GroupByQueryBuilder {
                     condition,
                     conn: self.conn,
                     group_by_exprs: exprs,
+                    group_by_columns: group_cols,
                     having: Vec::new(),
+                    having_condition: None,
                     order_by: Vec::new(),
                     take: None,
                     skip: None,
                     aggregates: Vec::new(),
                     _phantom: std::marker::PhantomData,
+                };
+                for (field, dir) in order_by {
+                    let expr = match field {
+                        #(GroupByFieldParam::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
+                    };
+                    let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                    builder.order_by.push((expr, ord));
                 }
+                if let Some(n) = take { builder.take = Some(if n < 0 { 0 } else { n as u64 }); }
+                if let Some(n) = skip { builder.skip = Some(if n < 0 { 0 } else { n as u64 }); }
+                if let Some(cond) = having { builder.having_condition = Some(cond); }
+                builder
             }
 
             pub fn group_by_order_by(
@@ -2039,6 +2293,40 @@ pub fn generate_entity(
                         #(#group_by_order_by_match_arms,)*
                     };
                     pairs.push(pair);
+                }
+                builder.order_by_pairs(pairs)
+            }
+
+            pub fn group_by_order_by_aggregates(
+                &self,
+                builder: caustics::GroupByQueryBuilder<'a, C, Entity>,
+                order: Vec<GroupByAggOrderParam>,
+            ) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
+                use sea_orm::sea_query::{Expr, Func, SimpleExpr};
+                let mut pairs: Vec<(SimpleExpr, sea_orm::Order)> = Vec::with_capacity(order.len());
+                for o in order {
+                    match o {
+                        GroupByAggOrderParam::Count(dir) => {
+                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                            pairs.push((Expr::cust("COUNT(*)"), ord));
+                        }
+                        GroupByAggOrderParam::Sum(field, dir) => {
+                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                            pairs.push((SimpleExpr::FunctionCall(Func::sum(field.to_expr())), ord));
+                        }
+                        GroupByAggOrderParam::Avg(field, dir) => {
+                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                            pairs.push((SimpleExpr::FunctionCall(Func::avg(field.to_expr())), ord));
+                        }
+                        GroupByAggOrderParam::Min(field, dir) => {
+                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                            pairs.push((SimpleExpr::FunctionCall(Func::min(field.to_expr())), ord));
+                        }
+                        GroupByAggOrderParam::Max(field, dir) => {
+                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                            pairs.push((SimpleExpr::FunctionCall(Func::max(field.to_expr())), ord));
+                        }
+                    }
                 }
                 builder.order_by_pairs(pairs)
             }
@@ -2060,16 +2348,13 @@ pub fn generate_entity(
                 }
             }
 
-            pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
-                caustics::UpdateQueryBuilder {
-                    condition: condition.into(),
-                    changes,
-                    conn: self.conn,
-                    _phantom: std::marker::PhantomData,
-                }
-            }
-
-            pub fn update_with_has_many_set(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
+            pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam>
+            where
+                C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
+                ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model>
+                    + caustics::HasRelationMetadata<ModelWithRelations>
+                    + 'static,
+            {
                 let cond: Condition = condition.into();
                 let cond_arc = Arc::new(cond.clone());
                 let resolver: Box<
@@ -2104,12 +2389,22 @@ pub fn generate_entity(
                         Box::pin(fut)
                     }
                 });
-                caustics::HasManySetUpdateQueryBuilder {
-                    condition: cond,
-                    changes,
-                    conn: self.conn,
-                    entity_id_resolver: Some(resolver),
-                    _phantom: std::marker::PhantomData,
+                let has_many = changes.iter().any(|c| <SetParam as caustics::SetParamInfo>::is_has_many_set_operation(c));
+                if has_many {
+                    caustics::UnifiedUpdateQueryBuilder::Relations(caustics::HasManySetUpdateQueryBuilder {
+                        condition: cond,
+                        changes,
+                        conn: self.conn,
+                        entity_id_resolver: Some(resolver),
+                        _phantom: std::marker::PhantomData,
+                    })
+                } else {
+                    caustics::UnifiedUpdateQueryBuilder::Scalar(caustics::UpdateQueryBuilder {
+                        condition: cond,
+                        changes,
+                        conn: self.conn,
+                        _phantom: std::marker::PhantomData,
+                    })
                 }
             }
 

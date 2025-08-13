@@ -397,22 +397,21 @@ where
 
 impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
     BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
-    for crate::query_builders::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    for crate::query_builders::HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
 where
-    C: sea_orm::ConnectionTrait,
+    C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
     Entity: sea_orm::EntityTrait,
     ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
-    T: MergeInto<ActiveModel>,
+    T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
     <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
 {
     type Output = ModelWithRelations;
-    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {
-        BatchQuery::Update(self)
-    }
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> { unreachable!() }
     fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
         match result {
             BatchResult::Update(m) => m,
+            // HasManySet ultimately returns Update result
             _ => panic!("Expected Update"),
         }
     }

@@ -14,6 +14,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
     pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
     pub is_distinct: bool,
+    pub distinct_on_fields: Option<Vec<SimpleExpr>>,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -54,7 +55,16 @@ where
     }
 
     /// Return distinct rows (across all selected columns)
-    pub fn distinct(mut self) -> Self {
+    pub fn distinct_all(mut self) -> Self {
+        self.query = self.query.distinct();
+        self.is_distinct = true;
+        self
+    }
+
+    /// EXPERIMENTAL: Distinct by specific fields (best-effort across backends)
+    pub fn distinct_on(mut self, fields: Vec<SimpleExpr>) -> Self {
+        self.distinct_on_fields = Some(fields);
+        // Fallback behavior: apply simple DISTINCT when backend doesn't support DISTINCT ON
         self.query = self.query.distinct();
         self.is_distinct = true;
         self
@@ -65,6 +75,7 @@ where
         self.cursor = Some((expr, value));
         self
     }
+
 
     /// Execute the query and return multiple results
     pub async fn exec(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
@@ -112,6 +123,15 @@ where
                     order.clone()
                 };
                 query = query.order_by(expr.clone(), effective);
+            }
+        }
+
+        // Apply per-field distinct if provided (best-effort): emulate by grouping when possible
+        if let Some(fields) = &self.distinct_on_fields {
+            if !fields.is_empty() {
+                for f in fields {
+                    sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                }
             }
         }
 
