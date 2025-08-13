@@ -14,6 +14,9 @@ pub mod batch;
 pub mod count;
 pub mod aggregate;
 pub mod group_by;
+pub mod select_many;
+pub mod select_unique;
+pub mod select_first;
 
 pub use create::CreateQueryBuilder;
 pub use delete::DeleteQueryBuilder;
@@ -32,4 +35,7 @@ pub use batch::{BatchQuery, BatchResult};
 pub use count::CountQueryBuilder;
 pub use aggregate::AggregateQueryBuilder;
 pub use group_by::GroupByQueryBuilder;
+pub use select_many::SelectManyQueryBuilder;
+pub use select_unique::SelectUniqueQueryBuilder;
+pub use select_first::SelectFirstQueryBuilder;
 

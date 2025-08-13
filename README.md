@@ -177,6 +177,27 @@ let posts = client
     .await?;
 ```
 
+#### Include and Select (PCR-style)
+
+```rust
+// Include relations (PCR-like)
+let users_with_posts = client
+    .user()
+    .find_many(vec![])
+    .include(vec![user::IncludeParam::Posts])
+    .exec()
+    .await?;
+
+// Select scalar fields (PCR-like)
+// Note: currently returns the full model; selection is an API placeholder for parity
+let users_basic = client
+    .user()
+    .find_many(vec![])
+    .select(vec![user::SelectParam::Id, user::SelectParam::Name])
+    .exec()
+    .await?;
+```
+
 #### Create Operations
 
 ```rust

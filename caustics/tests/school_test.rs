@@ -508,6 +508,7 @@ mod caustics_school_tests {
     use super::*;
     use caustics::QueryError;
     use chrono::{DateTime, FixedOffset, TimeZone};
+    use super::student::prelude::{ManySelectExt, SelectManyIncludeExt};
 
     fn fixed_now() -> DateTime<FixedOffset> {
         FixedOffset::east_opt(0)
@@ -560,6 +561,48 @@ mod caustics_school_tests {
             .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().first_name, "Alice");
+    }
+
+    #[tokio::test]
+    async fn test_select_parity_with_include_has_many() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Seed one student
+        let _s = client
+            .student()
+            .create(
+                "S00001".to_string(),
+                "Zoe".to_string(),
+                "Lee".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![
+                    student::email::set(Some("zoe@example.com".to_string())),
+                    student::phone::set(None),
+                    student::graduation_date::set(None),
+                    student::deleted_at::set(None),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let rows = client
+            .student()
+            .find_many(vec![])
+            .take(1)
+            .select(vec![student::SelectParam::FirstName])
+            .include(vec![student::IncludeParam::Enrollments])
+            .exec()
+            .await
+            .unwrap();
+        assert!(!rows.is_empty());
+        assert!(rows[0].first_name.is_some());
+        let _ = &rows[0].enrollments;
     }
 
     #[tokio::test]
@@ -901,6 +944,7 @@ mod caustics_school_tests {
 mod caustics_school_advanced_tests {
     use super::helpers::setup_test_db;
     use super::*;
+    use super::teacher::prelude::{FirstSelectExt, SelectFirstIncludeExt};
     use chrono::{DateTime, FixedOffset, TimeZone};
 
     fn fixed_now() -> DateTime<FixedOffset> {
@@ -982,6 +1026,25 @@ mod caustics_school_advanced_tests {
             .unwrap();
         assert_eq!(filtered2.len(), 1);
         assert_eq!(filtered2[0].student_number, "S02");
+    }
+
+    #[tokio::test]
+    async fn test_select_parity_with_include_belongs_to() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        let row = client
+            .teacher()
+            .find_first(vec![])
+            .select(vec![teacher::SelectParam::FirstName])
+            .include(vec![teacher::IncludeParam::Department])
+            .exec()
+            .await
+            .unwrap();
+        if let Some(t) = row {
+            assert!(t.first_name.is_some());
+            let _ = &t.department;
+        }
     }
 
     #[tokio::test]

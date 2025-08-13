@@ -860,6 +860,24 @@ pub fn generate_entity(
     // Generate relation submodules
     let relation_submodules = generate_relation_submodules(&relations, &fields);
 
+    // Generate IncludeParam enum variants and match arms for include()
+    let include_enum_variants = relations
+        .iter()
+        .map(|relation| {
+            let variant = format_ident!("{}", relation.name.to_pascal_case());
+            quote! { #variant }
+        })
+        .collect::<Vec<_>>();
+
+    let include_match_arms = relations
+        .iter()
+        .map(|relation| {
+            let variant = format_ident!("{}", relation.name.to_pascal_case());
+            let module_ident = format_ident!("{}", relation.name.to_lowercase());
+            quote! { IncludeParam::#variant => { self = self.with(#module_ident::fetch()); } }
+        })
+        .collect::<Vec<_>>();
+
     // Generate ModelWithRelations struct fields
     let model_with_relations_fields = fields
         .iter()
@@ -1012,6 +1030,79 @@ pub fn generate_entity(
         }
     };
 
+    // Prepare Selected scalar field definitions (Option<InnerType>)
+    let selected_scalar_fields = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let inner_ty = crate::common::extract_inner_type_from_option(&field.ty);
+            quote! { pub #name: Option<#inner_ty> }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate per-field row extraction statements using snake_case aliases
+    let selected_fill_stmts = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let inner_ty = crate::common::extract_inner_type_from_option(&field.ty);
+            let alias = syn::LitStr::new(&name.to_string(), proc_macro2::Span::call_site());
+            quote! { s.#name = row.try_get::<#inner_ty>("", #alias).ok(); }
+        })
+        .collect::<Vec<_>>();
+
+    // Clear unselected scalar fields based on provided aliases (snake_case)
+    let selected_clear_stmts = fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let alias = syn::LitStr::new(&name.to_string(), proc_macro2::Span::call_site());
+            quote! { if !allowed.contains(&#alias) { self.#name = None; } }
+        })
+        .collect::<Vec<_>>();
+
+    // Match arms for get_i32 only for integer-like fields
+    let get_i32_match_arms = fields
+        .iter()
+        .filter(|field| {
+            matches!(
+                crate::where_param::detect_field_type(&field.ty),
+                crate::where_param::FieldType::Integer | crate::where_param::FieldType::OptionInteger
+            )
+        })
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let alias = syn::LitStr::new(&name.to_string(), proc_macro2::Span::call_site());
+            quote! { #alias => self.#name }
+        })
+        .collect::<Vec<_>>();
+
+    // Prepare alias/id pairs for Selected::column_for_alias
+    let selected_all_field_names: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+        })
+        .collect();
+    let selected_all_field_idents: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            let pascal_case = field_name
+                .split('_')
+                .map(|part| {
+                    let mut chars = part.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => first.to_uppercase().chain(chars).collect(),
+                    }
+                })
+                .collect::<String>();
+            syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+        })
+        .collect();
+
     // Generate ModelWithRelations struct and constructor
     let model_with_relations_impl = quote! {
         #filter_types
@@ -1053,6 +1144,51 @@ pub fn generate_entity(
         impl caustics::FromModel<Model> for ModelWithRelations {
             fn from_model(model: Model) -> Self {
                 Self::from_model(model)
+            }
+        }
+
+        // Selected holder struct with Option<T> for all scalar fields and same relation fields
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+        pub struct Selected {
+            #(#selected_scalar_fields,)*
+            #(#relation_fields,)*
+        }
+
+        impl Selected { fn new() -> Self { Default::default() } }
+
+        impl caustics::EntitySelection for Selected {
+            fn fill_from_row(row: &sea_orm::QueryResult, _fields: &[&str]) -> Self {
+                let mut s = Selected::new();
+                #(#selected_fill_stmts)*
+                s
+            }
+
+            fn clear_unselected(&mut self, allowed: &[&str]) {
+                #(#selected_clear_stmts)*
+            }
+
+            fn set_relation(&mut self, relation_name: &str, value: Box<dyn std::any::Any + Send>) {
+                match relation_name {
+                    #( stringify!(#relation_init_names) => { let v = value.downcast().ok().expect("relation type"); self.#relation_init_names = *v; } ),*
+                    _ => {}
+                }
+            }
+
+            fn get_i32(&self, field_name: &str) -> Option<i32> {
+                match field_name {
+                    #(#get_i32_match_arms,)*
+                    _ => None
+                }
+            }
+
+            fn column_for_alias(alias: &str) -> Option<sea_query::SimpleExpr> {
+                use sea_orm::IntoSimpleExpr;
+                match alias {
+                    #(
+                        #selected_all_field_names => Some(<Entity as sea_orm::EntityTrait>::Column::#selected_all_field_idents.into_simple_expr()),
+                    )*
+                    _ => None,
+                }
             }
         }
     };
@@ -1174,6 +1310,15 @@ pub fn generate_entity(
         let target_primary_key_column_lit = syn::LitStr::new(&target_primary_key_column, proc_macro2::Span::call_site());
         let is_foreign_key_nullable_lit = syn::LitBool::new(relation.is_nullable, proc_macro2::Span::call_site());
         
+        let fk_field_name_lit = match relation.kind {
+            RelationKind::HasMany => syn::LitStr::new("id", proc_macro2::Span::call_site()),
+            RelationKind::BelongsTo => syn::LitStr::new(relation.foreign_key_field.as_ref().unwrap(), proc_macro2::Span::call_site()),
+        };
+        let current_primary_key_field_name_lit = syn::LitStr::new(&current_primary_key_column, proc_macro2::Span::call_site());
+        let is_has_many_lit = match relation.kind {
+            RelationKind::HasMany => syn::LitBool::new(true, proc_macro2::Span::call_site()),
+            RelationKind::BelongsTo => syn::LitBool::new(false, proc_macro2::Span::call_site()),
+        };
         quote! {
             caustics::RelationDescriptor::<ModelWithRelations> {
                 name: #name,
@@ -1184,10 +1329,13 @@ pub fn generate_entity(
                 get_foreign_key: #get_foreign_key_closure,
                 target_entity: #target_entity,
                 foreign_key_column: #foreign_key_column,
+                foreign_key_field_name: #fk_field_name_lit,
                 target_table_name: #target_table_name_lit,
                 current_primary_key_column: #current_primary_key_column_lit,
+                current_primary_key_field_name: #current_primary_key_field_name_lit,
                 target_primary_key_column: #target_primary_key_column_lit,
                 is_foreign_key_nullable: #is_foreign_key_nullable_lit,
+                is_has_many: #is_has_many_lit,
             }
         }
     });
@@ -1199,6 +1347,13 @@ pub fn generate_entity(
         impl caustics::HasRelationMetadata<ModelWithRelations> for ModelWithRelations {
             fn relation_descriptors() -> &'static [caustics::RelationDescriptor<ModelWithRelations>] {
                 RELATION_DESCRIPTORS
+            }
+        }
+
+        static SELECTED_RELATION_DESCRIPTORS: &[caustics::RelationDescriptor<Selected>] = &[];
+        impl caustics::HasRelationMetadata<Selected> for Selected {
+            fn relation_descriptors() -> &'static [caustics::RelationDescriptor<Selected>] {
+                SELECTED_RELATION_DESCRIPTORS
             }
         }
     };
@@ -1725,6 +1880,218 @@ pub fn generate_entity(
             #(#group_by_field_variants,)*
         }
 
+        // Select parameters for scalar fields (PCR-like select)
+        #[derive(Debug, Clone)]
+        pub enum SelectParam {
+            #(#group_by_field_variants,)*
+        }
+
+        // Extension traits to apply select on query builders returning Selected builders
+        pub trait ManySelectExt<'a, C: sea_orm::ConnectionTrait> {
+            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
+        }
+
+        impl<'a, C> ManySelectExt<'a, C> for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
+        where
+            C: sea_orm::ConnectionTrait,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
+        {
+            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
+                use sea_orm::IntoSimpleExpr;
+                let mut builder = caustics::SelectManyQueryBuilder {
+                    query: self.query,
+                    conn: self.conn,
+                    selected_fields: Vec::new(),
+                    requested_aliases: Vec::new(),
+                    relations_to_fetch: self.relations_to_fetch,
+                    registry: self.registry,
+                    database_backend: self.database_backend,
+                    reverse_order: self.reverse_order,
+                    pending_order_bys: self.pending_order_bys,
+                    cursor: self.cursor,
+                    is_distinct: self.is_distinct,
+                    distinct_on_fields: self.distinct_on_fields,
+                    _phantom: std::marker::PhantomData,
+                };
+                for s in selects {
+                    match s {
+                        #( SelectParam::#group_by_field_variants => {
+                            let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
+                            builder = builder.push_field(expr, #all_field_names);
+                            builder.requested_aliases.push(#all_field_names.to_string());
+                        } ),*
+                    }
+                }
+                builder
+            }
+        }
+
+        pub trait UniqueSelectExt<'a, C: sea_orm::ConnectionTrait> {
+            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
+        }
+
+        impl<'a, C> UniqueSelectExt<'a, C> for caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>
+        where
+            C: sea_orm::ConnectionTrait,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
+        {
+            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
+                use sea_orm::IntoSimpleExpr;
+                let mut builder = caustics::SelectUniqueQueryBuilder {
+                    query: self.query,
+                    conn: self.conn,
+                    selected_fields: Vec::new(),
+                    requested_aliases: Vec::new(),
+                    relations_to_fetch: self.relations_to_fetch,
+                    registry: self.registry,
+                    database_backend: self.conn.get_database_backend(),
+                    _phantom: std::marker::PhantomData,
+                };
+                for s in selects {
+                    match s {
+                        #( SelectParam::#group_by_field_variants => {
+                            let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
+                            builder = builder.push_field(expr, #all_field_names);
+                            builder.requested_aliases.push(#all_field_names.to_string());
+                        } ),*
+                    }
+                }
+                builder
+            }
+        }
+
+        pub trait FirstSelectExt<'a, C: sea_orm::ConnectionTrait> {
+            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
+        }
+
+        impl<'a, C> FirstSelectExt<'a, C> for caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
+        where
+            C: sea_orm::ConnectionTrait,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
+        {
+            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
+                use sea_orm::IntoSimpleExpr;
+                let mut builder = caustics::SelectFirstQueryBuilder {
+                    query: self.query,
+                    conn: self.conn,
+                    selected_fields: Vec::new(),
+                    requested_aliases: Vec::new(),
+                    relations_to_fetch: self.relations_to_fetch,
+                    registry: self.registry,
+                    database_backend: self.database_backend,
+                    _phantom: std::marker::PhantomData,
+                };
+                for s in selects {
+                    match s {
+                        #( SelectParam::#group_by_field_variants => {
+                            let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
+                            builder = builder.push_field(expr, #all_field_names);
+                            builder.requested_aliases.push(#all_field_names.to_string());
+                        } ),*
+                    }
+                }
+                builder
+            }
+        }
+
+        // Include parameters for relations (PCR-like include)
+        #[derive(Debug, Clone)]
+        pub enum IncludeParam {
+            #(#include_enum_variants,)*
+        }
+
+        // Extension traits to apply include on query builders
+        pub trait ManyIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn include(self, includes: Vec<IncludeParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>;
+        }
+
+        impl<'a, C> ManyIncludeExt<'a, C> for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
+        where
+            C: sea_orm::ConnectionTrait,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
+        {
+            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                for inc in includes {
+                    match inc {
+                        #(#include_match_arms,)*
+                    }
+                }
+                self
+            }
+        }
+
+        pub trait UniqueIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn include(self, includes: Vec<IncludeParam>) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>;
+        }
+
+        impl<'a, C> UniqueIncludeExt<'a, C> for caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>
+        where
+            C: sea_orm::ConnectionTrait,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
+        {
+            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                for inc in includes {
+                    match inc {
+                        #(#include_match_arms,)*
+                    }
+                }
+                self
+            }
+        }
+
+        pub trait FirstIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn include(self, includes: Vec<IncludeParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>;
+        }
+
+        impl<'a, C> FirstIncludeExt<'a, C> for caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
+        where
+            C: sea_orm::ConnectionTrait,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
+        {
+            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                for inc in includes {
+                    match inc {
+                        #(#include_match_arms,)*
+                    }
+                }
+                self
+            }
+        }
+
+        // Include on select builders
+        pub trait SelectManyIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
+        }
+        impl<'a, C> SelectManyIncludeExt<'a, C> for caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>
+        where C: sea_orm::ConnectionTrait {
+            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
+                for inc in includes { match inc { #(#include_match_arms,)* } }
+                self
+            }
+        }
+
+        pub trait SelectUniqueIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
+        }
+        impl<'a, C> SelectUniqueIncludeExt<'a, C> for caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>
+        where C: sea_orm::ConnectionTrait {
+            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
+                for inc in includes { match inc { #(#include_match_arms,)* } }
+                self
+            }
+        }
+
+        pub trait SelectFirstIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
+        }
+        impl<'a, C> SelectFirstIncludeExt<'a, C> for caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>
+        where C: sea_orm::ConnectionTrait {
+            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
+                for inc in includes { match inc { #(#include_match_arms,)* } }
+                self
+            }
+        }
+
         // Allow using UniqueWhereParam directly as a cursor argument on ManyQueryBuilder
         impl From<UniqueWhereParam> for (sea_query::SimpleExpr, sea_orm::Value) {
             fn from(value: UniqueWhereParam) -> (sea_query::SimpleExpr, sea_orm::Value) {
@@ -1867,6 +2234,15 @@ pub fn generate_entity(
             pub use super::GroupByHavingAggExt;
             pub use super::GroupByAggExt;
             pub use super::AggregateAggExt;
+            pub use super::ManyIncludeExt;
+            pub use super::UniqueIncludeExt;
+            pub use super::FirstIncludeExt;
+            pub use super::ManySelectExt;
+            pub use super::UniqueSelectExt;
+            pub use super::FirstSelectExt;
+            pub use super::SelectManyIncludeExt;
+            pub use super::SelectUniqueIncludeExt;
+            pub use super::SelectFirstIncludeExt;
         }
 
         // PCR-style aggregate selector facade on AggregateQueryBuilder
