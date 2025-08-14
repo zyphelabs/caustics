@@ -1,5 +1,6 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter};
-use crate::types::{EntityRegistry, Filter, CausticsError};
+use crate::types::ApplyNestedIncludes;
+use crate::types::EntityRegistry;
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, Select};
 
 /// Query builder for finding the first entity record matching conditions
@@ -7,7 +8,7 @@ pub struct FirstQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelW
     pub query: Select<Entity>,
     pub conn: &'a C,
     pub relations_to_fetch: Vec<RelationFilter>,
-    pub registry: &'a dyn EntityRegistry<C>,
+    pub registry: &'a (dyn EntityRegistry<C> + Sync),
     pub database_backend: DatabaseBackend,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
@@ -16,7 +17,11 @@ impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations>
     FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
 where
     ModelWithRelations:
-        FromModel<Entity::Model> + HasRelationMetadata<ModelWithRelations> + Send + 'static,
+        FromModel<Entity::Model>
+        + HasRelationMetadata<ModelWithRelations>
+        + crate::types::ApplyNestedIncludes<C>
+        + Send
+        + 'static,
 {
     /// Execute the query and return a single result
     pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
@@ -53,16 +58,9 @@ where
         if let Some(main_model) = main_result {
             let mut model_with_relations = ModelWithRelations::from_model(main_model);
 
-            // Fetch relations for the main model
+            // Fetch relations for the main model (nested-aware)
             for relation_filter in relations_to_fetch {
-                Self::fetch_relation_for_model(
-                    conn,
-                    &mut model_with_relations,
-                    relation_filter.relation,
-                    &relation_filter.filters,
-                    registry,
-                )
-                .await?;
+                ApplyNestedIncludes::apply_relation_filter(&mut model_with_relations, conn, &relation_filter, registry).await?;
             }
 
             Ok(Some(model_with_relations))
@@ -71,54 +69,5 @@ where
         }
     }
 
-    /// Fetch a single relation for a model
-    async fn fetch_relation_for_model(
-        conn: &C,
-        model_with_relations: &mut ModelWithRelations,
-        relation_name: &str,
-        _filters: &[Filter],
-        registry: &dyn EntityRegistry<C>,
-    ) -> Result<(), sea_orm::DbErr> {
-        // Use the actual relation fetcher implementation
-        let descriptor = ModelWithRelations::get_relation_descriptor(relation_name)
-            .ok_or_else(|| CausticsError::RelationNotFound { relation: relation_name.to_string() })?;
-
-        // Get the foreign key value from the model
-        let foreign_key_value = (descriptor.get_foreign_key)(model_with_relations);
-
-        // Get the target entity name from the descriptor (typed)
-        let extracted_entity_name = descriptor.target_entity.to_string();
-
-        // Get the foreign key column name from the descriptor
-        let foreign_key_column = descriptor.foreign_key_column;
-
-        // Determine which entity's fetcher to use
-        let is_has_many = foreign_key_column == "id";
-        let fetcher_entity_name = if is_has_many {
-            // Use the registry key for the current entity
-            let type_name = std::any::type_name::<ModelWithRelations>();
-            type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase()
-        } else {
-            extracted_entity_name.clone()
-        };
-        let fetcher = registry.get_fetcher(&fetcher_entity_name)
-            .ok_or_else(|| CausticsError::EntityFetcherMissing { entity: fetcher_entity_name.clone() })?;
-
-        // Fetch the relation data
-        let fetched_result = fetcher
-            .fetch_by_foreign_key(
-                conn,
-                foreign_key_value,
-                foreign_key_column,
-                &fetcher_entity_name,
-                relation_name,
-            )
-            .await?;
-
-        // The fetcher already returns the correct type, just pass it directly
-        (descriptor.set_field)(model_with_relations, fetched_result);
-
-        Ok(())
-    }
 }
 

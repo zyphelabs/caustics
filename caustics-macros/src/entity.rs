@@ -860,12 +860,76 @@ pub fn generate_entity(
     // Generate relation submodules
     let relation_submodules = generate_relation_submodules(&relations, &fields);
 
+    // Precompute nested-include pattern helpers
+    let relation_names_snake_lits: Vec<_> = relations
+        .iter()
+        .map(|relation| {
+            let name_str = relation.name.to_snake_case();
+            syn::LitStr::new(&name_str, proc_macro2::Span::call_site())
+        })
+        .collect();
+    let relation_nested_apply_blocks: Vec<_> = relations
+        .iter()
+        .map(|relation| {
+            let target = &relation.target;
+            match relation.kind {
+                RelationKind::HasMany => {
+                    quote! {
+                        let vec_ref = fetched_result.downcast_mut::<Option<Vec<#target::ModelWithRelations>>>()
+                            .expect("Type mismatch in nested has_many downcast");
+                        if let Some(vec_inner) = vec_ref.as_mut() {
+                            for elem in vec_inner.iter_mut() {
+                                for nested in &filter.nested_includes {
+                                    #target::ModelWithRelations::__caustics_apply_relation_filter(elem, conn, nested, registry).await?;
+                                }
+                            }
+                        }
+                    }
+                }
+                RelationKind::BelongsTo => {
+                    // Determine optional vs required
+                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                        if let Some(field) = fields
+                            .iter()
+                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        {
+                            is_option(&field.ty)
+                        } else { false }
+                    } else { false };
+                    if is_optional {
+                        quote! {
+                            let mmref = fetched_result.downcast_mut::<Option<Option<#target::ModelWithRelations>>>()
+                                .expect("Type mismatch in nested optional belongs_to downcast");
+                            if let Some(inner) = mmref.as_mut() {
+                                if let Some(model) = inner.as_mut() {
+                                    for nested in &filter.nested_includes {
+                                        #target::ModelWithRelations::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        quote! {
+                            let mref = fetched_result.downcast_mut::<Option<#target::ModelWithRelations>>()
+                                .expect("Type mismatch in nested belongs_to downcast");
+                            if let Some(model) = mref.as_mut() {
+                                for nested in &filter.nested_includes {
+                                    #target::ModelWithRelations::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
     // Generate IncludeParam enum variants and match arms for include()
     let include_enum_variants = relations
         .iter()
         .map(|relation| {
             let variant = format_ident!("{}", relation.name.to_pascal_case());
-            quote! { #variant }
+            quote! { #variant(RelationFilter) }
         })
         .collect::<Vec<_>>();
 
@@ -873,8 +937,7 @@ pub fn generate_entity(
         .iter()
         .map(|relation| {
             let variant = format_ident!("{}", relation.name.to_pascal_case());
-            let module_ident = format_ident!("{}", relation.name.to_lowercase());
-            quote! { IncludeParam::#variant => { self = self.with(#module_ident::fetch()); } }
+            quote! { IncludeParam::#variant(filter) => { self = self.with(filter); } }
         })
         .collect::<Vec<_>>();
 
@@ -1004,10 +1067,14 @@ pub fn generate_entity(
     let filter_types = quote! {
         pub type Filter = caustics::Filter;
 
-        #[derive(Clone)]
+        #[derive(Clone, Debug)]
         pub struct RelationFilter {
             pub relation: &'static str,
             pub filters: Vec<Filter>,
+            pub nested_select_aliases: Option<Vec<String>>,
+            pub nested_includes: Vec<caustics::RelationFilter>,
+            pub take: Option<i64>,
+            pub skip: Option<i64>,
         }
 
         impl caustics::RelationFilterTrait for RelationFilter {
@@ -1025,6 +1092,10 @@ pub fn generate_entity(
                 caustics::RelationFilter {
                     relation: relation_filter.relation,
                     filters: relation_filter.filters,
+                    nested_select_aliases: relation_filter.nested_select_aliases,
+                    nested_includes: relation_filter.nested_includes,
+                    take: relation_filter.take,
+                    skip: relation_filter.skip,
                 }
             }
         }
@@ -1130,6 +1201,59 @@ pub fn generate_entity(
                     #(#relation_defaults,)*
                 }
             }
+
+            pub fn __caustics_apply_relation_filter<'a, C: sea_orm::ConnectionTrait>(
+                &'a mut self,
+                conn: &'a C,
+                filter: &'a caustics::RelationFilter,
+                registry: &'a (dyn caustics::EntityRegistry<C> + Sync),
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+                Box::pin(async move {
+                    let descriptor = <Self as caustics::HasRelationMetadata<Self>>::get_relation_descriptor(filter.relation)
+                        .ok_or_else(|| caustics::CausticsError::RelationNotFound { relation: filter.relation.to_string() })?;
+                    let foreign_key_value = (descriptor.get_foreign_key)(self);
+                    // Always resolve fetcher for the current entity module
+                    let fetcher_entity_name = {
+                        let type_name = std::any::type_name::<Self>();
+                        type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase()
+                    };
+                    let fetcher = registry.get_fetcher(&fetcher_entity_name)
+                        .ok_or_else(|| caustics::CausticsError::EntityFetcherMissing { entity: fetcher_entity_name.clone() })?;
+                    let mut fetched_result = fetcher
+                        .fetch_by_foreign_key(
+                            conn,
+                            foreign_key_value,
+                            descriptor.foreign_key_column,
+                            &fetcher_entity_name,
+                            filter.relation,
+                        )
+                        .await?;
+
+                    // Apply nested includes recursively, if any
+                    if !filter.nested_includes.is_empty() {
+                        match filter.relation {
+                            #(
+                                #relation_names_snake_lits => { #relation_nested_apply_blocks }
+                            ),*
+                            , _ => {}
+                        }
+                    }
+
+                    (descriptor.set_field)(self, fetched_result);
+                    Ok(())
+                })
+            }
+        }
+
+        impl<C: sea_orm::ConnectionTrait> caustics::ApplyNestedIncludes<C> for ModelWithRelations {
+            fn apply_relation_filter<'a>(
+                &'a mut self,
+                conn: &'a C,
+                filter: &'a caustics::RelationFilter,
+                registry: &'a (dyn caustics::EntityRegistry<C> + Sync),
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+                self.__caustics_apply_relation_filter(conn, filter, registry)
+            }
         }
 
         impl std::default::Default for ModelWithRelations {
@@ -1189,6 +1313,59 @@ pub fn generate_entity(
                     )*
                     _ => None,
                 }
+            }
+        }
+
+        impl Selected {
+            pub fn __caustics_apply_relation_filter<'a, C: sea_orm::ConnectionTrait>(
+                &'a mut self,
+                conn: &'a C,
+                filter: &'a caustics::RelationFilter,
+                registry: &'a (dyn caustics::EntityRegistry<C> + Sync),
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+                Box::pin(async move {
+                    let descriptor = <Self as caustics::HasRelationMetadata<Selected>>::get_relation_descriptor(filter.relation)
+                        .ok_or_else(|| caustics::CausticsError::RelationNotFound { relation: filter.relation.to_string() })?;
+                    let foreign_key_value = (descriptor.get_foreign_key)(self);
+                    let fetcher_entity_name = {
+                        let type_name = std::any::type_name::<Self>();
+                        type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase()
+                    };
+                    let fetcher = registry.get_fetcher(&fetcher_entity_name)
+                        .ok_or_else(|| caustics::CausticsError::EntityFetcherMissing { entity: fetcher_entity_name.clone() })?;
+                    let mut fetched_result = fetcher
+                        .fetch_by_foreign_key(
+                            conn,
+                            foreign_key_value,
+                            descriptor.foreign_key_column,
+                            &fetcher_entity_name,
+                            filter.relation,
+                        )
+                        .await?;
+
+                    if !filter.nested_includes.is_empty() {
+                        match filter.relation {
+                            #(
+                                #relation_names_snake_lits => { #relation_nested_apply_blocks }
+                            ),*
+                            , _ => {}
+                        }
+                    }
+
+                    (descriptor.set_field)(self, fetched_result);
+                    Ok(())
+                })
+            }
+        }
+
+        impl<C: sea_orm::ConnectionTrait> caustics::ApplyNestedIncludes<C> for Selected {
+            fn apply_relation_filter<'a>(
+                &'a mut self,
+                conn: &'a C,
+                filter: &'a caustics::RelationFilter,
+                registry: &'a (dyn caustics::EntityRegistry<C> + Sync),
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+                self.__caustics_apply_relation_filter(conn, filter, registry)
             }
         }
     };
@@ -1272,9 +1449,17 @@ pub fn generate_entity(
                 )
             }
         };
-        let target_entity_debug_string = format!("{:?}", relation.target);
+        // Use the lowercase module name as the registry key (e.g., "post")
+        let target_entity_module_name_lower = relation
+            .target
+            .segments
+            .last()
+            .unwrap()
+            .ident
+            .to_string()
+            .to_lowercase();
         let target_entity = syn::LitStr::new(
-            &target_entity_debug_string,
+            &target_entity_module_name_lower,
             proc_macro2::Span::call_site(),
         );
         let foreign_key_column = syn::LitStr::new(&foreign_key_column, proc_macro2::Span::call_site());
@@ -1340,6 +1525,76 @@ pub fn generate_entity(
         }
     });
 
+    // Also build relation descriptors for Selected (uses Option<T> scalars)
+    let selected_relation_descriptors = relations.iter().map(|relation| {
+        let rel_field = format_ident!("{}", relation.name.to_snake_case());
+        let name_str = relation.name.to_snake_case();
+        let name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
+        let target = &relation.target;
+        let rel_type = match relation.kind {
+            RelationKind::HasMany => quote! { Option<Vec<#target::ModelWithRelations>> },
+            RelationKind::BelongsTo => {
+                let is_optional = relation.is_nullable;
+                if is_optional { quote! { Option<Option<#target::ModelWithRelations>> } } else { quote! { Option<#target::ModelWithRelations> } }
+            }
+        };
+        let foreign_key_column = relation.foreign_key_column.as_ref().map(|s| s.clone()).unwrap_or_else(|| "id".to_string());
+        let target_entity_module_name_lower = relation
+            .target
+            .segments
+            .last()
+            .unwrap()
+            .ident
+            .to_string()
+            .to_lowercase();
+        let target_entity = syn::LitStr::new(&target_entity_module_name_lower, proc_macro2::Span::call_site());
+        let foreign_key_column = syn::LitStr::new(&foreign_key_column, proc_macro2::Span::call_site());
+        let fk_field_name_lit = match relation.kind {
+            RelationKind::HasMany => syn::LitStr::new("id", proc_macro2::Span::call_site()),
+            RelationKind::BelongsTo => syn::LitStr::new(relation.foreign_key_field.as_ref().unwrap(), proc_macro2::Span::call_site()),
+        };
+        let target_table_default = relation.name.to_snake_case();
+        let target_table_name_ref = relation
+            .target_table_name
+            .as_ref()
+            .unwrap_or(&target_table_default);
+        let target_table_name_lit = syn::LitStr::new(target_table_name_ref, proc_macro2::Span::call_site());
+        let current_primary_key_field_name_lit = syn::LitStr::new("id", proc_macro2::Span::call_site());
+        let current_primary_key_column_lit = syn::LitStr::new("id", proc_macro2::Span::call_site());
+        let target_primary_key_column_lit = syn::LitStr::new(&relation
+            .primary_key_field
+            .as_ref()
+            .map(|s| s.clone())
+            .unwrap_or_else(|| "id".to_string()), proc_macro2::Span::call_site());
+        let is_has_many_lit = match relation.kind {
+            RelationKind::HasMany => syn::LitBool::new(true, proc_macro2::Span::call_site()),
+            RelationKind::BelongsTo => syn::LitBool::new(false, proc_macro2::Span::call_site()),
+        };
+        quote! {
+            caustics::RelationDescriptor::<Selected> {
+                name: #name,
+                set_field: |model, value| {
+                    let value = value.downcast::<#rel_type>().expect("Type mismatch in set_field");
+                    model.#rel_field = *value;
+                },
+                get_foreign_key: |model: &Selected| {
+                    // For has_many, use current id; for belongs_to, use FK field on Selected
+                    let field_name = match #is_has_many_lit { true => "id", false => #fk_field_name_lit };
+                    <Selected as caustics::EntitySelection>::get_i32(model, field_name)
+                },
+                target_entity: #target_entity,
+                foreign_key_column: #foreign_key_column,
+                foreign_key_field_name: #fk_field_name_lit,
+                target_table_name: #target_table_name_lit,
+                current_primary_key_column: #current_primary_key_column_lit,
+                current_primary_key_field_name: #current_primary_key_field_name_lit,
+                target_primary_key_column: #target_primary_key_column_lit,
+                is_foreign_key_nullable: #is_has_many_lit,
+                is_has_many: #is_has_many_lit,
+            }
+        }
+    });
+
     let relation_metadata_impl = quote! {
         static RELATION_DESCRIPTORS: &[caustics::RelationDescriptor<ModelWithRelations>] = &[
             #(#relation_descriptors,)*
@@ -1350,7 +1605,9 @@ pub fn generate_entity(
             }
         }
 
-        static SELECTED_RELATION_DESCRIPTORS: &[caustics::RelationDescriptor<Selected>] = &[];
+        static SELECTED_RELATION_DESCRIPTORS: &[caustics::RelationDescriptor<Selected>] = &[
+            #(#selected_relation_descriptors,)*
+        ];
         impl caustics::HasRelationMetadata<Selected> for Selected {
             fn relation_descriptors() -> &'static [caustics::RelationDescriptor<Selected>] {
                 SELECTED_RELATION_DESCRIPTORS
@@ -1886,6 +2143,17 @@ pub fn generate_entity(
             #(#group_by_field_variants,)*
         }
 
+        // Map typed SelectParam to column alias strings (snake_case)
+        pub fn select_params_to_aliases(params: Vec<SelectParam>) -> Vec<String> {
+            let mut out: Vec<String> = Vec::with_capacity(params.len());
+            for p in params {
+                match p {
+                    #( SelectParam::#group_by_field_variants => out.push(#all_field_names.to_string()), )*
+                }
+            }
+            out
+        }
+
         // Extension traits to apply select on query builders returning Selected builders
         pub trait ManySelectExt<'a, C: sea_orm::ConnectionTrait> {
             fn select(self, selects: Vec<SelectParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
@@ -2000,70 +2268,19 @@ pub fn generate_entity(
             #(#include_enum_variants,)*
         }
 
-        // Extension traits to apply include on query builders
-        pub trait ManyIncludeExt<'a, C: sea_orm::ConnectionTrait> {
-            fn include(self, includes: Vec<IncludeParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>;
-        }
-
-        impl<'a, C> ManyIncludeExt<'a, C> for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
-        where
-            C: sea_orm::ConnectionTrait,
-            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
-        {
-            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                for inc in includes {
-                    match inc {
-                        #(#include_match_arms,)*
-                    }
-                }
-                self
-            }
-        }
-
-        pub trait UniqueIncludeExt<'a, C: sea_orm::ConnectionTrait> {
-            fn include(self, includes: Vec<IncludeParam>) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>;
-        }
-
-        impl<'a, C> UniqueIncludeExt<'a, C> for caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>
-        where
-            C: sea_orm::ConnectionTrait,
-            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
-        {
-            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                for inc in includes {
-                    match inc {
-                        #(#include_match_arms,)*
-                    }
-                }
-                self
-            }
-        }
-
-        pub trait FirstIncludeExt<'a, C: sea_orm::ConnectionTrait> {
-            fn include(self, includes: Vec<IncludeParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>;
-        }
-
-        impl<'a, C> FirstIncludeExt<'a, C> for caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
-        where
-            C: sea_orm::ConnectionTrait,
-            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
-        {
-            fn include(mut self, includes: Vec<IncludeParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                for inc in includes {
-                    match inc {
-                        #(#include_match_arms,)*
-                    }
-                }
-                self
-            }
-        }
+        // Legacy include extension methods removed in favor of `.with(...)`
 
         // Include on select builders
         pub trait SelectManyIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn with(self, include: IncludeParam) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
             fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
         }
         impl<'a, C> SelectManyIncludeExt<'a, C> for caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>
         where C: sea_orm::ConnectionTrait {
+            fn with(mut self, include: IncludeParam) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
+                match include { #(#include_match_arms,)* }
+                self
+            }
             fn include(mut self, includes: Vec<IncludeParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
                 for inc in includes { match inc { #(#include_match_arms,)* } }
                 self
@@ -2071,10 +2288,15 @@ pub fn generate_entity(
         }
 
         pub trait SelectUniqueIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn with(self, include: IncludeParam) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
             fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
         }
         impl<'a, C> SelectUniqueIncludeExt<'a, C> for caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>
         where C: sea_orm::ConnectionTrait {
+            fn with(mut self, include: IncludeParam) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
+                match include { #(#include_match_arms,)* }
+                self
+            }
             fn include(mut self, includes: Vec<IncludeParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
                 for inc in includes { match inc { #(#include_match_arms,)* } }
                 self
@@ -2082,10 +2304,15 @@ pub fn generate_entity(
         }
 
         pub trait SelectFirstIncludeExt<'a, C: sea_orm::ConnectionTrait> {
+            fn with(self, include: IncludeParam) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
             fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
         }
         impl<'a, C> SelectFirstIncludeExt<'a, C> for caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>
         where C: sea_orm::ConnectionTrait {
+            fn with(mut self, include: IncludeParam) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
+                match include { #(#include_match_arms,)* }
+                self
+            }
             fn include(mut self, includes: Vec<IncludeParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
                 for inc in includes { match inc { #(#include_match_arms,)* } }
                 self
@@ -2234,9 +2461,6 @@ pub fn generate_entity(
             pub use super::GroupByHavingAggExt;
             pub use super::GroupByAggExt;
             pub use super::AggregateAggExt;
-            pub use super::ManyIncludeExt;
-            pub use super::UniqueIncludeExt;
-            pub use super::FirstIncludeExt;
             pub use super::ManySelectExt;
             pub use super::UniqueSelectExt;
             pub use super::FirstSelectExt;
@@ -2855,7 +3079,7 @@ pub fn generate_entity(
                 Box::pin(async move {
                     match relation_name {
                         #(
-                        #relation_names => { #relation_fetcher_bodies }
+                        #relation_names_snake_lits => { #relation_fetcher_bodies }
                         )*
                         _ => Err(sea_orm::DbErr::Custom(format!(
                             "Unknown relation '{}': ensure relation name matches generated metadata",
@@ -3130,13 +3354,67 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         .unwrap_or(caustics::Filter { field: String::new(), operation: caustics::FieldOp::IsNull })
                 }
 
-                // Basic relation functions for compatibility
+                // Basic relation functions
                 pub fn fetch() -> super::RelationFilter {
                     super::RelationFilter {
                         relation: #relation_name_lit,
                         filters: vec![],
+                        nested_select_aliases: None,
+                        nested_includes: vec![],
+                        take: None,
+                        skip: None,
                     }
                 }
+
+                pub fn fetch_with_includes(includes: Vec<super::#target::RelationFilter>) -> super::RelationFilter {
+                    super::RelationFilter {
+                        relation: #relation_name_lit,
+                        filters: vec![],
+                        nested_select_aliases: None,
+                        nested_includes: includes.into_iter().map(Into::into).collect(),
+                        take: None,
+                        skip: None,
+                    }
+                }
+
+                pub fn fetch_with_select(select_aliases: Vec<&str>) -> super::RelationFilter {
+                    super::RelationFilter {
+                        relation: #relation_name_lit,
+                        filters: vec![],
+                        nested_select_aliases: Some(select_aliases.into_iter().map(|s| s.to_string()).collect()),
+                        nested_includes: vec![],
+                        take: None,
+                        skip: None,
+                    }
+                }
+
+                // PCR-aligned typed helpers
+                pub fn fetch_with_select_params(params: Vec<super::#target::SelectParam>) -> super::RelationFilter {
+                    let aliases: Vec<String> = super::#target::select_params_to_aliases(params);
+                    super::RelationFilter {
+                        relation: #relation_name_lit,
+                        filters: vec![],
+                        nested_select_aliases: Some(aliases),
+                        nested_includes: vec![],
+                        take: None,
+                        skip: None,
+                    }
+                }
+
+                pub fn with_select(params: Vec<super::#target::SelectParam>) -> super::RelationFilter {
+                    fetch_with_select_params(params)
+                }
+
+                pub fn with(include: super::#target::RelationFilter) -> super::RelationFilter {
+                    fetch_with_includes(vec![include])
+                }
+
+                pub fn with_includes(includes: Vec<super::#target::RelationFilter>) -> super::RelationFilter {
+                    fetch_with_includes(includes)
+                }
+
+                pub fn take(limit: i64) -> super::RelationFilter { let mut f = fetch(); f.take = Some(limit); f }
+                pub fn skip(offset: i64) -> super::RelationFilter { let mut f = fetch(); f.skip = Some(offset); f }
 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)

@@ -21,7 +21,7 @@ caustics = { path = "../caustics" }
 use caustics::CausticsExt;
 
 let client = db.caustics();
-``` 
+```
 
 ### Define entities
 
@@ -152,19 +152,45 @@ let user_with_posts = client
 #### Include and Select
 
 ```rust
-// Include relations
+// Include relations (full model)
 let users_with_posts = client
     .user()
     .find_many(vec![])
-    .include(vec![user::IncludeParam::Posts])
+    .with(user::posts::fetch())
     .exec()
     .await?;
 
-// Select scalar fields (returns a Selected holder)
+// Select scalar fields (returns a Selected holder with only requested fields)
 let users_basic = client
     .user()
     .find_many(vec![])
     .select(vec![user::SelectParam::Id, user::SelectParam::Name])
+    .exec()
+    .await?;
+
+// Include on selections – implicit keys are fetched automatically when needed
+let students = client
+    .student()
+    .find_many(vec![])
+    .select(vec![student::SelectParam::FirstName])
+    .include(vec![student::IncludeParam::Enrollments(student::enrollments::fetch())])
+    .exec()
+    .await?;
+
+// Nested select/include (typed, PCR-like)
+let selected = client
+    .student()
+    .find_unique(student::id::equals(1))
+    .select(vec![student::SelectParam::FirstName])
+    .include(vec![
+        student::IncludeParam::Enrollments(
+            student::enrollments::with(
+                enrollment::course::with(
+                    course::teacher::with_select(vec![teacher::SelectParam::FirstName])
+                )
+            )
+        ),
+    ])
     .exec()
     .await?;
 ```

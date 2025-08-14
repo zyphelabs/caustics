@@ -118,6 +118,10 @@ pub struct Filter {
 pub struct RelationFilter {
     pub relation: &'static str,
     pub filters: Vec<Filter>,
+    pub nested_select_aliases: Option<Vec<String>>,
+    pub nested_includes: Vec<RelationFilter>,
+    pub take: Option<i64>,
+    pub skip: Option<i64>,
 }
 
 impl RelationFilterTrait for RelationFilter {
@@ -284,6 +288,16 @@ pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
 pub trait EntityRegistry<C: sea_orm::ConnectionTrait> {
     /// Get the fetcher for a given entity name
     fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>>;
+}
+
+/// Trait for models capable of applying nested relation filters/includes
+pub trait ApplyNestedIncludes<C: sea_orm::ConnectionTrait> {
+    fn apply_relation_filter<'a>(
+        &'a mut self,
+        conn: &'a C,
+        filter: &'a RelationFilter,
+        registry: &'a (dyn EntityRegistry<C> + Sync),
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>;
 }
 
 /// Helper type for dynamic entity resolution

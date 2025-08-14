@@ -12,3 +12,4 @@ pub use query_builders::DeferredLookup;
 
 // Re-export traits for use in generated code
 pub use types::{EntityFetcher, EntityRegistry};
+pub use types::ApplyNestedIncludes as ApplyNestedIncludes;

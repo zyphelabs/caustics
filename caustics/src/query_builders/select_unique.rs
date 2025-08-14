@@ -1,5 +1,5 @@
 use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
-use crate::types::{EntityRegistry};
+use crate::types::{EntityRegistry, ApplyNestedIncludes};
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QuerySelect, QueryTrait, Select};
 use sea_orm::sea_query::SimpleExpr;
 
@@ -13,7 +13,7 @@ where
     pub selected_fields: Vec<(SimpleExpr, String)>,
     pub requested_aliases: Vec<String>,
     pub relations_to_fetch: Vec<RelationFilter>,
-    pub registry: &'a dyn EntityRegistry<C>,
+    pub registry: &'a (dyn EntityRegistry<C> + Sync),
     pub database_backend: DatabaseBackend,
     pub _phantom: std::marker::PhantomData<Selected>,
 }
@@ -22,7 +22,7 @@ impl<'a, C, Entity, Selected> SelectUniqueQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    Selected: EntitySelection + HasRelationMetadata<Selected> + Send + 'static,
+    Selected: EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
 {
     pub fn push_field(mut self, expr: SimpleExpr, alias: &str) -> Self {
         self.selected_fields.push((expr, alias.to_string()));
@@ -55,22 +55,8 @@ where
             let mut s = Selected::fill_from_row(&row, &field_names);
 
             for rf in &self.relations_to_fetch {
-                if let Some(desc) = Selected::get_relation_descriptor(rf.relation) {
-                    let fk_val = if desc.is_has_many { s.get_i32(desc.current_primary_key_field_name) } else { s.get_i32(desc.foreign_key_field_name) };
-                    if let Some(fk) = fk_val {
-                        let fetcher = self
-                            .registry
-                            .get_fetcher(desc.target_entity)
-                            .ok_or_else(|| sea_orm::DbErr::Custom(format!(
-                                "Missing fetcher for {}",
-                                desc.target_entity
-                            )))?;
-                        let res = fetcher
-                            .fetch_by_foreign_key(self.conn, Some(fk), desc.foreign_key_column, desc.target_entity, rf.relation)
-                            .await?;
-                        s.set_relation(rf.relation, res);
-                    }
-                }
+                // Delegate fetching and nested application to the macro-generated impl
+                <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(&mut s, self.conn, rf, self.registry).await?;
             }
 
             s.clear_unselected(&field_names);

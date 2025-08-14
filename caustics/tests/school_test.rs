@@ -508,7 +508,7 @@ mod caustics_school_tests {
     use super::*;
     use caustics::QueryError;
     use chrono::{DateTime, FixedOffset, TimeZone};
-    use super::student::prelude::{ManySelectExt, SelectManyIncludeExt};
+    use super::student::prelude::ManySelectExt;
 
     fn fixed_now() -> DateTime<FixedOffset> {
         FixedOffset::east_opt(0)
@@ -596,7 +596,7 @@ mod caustics_school_tests {
             .find_many(vec![])
             .take(1)
             .select(vec![student::SelectParam::FirstName])
-            .include(vec![student::IncludeParam::Enrollments])
+            .with(student::enrollments::fetch())
             .exec()
             .await
             .unwrap();
@@ -944,7 +944,8 @@ mod caustics_school_tests {
 mod caustics_school_advanced_tests {
     use super::helpers::setup_test_db;
     use super::*;
-    use super::teacher::prelude::{FirstSelectExt, SelectFirstIncludeExt};
+    use super::teacher::prelude::FirstSelectExt;
+    use super::student::prelude::UniqueSelectExt;
     use chrono::{DateTime, FixedOffset, TimeZone};
 
     fn fixed_now() -> DateTime<FixedOffset> {
@@ -1037,7 +1038,7 @@ mod caustics_school_advanced_tests {
             .teacher()
             .find_first(vec![])
             .select(vec![teacher::SelectParam::FirstName])
-            .include(vec![teacher::IncludeParam::Department])
+            .with(teacher::department::fetch())
             .exec()
             .await
             .unwrap();
@@ -1164,6 +1165,141 @@ mod caustics_school_advanced_tests {
         assert_eq!(course_with_rel.teacher.unwrap().first_name, "Eve");
         assert_eq!(course_with_rel.department.unwrap().name, "Science");
         assert_eq!(course_with_rel.enrollments.as_ref().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_select_nested_include_student_enrollments_course_teacher() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create department
+        let dept = client
+            .department()
+            .create(
+                "SCI".to_string(),
+                "Science".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create teacher
+        let teacher = client
+            .teacher()
+            .create(
+                "T100".to_string(),
+                "Teach".to_string(),
+                "Er".to_string(),
+                "teach@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create semester
+        let semester = client
+            .semester()
+            .create(
+                "2024FALL".to_string(),
+                "Fall 2024".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create course
+        let course = client
+            .course()
+            .create(
+                "SCI200".to_string(),
+                "Advanced Science".to_string(),
+                5,
+                25,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                semester::id::equals(semester.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create student
+        let student_row = client
+            .student()
+            .create(
+                "S777".to_string(),
+                "Sel".to_string(),
+                "Inc".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Enroll student in course
+        let _enrollment = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "enrolled".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(student_row.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Select nested include: student -> enrollments -> course(select) -> teacher(select first_name)
+        let selected = client
+            .student()
+            .find_unique(student::id::equals(student_row.id))
+            .select(vec![student::SelectParam::FirstName])
+            .with(
+                student::enrollments::with(
+                    enrollment::course::with(
+                        course::teacher::with_select(vec![teacher::SelectParam::FirstName])
+                    )
+                ),
+            )
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(selected.first_name.is_some());
+        let enrollments = selected.enrollments.as_ref().unwrap();
+        assert!(!enrollments.is_empty());
+        let course_rel = enrollments[0].course.as_ref().unwrap();
+        let teacher_rel = course_rel.teacher.as_ref().unwrap();
+        // We don't assert specific selected fields deep down; just presence
+        let _ = teacher_rel;
     }
 
     #[tokio::test]

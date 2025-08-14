@@ -1,5 +1,5 @@
 use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
-use crate::types::{EntityRegistry};
+use crate::types::{EntityRegistry, ApplyNestedIncludes};
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Select};
 use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
 
@@ -13,7 +13,7 @@ where
     pub selected_fields: Vec<(SimpleExpr, String)>,
     pub requested_aliases: Vec<String>,
     pub relations_to_fetch: Vec<RelationFilter>,
-    pub registry: &'a dyn EntityRegistry<C>,
+    pub registry: &'a (dyn EntityRegistry<C> + Sync),
     pub database_backend: DatabaseBackend,
     pub reverse_order: bool,
     pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
@@ -27,7 +27,7 @@ impl<'a, C, Entity, Selected> SelectManyQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    Selected: EntitySelection + HasRelationMetadata<Selected> + Send + 'static,
+    Selected: EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
 {
     /// Add a scalar field (expr, alias)
     pub fn push_field(mut self, expr: SimpleExpr, alias: &str) -> Self {
@@ -133,33 +133,7 @@ where
                 }
 
                 for rf in &self.relations_to_fetch {
-                    if let Some(desc) = Selected::get_relation_descriptor(rf.relation) {
-                        let fk_val = if desc.is_has_many {
-                            s.get_i32(desc.current_primary_key_field_name)
-                        } else {
-                            s.get_i32(desc.foreign_key_field_name)
-                        };
-                        let fk_val = fk_val.map(|v| Some(v));
-                        if let Some(fk) = fk_val.flatten() {
-                            let fetcher = self
-                                .registry
-                                .get_fetcher(desc.target_entity)
-                                .ok_or_else(|| sea_orm::DbErr::Custom(format!(
-                                    "Missing fetcher for {}",
-                                    desc.target_entity
-                                )))?;
-                            let res = fetcher
-                                .fetch_by_foreign_key(
-                                    self.conn,
-                                    Some(fk),
-                                    desc.foreign_key_column,
-                                    desc.target_entity,
-                                    rf.relation,
-                                )
-                                .await?;
-                            s.set_relation(rf.relation, res);
-                        }
-                    }
+                    <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(&mut s, self.conn, rf, self.registry).await?;
                 }
             }
 
