@@ -122,6 +122,8 @@ pub struct RelationFilter {
     pub nested_includes: Vec<RelationFilter>,
     pub take: Option<i64>,
     pub skip: Option<i64>,
+    pub order_by: Vec<(String, SortOrder)>,
+    pub cursor_id: Option<i32>,
 }
 
 impl RelationFilterTrait for RelationFilter {
@@ -275,6 +277,7 @@ pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
         foreign_key_column: &'a str,
         target_entity: &'a str,
         relation_name: &'a str,
+        filter: &'a RelationFilter,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<Box<dyn Any + Send>, sea_orm::DbErr>>
@@ -319,6 +322,16 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
         relation_name: &str,
     ) -> Result<Box<dyn Any + Send>, sea_orm::DbErr> {
         if let Some(fetcher) = self.registry.get_fetcher(target_entity) {
+            let dummy = RelationFilter {
+                relation: "",
+                filters: vec![],
+                nested_select_aliases: None,
+                nested_includes: vec![],
+                take: None,
+                skip: None,
+                order_by: vec![],
+                cursor_id: None,
+            };
             fetcher
                 .fetch_by_foreign_key(
                     conn,
@@ -326,6 +339,7 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
                     foreign_key_column,
                     target_entity,
                     relation_name,
+                    &dummy,
                 )
                 .await
         } else {

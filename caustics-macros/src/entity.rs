@@ -83,8 +83,24 @@ pub fn generate_entity(
 
         let fetcher_body = if matches!(rel.kind, RelationKind::HasMany) {
             quote! {
-            let query = #target::Entity::find()
+            let mut query = #target::Entity::find()
                 .filter(#target::Column::#foreign_key_column_ident.eq(foreign_key_value.unwrap_or_default()));
+
+            // Apply cursor (id-based simple cursor)
+            if let Some(cur) = filter.cursor_id {
+                query = query.filter(#target::Column::Id.gt(cur));
+            }
+
+            // Apply order_by (support id only for now)
+            for (field, dir) in &filter.order_by {
+                if field == "id" {
+                    let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                    query = query.order_by(#target::Column::Id, ord);
+                }
+            }
+
+            if let Some(offset) = filter.skip { if offset > 0 { query = query.offset(offset as u64); } }
+            if let Some(limit) = filter.take { if limit >= 0 { query = query.limit(limit as u64); } }
 
             let vec_with_rel = query.all(conn).await?
                         .into_iter()
@@ -924,6 +940,32 @@ pub fn generate_entity(
         })
         .collect();
 
+    // Precompute take/skip apply blocks for has_many
+    let relation_take_skip_blocks: Vec<_> = relations
+        .iter()
+        .map(|relation| {
+            let target = &relation.target;
+            match relation.kind {
+                RelationKind::HasMany => {
+                    quote! {
+                        let vec_ref = fetched_result.downcast_mut::<Option<Vec<#target::ModelWithRelations>>>()
+                            .expect("Type mismatch in has_many downcast (take/skip)");
+                        if let Some(vec_inner) = vec_ref.as_mut() {
+                            let len = vec_inner.len();
+                            let start = filter.skip.unwrap_or(0).max(0) as usize;
+                            let end = match filter.take { Some(t) if t >= 0 => (start + (t as usize)).min(len), _ => len };
+                            if start >= len { vec_inner.clear(); } else if start > 0 || end < len {
+                                let new_vec = vec_inner[start..end].to_vec();
+                                *vec_inner = new_vec;
+                            }
+                        }
+                    }
+                }
+                _ => quote! {},
+            }
+        })
+        .collect();
+
     // Generate IncludeParam enum variants and match arms for include()
     let include_enum_variants = relations
         .iter()
@@ -1075,6 +1117,8 @@ pub fn generate_entity(
             pub nested_includes: Vec<caustics::RelationFilter>,
             pub take: Option<i64>,
             pub skip: Option<i64>,
+            pub order_by: Vec<(String, caustics::SortOrder)>,
+            pub cursor_id: Option<i32>,
         }
 
         impl caustics::RelationFilterTrait for RelationFilter {
@@ -1096,6 +1140,8 @@ pub fn generate_entity(
                     nested_includes: relation_filter.nested_includes,
                     take: relation_filter.take,
                     skip: relation_filter.skip,
+                    order_by: relation_filter.order_by,
+                    cursor_id: relation_filter.cursor_id,
                 }
             }
         }
@@ -1226,8 +1272,11 @@ pub fn generate_entity(
                             descriptor.foreign_key_column,
                             &fetcher_entity_name,
                             filter.relation,
+                            filter,
                         )
                         .await?;
+
+                    // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
                     // Apply nested includes recursively, if any
                     if !filter.nested_includes.is_empty() {
@@ -1340,8 +1389,11 @@ pub fn generate_entity(
                             descriptor.foreign_key_column,
                             &fetcher_entity_name,
                             filter.relation,
+                            filter,
                         )
                         .await?;
+
+                    // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
                     if !filter.nested_includes.is_empty() {
                         match filter.relation {
@@ -2087,9 +2139,10 @@ pub fn generate_entity(
         use caustics::{SortOrder, MergeInto, FieldOp};
         use caustics::FromModel;
         use sea_query::{Condition, Expr, SimpleExpr};
-        use sea_orm::{ColumnTrait, IntoSimpleExpr};
+        use sea_orm::{ColumnTrait, IntoSimpleExpr, QueryFilter, QueryOrder, QuerySelect};
         use serde_json;
         use std::sync::Arc;
+        use heck::ToSnakeCase;
 
         pub struct EntityClient<'a, C: sea_orm::ConnectionTrait> {
             conn: &'a C,
@@ -3075,6 +3128,7 @@ pub fn generate_entity(
                 foreign_key_column: &'a str,
                 target_entity: &'a str,
                 relation_name: &'a str,
+                filter: &'a caustics::RelationFilter,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn std::any::Any + Send>, sea_orm::DbErr>> + Send + 'a>> {
                 Box::pin(async move {
                     match relation_name {
@@ -3363,6 +3417,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         nested_includes: vec![],
                         take: None,
                         skip: None,
+                        order_by: vec![],
+                        cursor_id: None,
                     }
                 }
 
@@ -3374,6 +3430,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         nested_includes: includes.into_iter().map(Into::into).collect(),
                         take: None,
                         skip: None,
+                        order_by: vec![],
+                        cursor_id: None,
                     }
                 }
 
@@ -3385,6 +3443,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         nested_includes: vec![],
                         take: None,
                         skip: None,
+                        order_by: vec![],
+                        cursor_id: None,
                     }
                 }
 
@@ -3398,6 +3458,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         nested_includes: vec![],
                         take: None,
                         skip: None,
+                        order_by: vec![],
+                        cursor_id: None,
                     }
                 }
 
@@ -3415,6 +3477,19 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
 
                 pub fn take(limit: i64) -> super::RelationFilter { let mut f = fetch(); f.take = Some(limit); f }
                 pub fn skip(offset: i64) -> super::RelationFilter { let mut f = fetch(); f.skip = Some(offset); f }
+
+                pub fn with_order(params: Vec<super::OrderByParam>) -> super::RelationFilter {
+                    let mut f = fetch();
+                    for p in params {
+                        let (col, ord): (<Entity as EntityTrait>::Column, sea_orm::Order) = p.into();
+                        // Map column to snake_case alias string via debug
+                        let name = format!("{:?}", col).to_string().to_snake_case();
+                        f.order_by.push((name, match ord { sea_orm::Order::Asc => caustics::SortOrder::Asc, _ => caustics::SortOrder::Desc }));
+                    }
+                    f
+                }
+
+                pub fn with_cursor(id: i32) -> super::RelationFilter { let mut f = fetch(); f.cursor_id = Some(id); f }
 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)

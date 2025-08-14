@@ -47,6 +47,16 @@ where
                         descriptor.foreign_key_column,
                         &fetcher_entity_name,
                         relation_name,
+                        &crate::types::RelationFilter {
+                            relation: "",
+                            filters: vec![],
+                            nested_select_aliases: None,
+                            nested_includes: vec![],
+                            take: None,
+                            skip: None,
+                            order_by: vec![],
+                            cursor_id: None,
+                        },
                     )
                     .await?;
                 (descriptor.set_field)(model_with_relations, result);

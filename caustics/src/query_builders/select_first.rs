@@ -66,7 +66,7 @@ where
                                 desc.target_entity
                             )))?;
                         let res = fetcher
-                            .fetch_by_foreign_key(self.conn, Some(fk), desc.foreign_key_column, desc.target_entity, rf.relation)
+                            .fetch_by_foreign_key(self.conn, Some(fk), desc.foreign_key_column, desc.target_entity, rf.relation, rf)
                             .await?;
                         s.set_relation(rf.relation, res);
                     }
