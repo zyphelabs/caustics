@@ -18,9 +18,10 @@ caustics = { path = "../caustics" }
 ### Quick start
 
 ```rust
-use caustics::CausticsExt;
+use caustics_client::CausticsClient;
 
-let client = db.caustics();
+// Given an existing SeaORM DatabaseConnection `db`
+let client = CausticsClient::new(db.clone());
 ```
 
 ### Define entities
@@ -144,7 +145,7 @@ let users = client
 let user_with_posts = client
     .user()
     .find_unique(user::id::equals(1))
-    .with(user::posts::fetch(vec![]))
+    .with(user::posts::fetch())
     .exec()
     .await?;
 ```
@@ -173,24 +174,22 @@ let students = client
     .student()
     .find_many(vec![])
     .select(vec![student::SelectParam::FirstName])
-    .include(vec![student::IncludeParam::Enrollments(student::enrollments::fetch())])
+    .with(student::enrollments::fetch())
     .exec()
     .await?;
 
-// Nested select/include (typed, PCR-like)
+// Nested select/include (typed)
 let selected = client
     .student()
     .find_unique(student::id::equals(1))
     .select(vec![student::SelectParam::FirstName])
-    .include(vec![
-        student::IncludeParam::Enrollments(
-            student::enrollments::with(
-                enrollment::course::with(
-                    course::teacher::with_select(vec![teacher::SelectParam::FirstName])
-                )
+    .with(
+        student::enrollments::with(
+            enrollment::course::with(
+                course::teacher::with_select(vec![teacher::SelectParam::FirstName])
             )
         ),
-    ])
+    )
     .exec()
     .await?;
 ```
@@ -381,36 +380,34 @@ let (user1, user2) = client
 ```rust
 let result = client
     ._transaction()
-    .run(|tx| {
-        Box::pin(async move {
-            // Create user
-            let user = tx
-                .user()
-                .create(
-                    "john@example.com".to_string(),
-                    "John".to_string(),
-                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    vec![],
-                )
-                .exec()
-                .await?;
+    .run(|tx| async move {
+        // Create user
+        let user = tx
+            .user()
+            .create(
+                "john@example.com".to_string(),
+                "John".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![],
+            )
+            .exec()
+            .await?;
 
-            // Create post
-            let post = tx
-                .post()
-                .create(
-                    "Hello World".to_string(),
-                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                    user::id::equals(user.id),
-                    vec![post::content::set(Some("This is my first post".to_string()))],
-                )
-                .exec()
-                .await?;
+        // Create post
+        let post = tx
+            .post()
+            .create(
+                "Hello World".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![post::content::set(Some("This is my first post".to_string()))],
+            )
+            .exec()
+            .await?;
 
-            Ok((user, post))
-        })
+        Ok((user, post))
     })
     .await?;
 ```
@@ -782,7 +779,7 @@ let students = client
     .student()
     .find_many(vec![])
     .select(vec![student::SelectParam::FirstName])
-    .include(vec![student::IncludeParam::Enrollments])
+    .with(student::enrollments::fetch())
     .exec()
     .await?;
 ```
