@@ -299,10 +299,17 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         .iter()
         .map(|(name, module_path)| {
             let method_name = format_ident!("{}", name.to_lowercase());
-            let module_path = format_ident!("{}", module_path);
+            let module_ident = format_ident!("{}", module_path);
+            let module_tokens = if is_test {
+                // In integration tests, this file is included inside the per-file module (e.g., blog_test),
+                // so entity modules live under self::, not crate::
+                quote! { self::#module_ident }
+            } else {
+                quote! { #module_ident }
+            };
             quote! {
-                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseConnection> {
-                    #module_path::EntityClient::new(&*self.db, self.database_backend)
+                pub fn #method_name(&self) -> #module_tokens::EntityClient<'_, DatabaseConnection> {
+                    #module_tokens::EntityClient::new(&*self.db, self.database_backend)
                 }
             }
         })
@@ -312,10 +319,15 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         .iter()
         .map(|(name, module_path)| {
             let method_name = format_ident!("{}", name.to_lowercase());
-            let module_path = format_ident!("{}", module_path);
+            let module_ident = format_ident!("{}", module_path);
+            let module_tokens = if is_test {
+                quote! { self::#module_ident }
+            } else {
+                quote! { #module_ident }
+            };
             quote! {
-                pub fn #method_name(&self) -> #module_path::EntityClient<'_, DatabaseTransaction> {
-                    #module_path::EntityClient::new(&*self.tx, self.database_backend)
+                pub fn #method_name(&self) -> #module_tokens::EntityClient<'_, DatabaseTransaction> {
+                    #module_tokens::EntityClient::new(&*self.tx, self.database_backend)
                 }
             }
         })
@@ -326,9 +338,14 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         .iter()
         .map(|(name, module_path)| {
             let entity_name_lower = name.to_lowercase();
-            let module_path = format_ident!("{}", module_path);
+            let module_ident = format_ident!("{}", module_path);
+            let module_tokens = if is_test {
+                quote! { self::#module_ident }
+            } else {
+                quote! { #module_ident }
+            };
             quote! {
-                #entity_name_lower => Some(&#module_path::EntityFetcherImpl),
+                #entity_name_lower => Some(&#module_tokens::EntityFetcherImpl),
             }
         })
         .collect();

@@ -1119,6 +1119,7 @@ pub fn generate_entity(
             pub skip: Option<i64>,
             pub order_by: Vec<(String, caustics::SortOrder)>,
             pub cursor_id: Option<i32>,
+            pub include_count: bool,
         }
 
         impl caustics::RelationFilterTrait for RelationFilter {
@@ -1142,6 +1143,7 @@ pub fn generate_entity(
                     skip: relation_filter.skip,
                     order_by: relation_filter.order_by,
                     cursor_id: relation_filter.cursor_id,
+                    include_count: relation_filter.include_count,
                 }
             }
         }
@@ -1220,14 +1222,64 @@ pub fn generate_entity(
         })
         .collect();
 
+    // Generate Counts struct fields for has_many relations
+    let counts_struct_fields = relations
+        .iter()
+        .filter_map(|relation| {
+            if matches!(relation.kind, RelationKind::HasMany) {
+                let name = format_ident!("{}", relation.name.to_snake_case());
+                Some(quote! { pub #name: Option<i32> })
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Precompute per-relation count arms used inside __caustics_apply_relation_filter
+    let relation_count_match_arms = relations
+        .iter()
+        .map(|relation| {
+            let relation_name_snake = relation.name.to_snake_case();
+            let relation_name_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
+            let target = &relation.target;
+            match relation.kind {
+                RelationKind::HasMany => {
+                    let foreign_key_column = relation.foreign_key_column.as_ref().map_or("Id", |v| v);
+                    let foreign_key_column_ident = format_ident!("{}", foreign_key_column);
+                    let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
+                    quote! {
+                        #relation_name_lit => {
+                            if let Some(fkv) = foreign_key_value {
+                                let total: i64 = #target::Entity::find()
+                                    .filter(#target::Column::#foreign_key_column_ident.eq(fkv))
+                                    .count(conn)
+                                    .await?;
+                                let mut c = self._count.take().unwrap_or_default();
+                                c.#count_field_ident = Some(total as i32);
+                                self._count = Some(c);
+                            }
+                        }
+                    }
+                }
+                _ => quote! {},
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Generate ModelWithRelations struct and constructor
     let model_with_relations_impl = quote! {
         #filter_types
+
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+        pub struct Counts {
+            #(#counts_struct_fields,)*
+        }
 
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub struct ModelWithRelations {
             #(#model_with_relations_fields,)*
             #(#relation_fields,)*
+            pub _count: Option<Counts>,
         }
 
         impl ModelWithRelations {
@@ -1238,6 +1290,7 @@ pub fn generate_entity(
                 Self {
                     #(#field_names,)*
                     #(#relation_init_names,)*
+                    _count: None,
                 }
             }
 
@@ -1245,6 +1298,7 @@ pub fn generate_entity(
                 Self {
                     #(#field_names: model.#field_names,)*
                     #(#relation_defaults,)*
+                    _count: None,
                 }
             }
 
@@ -1278,13 +1332,15 @@ pub fn generate_entity(
 
                     // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
+                    // relation counts not yet implemented
+
                     // Apply nested includes recursively, if any
                     if !filter.nested_includes.is_empty() {
                         match filter.relation {
                             #(
-                                #relation_names_snake_lits => { #relation_nested_apply_blocks }
-                            ),*
-                            , _ => {}
+                                #relation_names_snake_lits => { #relation_nested_apply_blocks },
+                            )*
+                            _ => {}
                         }
                     }
 
@@ -1310,6 +1366,7 @@ pub fn generate_entity(
                 Self {
                     #(#field_names: Default::default(),)*
                     #(#relation_defaults,)*
+                    _count: None,
                 }
             }
         }
@@ -1395,12 +1452,14 @@ pub fn generate_entity(
 
                     // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
+                    // relation counts not yet implemented
+
                     if !filter.nested_includes.is_empty() {
                         match filter.relation {
                             #(
-                                #relation_names_snake_lits => { #relation_nested_apply_blocks }
-                            ),*
-                            , _ => {}
+                                #relation_names_snake_lits => { #relation_nested_apply_blocks },
+                            )*
+                            _ => {}
                         }
                     }
 
@@ -3419,6 +3478,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         skip: None,
                         order_by: vec![],
                         cursor_id: None,
+                        include_count: false,
                     }
                 }
 
@@ -3432,6 +3492,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         skip: None,
                         order_by: vec![],
                         cursor_id: None,
+                        include_count: false,
                     }
                 }
 
@@ -3445,6 +3506,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         skip: None,
                         order_by: vec![],
                         cursor_id: None,
+                        include_count: false,
                     }
                 }
 
@@ -3460,6 +3522,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         skip: None,
                         order_by: vec![],
                         cursor_id: None,
+                        include_count: false,
                     }
                 }
 
@@ -3490,6 +3553,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                 }
 
                 pub fn with_cursor(id: i32) -> super::RelationFilter { let mut f = fetch(); f.cursor_id = Some(id); f }
+                pub fn with_count() -> super::RelationFilter { let mut f = fetch(); f.include_count = true; f }
 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)

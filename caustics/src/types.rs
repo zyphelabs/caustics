@@ -124,6 +124,7 @@ pub struct RelationFilter {
     pub skip: Option<i64>,
     pub order_by: Vec<(String, SortOrder)>,
     pub cursor_id: Option<i32>,
+    pub include_count: bool,
 }
 
 impl RelationFilterTrait for RelationFilter {
@@ -331,6 +332,7 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
                 skip: None,
                 order_by: vec![],
                 cursor_id: None,
+                include_count: false,
             };
             fetcher
                 .fetch_by_foreign_key(
