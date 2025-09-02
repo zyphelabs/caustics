@@ -79,6 +79,13 @@ pub fn generate_where_param_logic(
             quote! {} // Don't generate equals for unique fields since unique_where_fn already has it
         };
 
+        // Field-level `not` alias (PCR-style): maps to NotEquals with same value type
+        let field_not_alias = quote! {
+            pub fn not<T: Into<#ty>>(value: T) -> WhereParam {
+                WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
+            }
+        };
+
         // String ops (only for string types)
         let string_ops = match field_type {
             FieldType::String | FieldType::OptionString => {
@@ -237,6 +244,7 @@ pub fn generate_where_param_logic(
             unique_where_fn,
             order_fn,
             type_specific_ops,
+            field_not_alias,
             string_ops,
             comparison_ops,
             collection_ops,

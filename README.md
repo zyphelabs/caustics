@@ -763,27 +763,6 @@ let posts = client.post()
 
 ### JSON object
 
-### Select and Include
-
-```rust
-// Select scalars – returns a Selected holder with only requested fields populated
-let students = client
-    .student()
-    .find_many(vec![])
-    .select(vec![student::SelectParam::Id, student::SelectParam::FirstName])
-    .exec()
-    .await?;
-
-// Include on selections – implicit keys are fetched automatically when needed
-let students = client
-    .student()
-    .find_many(vec![])
-    .select(vec![student::SelectParam::FirstName])
-    .with(student::enrollments::fetch())
-    .exec()
-    .await?;
-```
-
 ```rust
 // Check if object contains a specific key
 let posts = client.post()

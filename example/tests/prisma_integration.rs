@@ -170,6 +170,7 @@ mod query_builder_tests {
     use caustics_example::generated::db::PrismaClient as DbClient;
     use chrono::{DateTime, FixedOffset};
     use std::str::FromStr;
+    use prisma_client_rust::operator::{and, or, not};
 
     async fn setup<'a>(
     ) -> Result<(Arc<Mutex<DbClient>>, TestContainer<'a>), Box<dyn std::error::Error>> {
@@ -692,6 +693,547 @@ mod query_builder_tests {
 
         teardown_test_db(client, container).await?;
 
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_delete_many_returns_count() -> Result<(), Box<dyn std::error::Error>> {
+        use std::str::FromStr;
+        use chrono::{DateTime, FixedOffset};
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+
+        let now = DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap();
+        for i in 0..3 {
+            client
+                .user()
+                .create(
+                    format!("delmany{}@example.com", i),
+                    format!("DelMany{}", i),
+                    now,
+                    now,
+                    vec![user::age::set(Some(20 + i)), user::deleted_at::set(None)],
+                )
+                .exec()
+                .await?;
+        }
+
+        let deleted = client
+            .user()
+            .delete_many(vec![user::age::gt(20)])
+            .exec()
+            .await?;
+        assert_eq!(deleted, 2);
+
+        let remaining = client.user().find_many(vec![]).exec().await?.len();
+        assert_eq!(remaining, 1);
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_transaction_rollback() -> Result<(), Box<dyn std::error::Error>> {
+        use std::str::FromStr;
+        use chrono::{DateTime, FixedOffset};
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+
+        let email = format!("rollback_{}@example.com", chrono::Utc::now().timestamp());
+        let email_for_check = email.clone();
+
+        let result: Result<(), prisma_client_rust::QueryError> = client
+            ._transaction()
+            .run(|tx| async move {
+                let _ = tx
+                    .user()
+                    .create(
+                        email,
+                        "Rollback".to_string(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        vec![],
+                    )
+                    .exec()
+                    .await?;
+
+                Err(prisma_client_rust::QueryError::Deserialize(
+                    "intentional rollback".into(),
+                ))
+            })
+            .await;
+
+        assert!(result.is_err());
+
+        let found = client
+            .user()
+            .find_first(vec![user::email::equals(&email_for_check)])
+            .exec()
+            .await?;
+        assert!(found.is_none());
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_string_operators() -> Result<(), Box<dyn std::error::Error>> {
+        use chrono::TimeZone;
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        let _ = client
+            .user()
+            .create(
+                "john.doe@example.com".to_string(),
+                "John Doe".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _ = client
+            .user()
+            .create(
+                "jane.smith@example.com".to_string(),
+                "Jane Smith".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(28)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _ = client
+            .user()
+            .create(
+                "bob.johnson@test.org".to_string(),
+                "Bob Johnson".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(40)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let users_with_doe = client
+            .user()
+            .find_many(vec![user::name::contains("Doe".to_string())])
+            .exec()
+            .await?;
+        assert_eq!(users_with_doe.len(), 1);
+        assert_eq!(users_with_doe[0].name, "John Doe");
+
+        let users_starting_with_j = client
+            .user()
+            .find_many(vec![user::name::starts_with("J".to_string())])
+            .exec()
+            .await?;
+        assert_eq!(users_starting_with_j.len(), 2);
+
+        let users_ending_with_son = client
+            .user()
+            .find_many(vec![user::name::ends_with("son".to_string())])
+            .exec()
+            .await?;
+        assert_eq!(users_ending_with_son.len(), 1);
+        assert_eq!(users_ending_with_son[0].name, "Bob Johnson");
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_comparison_operators() -> Result<(), Box<dyn std::error::Error>> {
+        use chrono::TimeZone;
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        let _ = client
+            .user()
+            .create(
+                "young@example.com".to_string(),
+                "Young User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(18)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _ = client
+            .user()
+            .create(
+                "middle@example.com".to_string(),
+                "Middle User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _ = client
+            .user()
+            .create(
+                "old@example.com".to_string(),
+                "Old User".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(45)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let older_users = client
+            .user()
+            .find_many(vec![user::age::gt(25)])
+            .exec()
+            .await?;
+        assert_eq!(older_users.len(), 2);
+
+        let younger_users = client
+            .user()
+            .find_many(vec![user::age::lt(25)])
+            .exec()
+            .await?;
+        assert_eq!(younger_users.len(), 1);
+
+        let adult_users = client
+            .user()
+            .find_many(vec![user::age::gte(18)])
+            .exec()
+            .await?;
+        assert_eq!(adult_users.len(), 3);
+
+        let max_30_users = client
+            .user()
+            .find_many(vec![user::age::lte(30)])
+            .exec()
+            .await?;
+        assert_eq!(max_30_users.len(), 2);
+
+        let specific_ages = client
+            .user()
+            .find_many(vec![user::age::in_vec(vec![18, 45])])
+            .exec()
+            .await?;
+        assert_eq!(specific_ages.len(), 2);
+
+        let not_specific_ages = client
+            .user()
+            .find_many(vec![user::age::not_in_vec(vec![18, 45])])
+            .exec()
+            .await?;
+        assert_eq!(not_specific_ages.len(), 1);
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_logical_operators() -> Result<(), Box<dyn std::error::Error>> {
+        use chrono::TimeZone;
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        let _ = client
+            .user()
+            .create(
+                "young.john@example.com".to_string(),
+                "John Young".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(16)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _ = client
+            .user()
+            .create(
+                "adult.jane@example.com".to_string(),
+                "Jane Adult".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _ = client
+            .user()
+            .create(
+                "senior.bob@test.org".to_string(),
+                "Bob Senior".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(70)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _ = client
+            .user()
+            .create(
+                "middle.alice@example.com".to_string(),
+                "Alice Middle".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(35)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let adult_example_users = client
+            .user()
+            .find_many(vec![and(vec![
+                user::age::gte(18),
+                user::email::contains("example.com".to_string()),
+            ])])
+            .exec()
+            .await?;
+        assert_eq!(adult_example_users.len(), 2);
+
+        let young_or_old_users = client
+            .user()
+            .find_many(vec![or(vec![user::age::lt(18), user::age::gt(65)])])
+            .exec()
+            .await?;
+        assert_eq!(young_or_old_users.len(), 2);
+
+        let not_minors = client
+            .user()
+            .find_many(vec![not(vec![user::age::lt(18)])])
+            .exec()
+            .await?;
+        assert_eq!(not_minors.len(), 3);
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_collection_operators_examples() -> Result<(), Box<dyn std::error::Error>> {
+        use chrono::TimeZone;
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        let u1 = client
+            .user()
+            .create(
+                "user1@example.com".to_string(),
+                "User One".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(13)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let u2 = client
+            .user()
+            .create(
+                "user2@example.com".to_string(),
+                "User Two".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(14)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let u3 = client
+            .user()
+            .create(
+                "user3@example.com".to_string(),
+                "User Three".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let u5 = client
+            .user()
+            .create(
+                "user5@example.com".to_string(),
+                "User Five".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(15)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let u8 = client
+            .user()
+            .create(
+                "user8@example.com".to_string(),
+                "User Eight".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let users_by_ids = client
+            .user()
+            .find_many(vec![user::id::in_vec(vec![u1.id, u2.id, u3.id, u5.id, u8.id])])
+            .exec()
+            .await?;
+        assert_eq!(users_by_ids.len(), 5);
+
+        let users_excluding_young = client
+            .user()
+            .find_many(vec![user::age::not_in_vec(vec![13, 14, 15])])
+            .exec()
+            .await?;
+        assert_eq!(users_excluding_young.len(), 2);
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_null_operators_minimal() -> Result<(), Box<dyn std::error::Error>> {
+        use chrono::TimeZone;
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        let with_age = client
+            .user()
+            .create(
+                "with_age@example.com".to_string(),
+                "User With Age".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let without_age = client
+            .user()
+            .create(
+                "without_age@example.com".to_string(),
+                "User Without Age".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let users_without_age = client
+            .user()
+            .find_many(vec![user::age::equals(None)])
+            .exec()
+            .await?;
+        assert_eq!(users_without_age.len(), 1);
+        assert_eq!(users_without_age[0].id, without_age.id);
+
+        let users_with_age = client
+            .user()
+            .find_many(vec![user::age::not(None)])
+            .exec()
+            .await?;
+        assert!(users_with_age.iter().any(|u| u.id == with_age.id));
+        assert!(users_with_age.iter().all(|u| u.age.is_some()));
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    // Skipped JSON-specific set operations for PCR due to differing JSON write API.
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_count_server_side() -> Result<(), Box<dyn std::error::Error>> {
+        use std::str::FromStr;
+        use chrono::{DateTime, FixedOffset};
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+
+        let total0 = client.user().count(vec![]).exec().await?;
+        assert_eq!(total0, 0);
+
+        let now = DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap();
+        let _u1 = client
+            .user()
+            .create(
+                "c1@example.com".to_string(),
+                "C1".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(20)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+        let _u2 = client
+            .user()
+            .create(
+                "c2@example.com".to_string(),
+                "C2".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+        let _u3 = client
+            .user()
+            .create(
+                "c3@example.com".to_string(),
+                "C3".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let total_all = client.user().count(vec![]).exec().await?;
+        assert_eq!(total_all, 3);
+
+        let total_adults = client.user().count(vec![user::age::gt(25)]).exec().await?;
+        assert_eq!(total_adults, 1);
+
+        let total_null_age = client.user().count(vec![user::age::equals(None)]).exec().await?;
+        assert_eq!(total_null_age, 1);
+
+        teardown_test_db(client, container).await?;
         Ok(())
     }
 }

@@ -2072,15 +2072,13 @@ mod query_builder_tests {
         assert_eq!(user.age, Some(25));
 
         // Test increment operation
-        println!("🔧 Testing increment operation: age = {:?}", user.age);
-        println!("🔧 Calling update with user::age::increment(5)");
+   
         let updated_user = client
             .user()
             .update(user::id::equals(user.id), vec![user::age::increment(5)])
             .exec()
             .await
             .unwrap();
-        println!("🔧 After increment(5): age = {:?}", updated_user.age);
         assert_eq!(updated_user.age, Some(30));
 
         // Test decrement operation
@@ -2897,12 +2895,23 @@ mod query_builder_tests {
             .exec()
             .await;
 
-        // The result might fail due to incomplete implementation, but it should compile
-        // This test verifies that our agnostic approach works with the metadata system
-        println!("Agnostic implementation result: {:?}", result);
-        
-        // For now, we just verify it compiles and runs without panicking
-        // The actual functionality will be implemented later
+        // Verify the update succeeded and the record matches
+        assert!(result.is_ok(), "agnostic has_many set update failed: {:?}", result);
+        let updated = result.unwrap();
+        assert_eq!(updated.id, user.id);
+
+        // Verify via relation fetch that exactly the specified post is connected
+        let user_with_posts = client
+            .user()
+            .find_unique(user::id::equals(user.id))
+            .with(user::posts::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        let posts = user_with_posts.posts.unwrap();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].id, post.id);
     }
 
     #[tokio::test]
