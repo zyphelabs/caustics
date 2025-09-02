@@ -20,6 +20,7 @@ where
     pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
     pub is_distinct: bool,
     pub distinct_on_fields: Option<Vec<SimpleExpr>>,
+    pub skip_is_negative: bool,
     pub _phantom: std::marker::PhantomData<Selected>,
 }
 
@@ -37,6 +38,9 @@ where
 
     /// Execute and return selected rows
     pub async fn exec(self) -> Result<Vec<Selected>, sea_orm::DbErr> {
+        if self.skip_is_negative {
+            return Err(sea_orm::DbErr::Custom("skip must be >= 0".to_string()));
+        }
         let mut query = self.query.clone();
 
         // Apply cursor filtering if provided (copied from ManyQueryBuilder)
@@ -56,11 +60,15 @@ where
                 first_order
             };
             let cmp_expr = match effective_order {
-                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
-                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lt(cursor_value.clone()),
-                _ => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
+                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
+                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lte(cursor_value.clone()),
+                _ => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
             };
             query = query.filter(Condition::all().add(cmp_expr));
+            if self.pending_order_bys.is_empty() {
+                let ord = if self.reverse_order { sea_orm::Order::Desc } else { sea_orm::Order::Asc };
+                query = query.order_by(cursor_expr.clone(), ord);
+            }
         }
 
         // Apply orderings

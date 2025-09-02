@@ -2291,6 +2291,7 @@ pub fn generate_entity(
                     cursor: self.cursor,
                     is_distinct: self.is_distinct,
                     distinct_on_fields: self.distinct_on_fields,
+                    skip_is_negative: false,
                     _phantom: std::marker::PhantomData,
                 };
                 for s in selects {
@@ -2568,6 +2569,7 @@ pub fn generate_entity(
         pub mod prelude {
             pub use super::ManyCursorExt;
             pub use super::DistinctFieldsExt;
+            pub use super::SelectManyDistinctFieldsExt;
             pub use super::AggregateSelectorExt;
             pub use super::GroupBySelectorExt;
             pub use super::GroupByHavingAggExt;
@@ -2860,6 +2862,28 @@ pub fn generate_entity(
             }
         }
 
+        // Expose distinct(fields) on SelectManyQueryBuilder as well
+        pub trait SelectManyDistinctFieldsExt<'a, C: sea_orm::ConnectionTrait> {
+            fn distinct(self, fields: Vec<ScalarField>) -> Self;
+        }
+
+        impl<'a, C: sea_orm::ConnectionTrait> SelectManyDistinctFieldsExt<'a, C>
+            for caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>
+        {
+            fn distinct(mut self, fields: Vec<ScalarField>) -> Self {
+                let mut exprs: Vec<SimpleExpr> = Vec::with_capacity(fields.len());
+                for f in fields {
+                    let e = match f {
+                        #(ScalarField::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
+                    };
+                    exprs.push(e);
+                }
+                self.distinct_on_fields = Some(exprs);
+                self.is_distinct = true;
+                self
+            }
+        }
+
         impl<'a, C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait> EntityClient<'a, C> {
             pub fn new(conn: &'a C, database_backend: sea_orm::DatabaseBackend) -> Self {
                 Self { conn, database_backend }
@@ -2903,6 +2927,7 @@ pub fn generate_entity(
                     cursor: None,
                     is_distinct: false,
                     distinct_on_fields: None,
+                    skip_is_negative: false,
                     _phantom: std::marker::PhantomData,
                 }
             }

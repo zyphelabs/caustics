@@ -367,12 +367,13 @@ mod query_builder_tests {
             .find_many(vec![])
             .order_by(user::id::order(SortOrder::Asc))
             .cursor(user::id::equals(cursor_id))
+            .skip(1)
             .take(2)
             .exec()
             .await
             .unwrap();
 
-        // Should skip the cursor row and return the next two
+        // Should skip the cursor row (via skip(1)) and return the next two
         assert_eq!(second_page.len(), 2);
         assert!(second_page.iter().all(|u| u.id > cursor_id));
     }

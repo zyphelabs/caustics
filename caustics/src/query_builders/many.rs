@@ -16,6 +16,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
     pub is_distinct: bool,
     pub distinct_on_fields: Option<Vec<SimpleExpr>>,
+    pub skip_is_negative: bool,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
 
@@ -43,8 +44,12 @@ where
 
     /// Skip a number of results (for pagination, aligned with Prisma's i64 API)
     pub fn skip(mut self, offset: i64) -> Self {
-        let offset_u = if offset < 0 { 0 } else { offset as u64 };
-        self.query = self.query.offset(offset_u);
+        if offset < 0 {
+            // Defer error until exec to maintain builder signature
+            self.skip_is_negative = true;
+        } else {
+            self.query = self.query.offset(offset as u64);
+        }
         self
     }
 
@@ -87,6 +92,9 @@ where
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
+        if self.skip_is_negative {
+            return Err(sea_orm::DbErr::Custom("skip must be >= 0".to_string()));
+        }
         let mut query = self.query.clone();
         // Apply cursor filtering if provided
         if let Some((cursor_expr, cursor_value)) = &self.cursor {
@@ -106,14 +114,20 @@ where
                 first_order
             };
 
+            // Inclusive comparator like PCR (cursor row included by default)
             let cmp_expr = match effective_order {
-                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
-                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lt(cursor_value.clone()),
-                // Fallback behaves like Asc
-                _ => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
+                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
+                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lte(cursor_value.clone()),
+                _ => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
             };
 
             query = query.filter(Condition::all().add(cmp_expr));
+
+            // If no explicit order_by was provided, order by the cursor column for stability
+            if self.pending_order_bys.is_empty() {
+                let ord = if self.reverse_order { sea_orm::Order::Desc } else { sea_orm::Order::Asc };
+                query = query.order_by(cursor_expr.clone(), ord);
+            }
         }
         // Apply any pending orderings here, so reversal is respected regardless of call order
         if !self.pending_order_bys.is_empty() {
