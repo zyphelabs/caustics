@@ -197,8 +197,8 @@ pub mod course {
         pub teacher_id: i32,
         #[sea_orm(column_name = "department_id")]
         pub department_id: i32,
-        #[sea_orm(column_name = "semester_id")]
-        pub semester_id: i32,
+        #[sea_orm(column_name = "semester_id", nullable)]
+        pub semester_id: Option<i32>,
     }
 
     #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -595,7 +595,7 @@ mod caustics_school_tests {
             .student()
             .find_many(vec![])
             .take(1)
-            .select(vec![student::SelectParam::FirstName])
+            .select(vec![student::select::first_name()])
             .with(student::enrollments::fetch())
             .exec()
             .await
@@ -714,8 +714,8 @@ mod caustics_school_tests {
                 fixed_now(),
                 teacher::id::equals(teacher.id),
                 department::id::equals(dept.id),
-                semester::id::equals(semester.id),
                 vec![
+                    course::semester::connect(semester::id::equals(semester.id)),
                     course::description::set(None),
                     course::deleted_at::set(None),
                 ],
@@ -1037,7 +1037,7 @@ mod caustics_school_advanced_tests {
         let row = client
             .teacher()
             .find_first(vec![])
-            .select(vec![teacher::SelectParam::FirstName])
+            .select(vec![teacher::select::first_name()])
             .with(teacher::department::fetch())
             .exec()
             .await
@@ -1112,8 +1112,7 @@ mod caustics_school_advanced_tests {
                 fixed_now(),
                 teacher::id::equals(teacher.id),
                 department::id::equals(dept.id),
-                semester::id::equals(semester.id),
-                vec![],
+                vec![course::semester::connect(semester::id::equals(semester.id))],
             )
             .exec()
             .await
@@ -1235,8 +1234,7 @@ mod caustics_school_advanced_tests {
                 fixed_now(),
                 teacher::id::equals(teacher.id),
                 department::id::equals(dept.id),
-                semester::id::equals(semester.id),
-                vec![],
+                vec![course::semester::connect(semester::id::equals(semester.id))],
             )
             .exec()
             .await
@@ -1280,11 +1278,11 @@ mod caustics_school_advanced_tests {
         let selected = client
             .student()
             .find_unique(student::id::equals(student_row.id))
-            .select(vec![student::SelectParam::FirstName])
+            .select(vec![student::select::first_name()])
             .with(
                 student::enrollments::with(
                     enrollment::course::with(
-                        course::teacher::with_select(vec![teacher::SelectParam::FirstName])
+                        course::teacher::with_select(vec![teacher::select::first_name()])
                     )
                 ),
             )

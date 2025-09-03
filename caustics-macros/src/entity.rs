@@ -713,6 +713,18 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate snake_case function idents for per-entity select helpers
+    let snake_field_fn_idents = fields
+        .iter()
+        .map(|field| {
+            let snake = format_ident!(
+                "{}",
+                field.ident.as_ref().unwrap().to_string()
+            );
+            snake
+        })
+        .collect::<Vec<_>>();
+
     // Generate variants for GroupByOrderByParam (same as order_by_field_variants)
     let group_by_order_by_field_variants = order_by_field_variants.clone();
 
@@ -2253,6 +2265,12 @@ pub fn generate_entity(
         #[derive(Debug, Clone)]
         pub enum SelectParam {
             #(#group_by_field_variants,)*
+        }
+
+        // Per-entity snake_case select helpers, e.g. user::select::id()
+        pub mod select {
+            use super::SelectParam;
+            #(pub fn #snake_field_fn_idents() -> SelectParam { SelectParam::#group_by_field_variants })*
         }
 
         // Map typed SelectParam to column alias strings (snake_case)
