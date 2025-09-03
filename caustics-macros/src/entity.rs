@@ -2261,24 +2261,18 @@ pub fn generate_entity(
             #(#group_by_field_variants,)*
         }
 
-        // Select parameters for scalar fields (PCR-like select)
-        #[derive(Debug, Clone)]
-        pub enum SelectParam {
-            #(#group_by_field_variants,)*
-        }
-
         // Per-entity snake_case select helpers, e.g. user::select::id()
         pub mod select {
-            use super::SelectParam;
-            #(pub fn #snake_field_fn_idents() -> SelectParam { SelectParam::#group_by_field_variants })*
+            use super::ScalarField;
+            #(pub fn #snake_field_fn_idents() -> ScalarField { ScalarField::#group_by_field_variants })*
         }
 
-        // Map typed SelectParam to column alias strings (snake_case)
-        pub fn select_params_to_aliases(params: Vec<SelectParam>) -> Vec<String> {
+        // Map typed ScalarField to column alias strings (snake_case)
+        pub fn scalar_fields_to_aliases(params: Vec<ScalarField>) -> Vec<String> {
             let mut out: Vec<String> = Vec::with_capacity(params.len());
             for p in params {
                 match p {
-                    #( SelectParam::#group_by_field_variants => out.push(#all_field_names.to_string()), )*
+                    #( ScalarField::#group_by_field_variants => out.push(#all_field_names.to_string()), )*
                 }
             }
             out
@@ -2286,7 +2280,7 @@ pub fn generate_entity(
 
         // Extension traits to apply select on query builders returning Selected builders
         pub trait ManySelectExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
+            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
         }
 
         impl<'a, C> ManySelectExt<'a, C> for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
@@ -2294,7 +2288,7 @@ pub fn generate_entity(
             C: sea_orm::ConnectionTrait,
             ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
         {
-            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
+            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
                 use sea_orm::IntoSimpleExpr;
                 let mut builder = caustics::SelectManyQueryBuilder {
                     query: self.query,
@@ -2314,7 +2308,7 @@ pub fn generate_entity(
                 };
                 for s in selects {
                     match s {
-                        #( SelectParam::#group_by_field_variants => {
+                        #( ScalarField::#group_by_field_variants => {
                             let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
                             builder = builder.push_field(expr, #all_field_names);
                             builder.requested_aliases.push(#all_field_names.to_string());
@@ -2326,7 +2320,7 @@ pub fn generate_entity(
         }
 
         pub trait UniqueSelectExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
+            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
         }
 
         impl<'a, C> UniqueSelectExt<'a, C> for caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>
@@ -2334,7 +2328,7 @@ pub fn generate_entity(
             C: sea_orm::ConnectionTrait,
             ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
         {
-            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
+            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
                 use sea_orm::IntoSimpleExpr;
                 let mut builder = caustics::SelectUniqueQueryBuilder {
                     query: self.query,
@@ -2348,7 +2342,7 @@ pub fn generate_entity(
                 };
                 for s in selects {
                     match s {
-                        #( SelectParam::#group_by_field_variants => {
+                        #( ScalarField::#group_by_field_variants => {
                             let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
                             builder = builder.push_field(expr, #all_field_names);
                             builder.requested_aliases.push(#all_field_names.to_string());
@@ -2360,7 +2354,7 @@ pub fn generate_entity(
         }
 
         pub trait FirstSelectExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
+            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
         }
 
         impl<'a, C> FirstSelectExt<'a, C> for caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
@@ -2368,7 +2362,7 @@ pub fn generate_entity(
             C: sea_orm::ConnectionTrait,
             ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
         {
-            fn select(self, selects: Vec<SelectParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
+            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
                 use sea_orm::IntoSimpleExpr;
                 let mut builder = caustics::SelectFirstQueryBuilder {
                     query: self.query,
@@ -2382,7 +2376,7 @@ pub fn generate_entity(
                 };
                 for s in selects {
                     match s {
-                        #( SelectParam::#group_by_field_variants => {
+                        #( ScalarField::#group_by_field_variants => {
                             let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
                             builder = builder.push_field(expr, #all_field_names);
                             builder.requested_aliases.push(#all_field_names.to_string());
@@ -3103,6 +3097,22 @@ pub fn generate_entity(
                 }
             }
 
+            pub fn create_many(&self, creates: Vec<Create>) -> caustics::CreateManyQueryBuilder<'a, C, Entity, ActiveModel>
+            where
+                C: sea_orm::ConnectionTrait,
+            {
+                let mut items = Vec::with_capacity(creates.len());
+                for c in creates {
+                    let (model, deferred_lookups) = c.into_active_model::<C>();
+                    items.push((model, deferred_lookups));
+                }
+                caustics::CreateManyQueryBuilder {
+                    items,
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+
             pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam>
             where
                 C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
@@ -3160,6 +3170,19 @@ pub fn generate_entity(
                         conn: self.conn,
                         _phantom: std::marker::PhantomData,
                     })
+                }
+            }
+
+            pub fn update_many(&self, conditions: Vec<WhereParam>, changes: Vec<SetParam>) -> caustics::UpdateManyQueryBuilder<'a, C, Entity, ActiveModel, SetParam>
+            where
+                C: sea_orm::ConnectionTrait,
+            {
+                let cond = where_params_to_condition(conditions, self.database_backend);
+                caustics::UpdateManyQueryBuilder {
+                    condition: cond,
+                    changes,
+                    conn: self.conn,
+                    _phantom: std::marker::PhantomData,
                 }
             }
 
@@ -3554,8 +3577,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                 }
 
                 // PCR-aligned typed helpers
-                pub fn fetch_with_select_params(params: Vec<super::#target::SelectParam>) -> super::RelationFilter {
-                    let aliases: Vec<String> = super::#target::select_params_to_aliases(params);
+                pub fn fetch_with_select_params(params: Vec<super::#target::ScalarField>) -> super::RelationFilter {
+                    let aliases: Vec<String> = super::#target::scalar_fields_to_aliases(params);
                     super::RelationFilter {
                         relation: #relation_name_lit,
                         filters: vec![],
@@ -3569,7 +3592,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                     }
                 }
 
-                pub fn with_select(params: Vec<super::#target::SelectParam>) -> super::RelationFilter {
+                pub fn with_select(params: Vec<super::#target::ScalarField>) -> super::RelationFilter {
                     fetch_with_select_params(params)
                 }
 

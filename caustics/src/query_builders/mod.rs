@@ -4,7 +4,9 @@ pub mod unique;
 pub mod first;
 pub mod many;
 pub mod create;
+pub mod create_many;
 pub mod update;
+pub mod update_many;
 pub mod delete;
 pub mod delete_many;
 pub mod upsert;
@@ -19,6 +21,7 @@ pub mod select_unique;
 pub mod select_first;
 
 pub use create::CreateQueryBuilder;
+pub use create_many::CreateManyQueryBuilder;
 pub use delete::DeleteQueryBuilder;
 pub use delete_many::DeleteManyQueryBuilder;
 pub use first::FirstQueryBuilder;
@@ -26,6 +29,7 @@ pub use many::ManyQueryBuilder;
 pub use unique::UniqueQueryBuilder;
 pub use update::UpdateQueryBuilder;
 pub use update::UnifiedUpdateQueryBuilder;
+pub use update_many::UpdateManyQueryBuilder;
 pub use upsert::UpsertQueryBuilder;
 
 pub use deferred_lookup::DeferredLookup;

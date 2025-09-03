@@ -3212,4 +3212,94 @@ mod query_builder_tests {
         assert!(final_post_ids.contains(&post1.id));
         assert!(final_post_ids.contains(&post2.id));
     }
+
+    #[tokio::test]
+    async fn test_create_many_users() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        use chrono::{DateTime, FixedOffset};
+
+        let ts = chrono::Utc::now().timestamp();
+        let count = client
+            .user()
+            .create_many(vec![
+                user::Create {
+                    email: format!("cm1_{}@example.com", ts),
+                    name: "CM1".to_string(),
+                    created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                    updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                    _params: vec![user::age::set(Some(21)), user::deleted_at::set(None)],
+                },
+                user::Create {
+                    email: format!("cm2_{}@example.com", ts),
+                    name: "CM2".to_string(),
+                    created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                    updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                    _params: vec![user::age::set(Some(22)), user::deleted_at::set(None)],
+                },
+            ])
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_many_users() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+        use chrono::{DateTime, FixedOffset};
+
+        // seed two users with deleted_at null and different ages
+        let u1 = client
+            .user()
+            .create(
+                format!("um1_{}@example.com", chrono::Utc::now().timestamp()),
+                "UM1".to_string(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(19)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _u2 = client
+            .user()
+            .create(
+                format!("um2_{}@example.com", chrono::Utc::now().timestamp()),
+                "UM2".to_string(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(31)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // updateMany: set deleted_at for users age >= 30
+        let affected = client
+            .user()
+            .update_many(
+                vec![user::age::gte(Some(30))],
+                vec![user::deleted_at::set(Some(
+                    DateTime::<FixedOffset>::parse_from_rfc3339("2021-12-31T00:00:00Z").unwrap(),
+                ))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(affected, 1);
+
+        // verify the younger user remains not deleted
+        let still_active = client
+            .user()
+            .find_unique(user::id::equals(u1.id))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(still_active.deleted_at.is_none());
+    }
 }

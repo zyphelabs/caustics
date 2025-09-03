@@ -165,7 +165,7 @@ let users_with_posts = client
 let users_basic = client
     .user()
     .find_many(vec![])
-    .select(vec![user::SelectParam::Id, user::SelectParam::Name])
+    .select(vec![user::select::id(), user::select::name()])
     .exec()
     .await?;
 
@@ -173,7 +173,7 @@ let users_basic = client
 let students = client
     .student()
     .find_many(vec![])
-    .select(vec![student::SelectParam::FirstName])
+    .select(vec![student::select::first_name()])
     .with(student::enrollments::fetch())
     .exec()
     .await?;
@@ -182,11 +182,11 @@ let students = client
 let selected = client
     .student()
     .find_unique(student::id::equals(1))
-    .select(vec![student::SelectParam::FirstName])
+    .select(vec![student::select::first_name()])
     .with(
         student::enrollments::with(
             enrollment::course::with(
-                course::teacher::with_select(vec![teacher::SelectParam::FirstName])
+                course::teacher::with_select(vec![teacher::select::first_name()])
             )
         ),
     )
@@ -203,8 +203,8 @@ let user = client
     .create(
         "john@example.com".to_string(),
         "John".to_string(),
-        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+        DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+        DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
         vec![user::age::set(Some(25))],
     )
     .exec()
@@ -215,8 +215,8 @@ let post = client
     .post()
     .create(
         "Hello World".to_string(),
-        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-        DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+        DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+        DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
         user::id::equals(1),
         vec![post::content::set(Some("This is my first post".to_string()))],
     )
@@ -342,11 +342,47 @@ let user = client
         user::Create {
             name: "John".to_string(),
             email: "john@example.com".to_string(),
-            created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-            updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+            created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+            updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
             _params: vec![],
         },
         vec![user::name::set("John"), user::age::set(25)],
+    )
+    .exec()
+    .await?;
+```
+
+### createMany / updateMany
+
+```rust
+// createMany users
+let inserted = client
+    .user()
+    .create_many(vec![
+        user::Create {
+            email: "cm1@example.com".to_string(),
+            name: "CM1".to_string(),
+            created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+            updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+            _params: vec![user::age::set(Some(21))],
+        },
+        user::Create {
+            email: "cm2@example.com".to_string(),
+            name: "CM2".to_string(),
+            created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+            updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+            _params: vec![user::age::set(Some(22))],
+        },
+    ])
+    .exec()
+    .await?;
+
+// updateMany matching users
+let affected = client
+    .user()
+    .update_many(
+        vec![user::age::gte(Some(30))],
+        vec![user::deleted_at::set(Some(DateTime::<FixedOffset>::parse_from_rfc3339("2021-12-31T00:00:00Z").unwrap()))],
     )
     .exec()
     .await?;
@@ -387,8 +423,8 @@ let result = client
             .create(
                 "john@example.com".to_string(),
                 "John".to_string(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
                 vec![],
             )
             .exec()
@@ -399,8 +435,8 @@ let result = client
             .post()
             .create(
                 "Hello World".to_string(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
                 user::id::equals(user.id),
                 vec![post::content::set(Some("This is my first post".to_string()))],
             )

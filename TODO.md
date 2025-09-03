@@ -82,10 +82,10 @@
 - [ ] Raw query builder interface
 
 ### 11. Enhanced Batch Operations
-- [ ] Complete batch operation support
-- [ ] Batch updates (currently missing)
-- [ ] Batch deletes (currently missing)
-- [ ] Batch upserts (currently missing)
+- [x] createMany (multi-insert via client.user().create_many([...]).exec())
+- [x] updateMany (multi-update via client.user().update_many(where, changes).exec())
+- [ ] Batch deletes (consolidated multi-delete beyond deleteMany)
+- [ ] Batch upserts
 - [ ] Optimized batch execution
 
 ## Low Priority Features (Nice to Have)
