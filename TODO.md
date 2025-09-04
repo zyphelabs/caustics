@@ -73,6 +73,8 @@
 - [x] `connect` operation for relations
 - [x] `disconnect` operation for relations
 - [x] `set` operation for relations
+- [x] Nested has_many create/createMany on create
+- [x] Nested has_many create/createMany on update (atomic with scalar update)
 - [ ] Nested relation queries
 
 ### 10. Raw SQL Capabilities
@@ -148,7 +150,7 @@
 - [x] Unit tests for collection operators (in_vec, not_in_vec) - includes README examples in test_collection_operators_readme_examples
 - [x] Unit tests for logical operators (and, or, not) - see test_logical_operators in blog_test.rs
 - [x] Unit tests for null operators
-- [ ] Integration tests for complex queries
+- [x] Integration test: update with nested has_many create + scalar set (atomic)
 - [ ] Performance tests for batch operations
 - [ ] Error handling tests
 

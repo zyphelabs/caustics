@@ -1,5 +1,5 @@
 use super::deferred_lookup::DeferredLookup;
-use crate::FromModel;
+use crate::{FromModel, PostInsertOp};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait};
 use std::any::Any;
 
@@ -14,6 +14,8 @@ pub struct CreateQueryBuilder<
     pub model: ActiveModel,
     pub conn: &'a C,
     pub deferred_lookups: Vec<DeferredLookup>,
+    pub post_insert_ops: Vec<PostInsertOp<'a>>,
+    pub id_extractor: fn(&<Entity as EntityTrait>::Model) -> i32,
     pub _phantom: std::marker::PhantomData<(Entity, ModelWithRelations)>,
 }
 
@@ -42,7 +44,12 @@ where
             (lookup.assign)(&mut model as &mut (dyn Any + 'static), lookup_result);
         }
 
-        model.insert(txn).await.map(ModelWithRelations::from_model)
+        let inserted = model.insert(txn).await?;
+        let parent_id = (self.id_extractor)(&inserted);
+        for op in self.post_insert_ops {
+            (op.run_on_txn)(txn, parent_id).await?;
+        }
+        Ok(ModelWithRelations::from_model(inserted))
     }
 }
 
@@ -66,10 +73,12 @@ where
             (lookup.assign)(&mut model as &mut (dyn Any + 'static), lookup_result);
         }
 
-        model
-            .insert(self.conn)
-            .await
-            .map(ModelWithRelations::from_model)
+        let inserted = model.insert(self.conn).await?;
+        let parent_id = (self.id_extractor)(&inserted);
+        for op in self.post_insert_ops {
+            (op.run_on_conn)(self.conn, parent_id).await?;
+        }
+        Ok(ModelWithRelations::from_model(inserted))
     }
 }
 
@@ -92,10 +101,12 @@ where
             (lookup.assign)(&mut model as &mut (dyn Any + 'static), lookup_result);
         }
 
-        model
-            .insert(self.conn)
-            .await
-            .map(ModelWithRelations::from_model)
+        let inserted = model.insert(self.conn).await?;
+        let parent_id = (self.id_extractor)(&inserted);
+        for op in self.post_insert_ops {
+            (op.run_on_txn)(self.conn, parent_id).await?;
+        }
+        Ok(ModelWithRelations::from_model(inserted))
     }
 }
 

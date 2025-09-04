@@ -1301,6 +1301,251 @@ mod caustics_school_advanced_tests {
     }
 
     #[tokio::test]
+    async fn test_student_create_with_nested_enrollments_create_and_create_many() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Setup department, teacher, semester, and two courses
+        let dept = client
+            .department()
+            .create(
+                "NEST".to_string(),
+                "Nested Dept".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let teacher = client
+            .teacher()
+            .create(
+                "TN1".to_string(),
+                "Teach".to_string(),
+                "Nest".to_string(),
+                "teach.nest@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let course_a = client
+            .course()
+            .create(
+                "NEST101".to_string(),
+                "Nested A".to_string(),
+                3,
+                30,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let course_b = client
+            .course()
+            .create(
+                "NEST102".to_string(),
+                "Nested B".to_string(),
+                4,
+                40,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create student with nested has_many enrollment create and createMany
+        let student_row = client
+            .student()
+            .create(
+                "SNEST".to_string(),
+                "Nested".to_string(),
+                "Creator".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![
+                    // Single create for course_a
+                    student::enrollments::create(vec![
+                        enrollment::Create {
+                            enrollment_date: fixed_now(),
+                            status: "enrolled".to_string(),
+                            created_at: fixed_now(),
+                            updated_at: fixed_now(),
+                            student: student::student_number::equals("SNEST".to_string()),
+                            course: course::id::equals(course_a.id),
+                            _params: vec![
+                                enrollment::withdrawal_date::set(None),
+                                enrollment::deleted_at::set(None),
+                            ],
+                        },
+                    ]),
+                    // CreateMany for course_b (two rows)
+                    student::enrollments::create_many(vec![
+                        enrollment::Create {
+                            enrollment_date: fixed_now(),
+                            status: "enrolled".to_string(),
+                            created_at: fixed_now(),
+                            updated_at: fixed_now(),
+                            student: student::student_number::equals("SNEST".to_string()),
+                            course: course::id::equals(course_b.id),
+                            _params: vec![],
+                        },
+                        enrollment::Create {
+                            enrollment_date: fixed_now(),
+                            status: "completed".to_string(),
+                            created_at: fixed_now(),
+                            updated_at: fixed_now(),
+                            student: student::student_number::equals("SNEST".to_string()),
+                            course: course::id::equals(course_b.id),
+                            _params: vec![],
+                        },
+                    ]),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify three enrollments were created for the student
+        let enrollments = client
+            .enrollment()
+            .find_many(vec![enrollment::student_id::equals(student_row.id)])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(enrollments.len(), 3);
+        assert!(enrollments.iter().any(|e| e.course_id == course_a.id));
+        assert!(enrollments.iter().filter(|e| e.course_id == course_b.id).count() == 2);
+    }
+
+    #[tokio::test]
+    async fn test_student_update_with_nested_enrollments_create() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Setup a minimal graph: department, teacher, course, student
+        let dept = client
+            .department()
+            .create(
+                "UNEST".to_string(),
+                "Upd Nested Dept".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let teacher = client
+            .teacher()
+            .create(
+                "TU1".to_string(),
+                "Teach".to_string(),
+                "Up".to_string(),
+                "teach.up@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let course = client
+            .course()
+            .create(
+                "UNEST101".to_string(),
+                "Upd Nested".to_string(),
+                3,
+                30,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let s = client
+            .student()
+            .create(
+                "SUNEST".to_string(),
+                "Upd".to_string(),
+                "Student".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Update student with both nested enrollment create and a scalar field set
+        let _updated = client
+            .student()
+            .update(
+                student::id::equals(s.id),
+                vec![
+                    student::first_name::set("UpdatedName".to_string()),
+                    student::enrollments::create(vec![enrollment::Create {
+                        enrollment_date: fixed_now(),
+                        status: "enrolled".to_string(),
+                        created_at: fixed_now(),
+                        updated_at: fixed_now(),
+                        student: student::id::equals(s.id),
+                        course: course::id::equals(course.id),
+                        _params: vec![],
+                    }]),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify one enrollment exists for the student after update
+        let enrollments = client
+            .enrollment()
+            .find_many(vec![enrollment::student_id::equals(s.id)])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(enrollments.len(), 1);
+        assert_eq!(enrollments[0].course_id, course.id);
+    }
+
+    #[tokio::test]
     async fn test_nullable_fields_update() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());

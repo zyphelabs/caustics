@@ -254,6 +254,55 @@ let post = client
     .await?;
 ```
 
+### Nested writes (has_many) on update
+
+Nested has_many create and createMany can be performed inside an update. Caustics executes the nested creates, relation set operations (if any), and scalar field updates in a single transaction atomically.
+
+```rust
+// Atomically set a scalar field and create new enrollments for a student
+let _updated = client
+    .student()
+    .update(
+        student::id::equals(student_id),
+        vec![
+            student::first_name::set("UpdatedName".to_string()),
+            // Create a single enrollment
+            student::enrollments::create(vec![enrollment::Create {
+                enrollment_date: fixed_now(),
+                status: "enrolled".to_string(),
+                created_at: fixed_now(),
+                updated_at: fixed_now(),
+                student: student::id::equals(student_id),
+                course: course::id::equals(course_id_a),
+                _params: vec![],
+            }]),
+            // Create multiple enrollments
+            student::enrollments::create_many(vec![
+                enrollment::Create {
+                    enrollment_date: fixed_now(),
+                    status: "enrolled".to_string(),
+                    created_at: fixed_now(),
+                    updated_at: fixed_now(),
+                    student: student::id::equals(student_id),
+                    course: course::id::equals(course_id_b),
+                    _params: vec![],
+                },
+                enrollment::Create {
+                    enrollment_date: fixed_now(),
+                    status: "completed".to_string(),
+                    created_at: fixed_now(),
+                    updated_at: fixed_now(),
+                    student: student::id::equals(student_id),
+                    course: course::id::equals(course_id_b),
+                    _params: vec![],
+                },
+            ]),
+        ],
+    )
+    .exec()
+    .await?;
+```
+
 ### Atomic
 
 Caustics supports atomic numeric operations that are performed at the database level for safe concurrent updates:
@@ -311,6 +360,12 @@ let user = client
     .exec()
     .await?;
 ```
+
+### Transactions and atomicity
+
+- Create: parent insert and all post-insert nested writes run atomically. In transaction contexts, everything uses the provided transaction.
+- Update (with has_many set and/or nested create): nested creates, set operations, and scalar update execute in a single transaction.
+- Upsert: create or update branches run atomically; post-insert operations for the create branch are executed in the same transaction.
 
 ### Delete
 

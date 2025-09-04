@@ -605,6 +605,324 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate has_many create and createMany variants for SetParam enum (nested writes)
+    let current_entity_snake = model_ast.ident.to_string().to_snake_case();
+    let has_many_create_variants = relations
+        .iter()
+        .filter_map(|relation| {
+            match relation.kind {
+                RelationKind::HasMany => {
+                    let create_variant = format_ident!("Create{}", relation.name.to_pascal_case());
+                    let create_many_variant = format_ident!("CreateMany{}", relation.name.to_pascal_case());
+                    // Determine FK field ident on child ActiveModel
+                    let fk_field_name = relation
+                        .foreign_key_column
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_id", current_entity_snake.clone()));
+                    let fk_field_ident = format_ident!("{}", fk_field_name.to_snake_case());
+                    let fk_col_ident_pascal = format_ident!("{}", fk_field_name
+                        .split('_')
+                        .map(|part| {
+                            let mut chars = part.chars();
+                            match chars.next() { None => String::new(), Some(first) => first.to_uppercase().chain(chars).collect() }
+                        })
+                        .collect::<String>());
+                    let target_module = &relation.target;
+                    // For has_many nested create, set child's FK to parent id which is non-null in our schemas
+                    let is_fk_nullable_lit = syn::LitBool::new(false, proc_macro2::Span::call_site());
+                    // Table/column literals for handler
+                    let target_table_name = relation
+                        .target_table_name
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| relation.name.to_snake_case());
+                    let current_table_name = relation
+                        .current_table_name
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let current_primary_key_column = if let Some(pk_field) = primary_key_fields.first() {
+                        pk_field.ident.as_ref().unwrap().to_string()
+                    } else {
+                        "id".to_string()
+                    };
+                    let target_primary_key_column = if let Some(pk_field) = &relation.primary_key_field {
+                        pk_field.clone()
+                    } else {
+                        "id".to_string()
+                    };
+                    let fk_column_lit = syn::LitStr::new(&fk_field_name, proc_macro2::Span::call_site());
+                    let target_table_lit = syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                    let current_pk_col_lit = syn::LitStr::new(&current_primary_key_column, proc_macro2::Span::call_site());
+                    let target_pk_col_lit = syn::LitStr::new(&target_primary_key_column, proc_macro2::Span::call_site());
+                    Some((create_variant, create_many_variant, fk_field_ident, fk_col_ident_pascal, target_module.clone(), is_fk_nullable_lit, fk_column_lit, target_table_lit, current_pk_col_lit, target_pk_col_lit))
+                }
+                _ => None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Tokens for enum variants
+    let has_many_create_variant_tokens: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(create_variant, create_many_variant, _, _, target_module, ..)| {
+            quote! {
+                #create_variant(Vec<#target_module::Create>),
+                #create_many_variant(Vec<#target_module::Create>)
+            }
+        })
+        .collect();
+
+    // Match arms for nested create
+    let has_many_create_match_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(create_variant, _create_many_variant, _fk_field_ident, fk_col_ident_pascal, target_module, _is_fk_nullable_lit, _fk_column_lit, _target_table_lit, _current_pk_col_lit, _target_pk_col_lit)| {
+            quote! {
+                SetParam::#create_variant(mut items) => {
+                    let items_arc_main = std::sync::Arc::new(items.clone());
+                    let items_arc_for_conn = std::sync::Arc::clone(&items_arc_main);
+                    let items_arc_for_txn = std::sync::Arc::clone(&items_arc_main);
+                    let run_conn: Box<
+                        dyn for<'b> Fn(
+                                &'b sea_orm::DatabaseConnection,
+                                i32,
+                            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
+                            + Send
+                    > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: i32| {
+                        let items_arc2 = std::sync::Arc::clone(&items_arc_for_conn);
+                        Box::pin(async move {
+                            let items_local = (*items_arc2).clone();
+                            for c in items_local.into_iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
+                                for lookup in child_lookups.into_iter() {
+                                    let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
+                                    (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                                }
+                                // Set the foreign key to the parent id before insert
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                let inserted_child = child_am.insert(conn).await?;
+                                let child_id = #target_module::__extract_id(&inserted_child);
+                                for op in child_post_ops {
+                                    (op.run_on_conn)(conn, child_id).await?;
+                                }
+                            }
+                            Ok(())
+                        })
+                    });
+                    let run_txn: Box<
+                        dyn for<'b> Fn(
+                                &'b sea_orm::DatabaseTransaction,
+                                i32,
+                            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
+                            + Send
+                    > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: i32| {
+                        let items_arc3 = std::sync::Arc::clone(&items_arc_for_txn);
+                        Box::pin(async move {
+                            let items_local = (*items_arc3).clone();
+                            for c in items_local.into_iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
+                                for lookup in child_lookups.into_iter() {
+                                    let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
+                                    (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                                }
+                                // Set the foreign key to the parent id before insert
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                let inserted_child = child_am.insert(txn).await?;
+                                let child_id = #target_module::__extract_id(&inserted_child);
+                                for op in child_post_ops {
+                                    (op.run_on_txn)(txn, child_id).await?;
+                                }
+                            }
+                            Ok(())
+                        })
+                    });
+                    post_insert_ops.push(caustics::PostInsertOp { run_on_conn: run_conn, run_on_txn: run_txn });
+                }
+            }
+        })
+        .collect();
+
+    // Match arms for nested createMany
+    let has_many_create_many_match_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(_create_variant, create_many_variant, _fk_field_ident, fk_col_ident_pascal, target_module, _is_fk_nullable_lit, _fk_column_lit, _target_table_lit, _current_pk_col_lit, _target_pk_col_lit)| {
+            quote! {
+                SetParam::#create_many_variant(mut items) => {
+                    let items_arc_main = std::sync::Arc::new(items.clone());
+                    let items_arc_for_conn = std::sync::Arc::clone(&items_arc_main);
+                    let items_arc_for_txn = std::sync::Arc::clone(&items_arc_main);
+                    let run_conn: Box<
+                        dyn for<'b> Fn(
+                                &'b sea_orm::DatabaseConnection,
+                                i32,
+                            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
+                            + Send
+                    > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: i32| {
+                        let items_arc2 = std::sync::Arc::clone(&items_arc_for_conn);
+                        Box::pin(async move {
+                            let items_local = (*items_arc2).clone();
+                            for c in items_local.into_iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
+                                for lookup in child_lookups.into_iter() {
+                                    let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
+                                    (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                                }
+                                // Set the foreign key to the parent id before insert
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                let inserted_child = child_am.insert(conn).await?;
+                                let child_id = #target_module::__extract_id(&inserted_child);
+                                for op in child_post_ops {
+                                    (op.run_on_conn)(conn, child_id).await?;
+                                }
+                            }
+                            Ok(())
+                        })
+                    });
+                    let run_txn: Box<
+                        dyn for<'b> Fn(
+                                &'b sea_orm::DatabaseTransaction,
+                                i32,
+                            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
+                            + Send
+                    > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: i32| {
+                        let items_arc3 = std::sync::Arc::clone(&items_arc_for_txn);
+                        Box::pin(async move {
+                            let items_local = (*items_arc3).clone();
+                            for c in items_local.into_iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
+                                for lookup in child_lookups.into_iter() {
+                                    let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
+                                    (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                                }
+                                // Set the foreign key to the parent id before insert
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                let inserted_child = child_am.insert(txn).await?;
+                                let child_id = #target_module::__extract_id(&inserted_child);
+                                for op in child_post_ops {
+                                    (op.run_on_txn)(txn, child_id).await?;
+                                }
+                            }
+                            Ok(())
+                        })
+                    });
+                    post_insert_ops.push(caustics::PostInsertOp { run_on_conn: run_conn, run_on_txn: run_txn });
+                }
+            }
+        })
+        .collect();
+
+    // Flag match arms to detect create/createMany on update
+    let has_many_create_flag_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(create_variant, _create_many_variant, ..)| {
+            quote! { SetParam::#create_variant(_) => true, }
+        })
+        .collect();
+
+    let has_many_create_many_flag_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(_create_variant, create_many_variant, ..)| {
+            quote! { SetParam::#create_many_variant(_) => true, }
+        })
+        .collect();
+
+    // Exec arms for nested create on update (connection)
+    let has_many_create_exec_conn_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(create_variant, _create_many_variant, _fk_field_ident, fk_col_ident_pascal, target_module, _is_fk_nullable_lit, _fk_column_lit, _target_table_lit, _current_pk_col_lit, _target_pk_col_lit)| {
+            quote! {
+                SetParam::#create_variant(items) => {
+                    let items_local = items.clone();
+                    for c in items_local.into_iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
+                        for lookup in child_lookups.into_iter() {
+                            let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
+                            (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                        }
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        let inserted_child = child_am.insert(conn).await?;
+                        let child_id = #target_module::__extract_id(&inserted_child);
+                        for op in child_post_ops { (op.run_on_conn)(conn, child_id).await?; }
+                    }
+                    Ok(())
+                }
+            }
+        })
+        .collect();
+
+    let has_many_create_many_exec_conn_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(_create_variant, create_many_variant, _fk_field_ident, fk_col_ident_pascal, target_module, _is_fk_nullable_lit, _fk_column_lit, _target_table_lit, _current_pk_col_lit, _target_pk_col_lit)| {
+            quote! {
+                SetParam::#create_many_variant(items) => {
+                    let items_local = items.clone();
+                    for c in items_local.into_iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
+                        for lookup in child_lookups.into_iter() {
+                            let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
+                            (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                        }
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        let inserted_child = child_am.insert(conn).await?;
+                        let child_id = #target_module::__extract_id(&inserted_child);
+                        for op in child_post_ops { (op.run_on_conn)(conn, child_id).await?; }
+                    }
+                    Ok(())
+                }
+            }
+        })
+        .collect();
+
+    // Exec arms for nested create on update (transaction)
+    let has_many_create_exec_txn_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(create_variant, _create_many_variant, _fk_field_ident, fk_col_ident_pascal, target_module, _is_fk_nullable_lit, _fk_column_lit, _target_table_lit, _current_pk_col_lit, _target_pk_col_lit)| {
+            quote! {
+                SetParam::#create_variant(items) => {
+                    let items_local = items.clone();
+                    for c in items_local.into_iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
+                        for lookup in child_lookups.into_iter() {
+                            let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
+                            (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                        }
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        let inserted_child = child_am.insert(txn).await?;
+                        let child_id = #target_module::__extract_id(&inserted_child);
+                        for op in child_post_ops { (op.run_on_txn)(txn, child_id).await?; }
+                    }
+                    Ok(())
+                }
+            }
+        })
+        .collect();
+
+    let has_many_create_many_exec_txn_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
+        .iter()
+        .map(|(_create_variant, create_many_variant, _fk_field_ident, fk_col_ident_pascal, target_module, _is_fk_nullable_lit, _fk_column_lit, _target_table_lit, _current_pk_col_lit, _target_pk_col_lit)| {
+            quote! {
+                SetParam::#create_many_variant(items) => {
+                    let items_local = items.clone();
+                    for c in items_local.into_iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
+                        for lookup in child_lookups.into_iter() {
+                            let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
+                            (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
+                        }
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        let inserted_child = child_am.insert(txn).await?;
+                        let child_id = #target_module::__extract_id(&inserted_child);
+                        for op in child_post_ops { (op.run_on_txn)(txn, child_id).await?; }
+                    }
+                    Ok(())
+                }
+            }
+        })
+        .collect();
+
+    // Placeholder for future post-insert arms (not used in Step 1)
+    let has_many_connect_postinsert_arms: Vec<proc_macro2::TokenStream> = Vec::new();
+
     // Combine all SetParam variants as a flat Vec
     let all_set_param_variants: Vec<_> = field_variants
         .into_iter()
@@ -612,6 +930,7 @@ pub fn generate_entity(
         .chain(relation_connect_variants.into_iter())
         .chain(relation_disconnect_variants.into_iter())
         .chain(has_many_set_variant_tokens.into_iter())
+        .chain(has_many_create_variant_tokens.into_iter())
         .collect();
 
     // Generate field variants and field operator modules for WhereParam enum (all fields, with string ops for string fields)
@@ -2208,7 +2527,7 @@ pub fn generate_entity(
         use uuid::Uuid;
         use std::vec::Vec;
         use caustics::{SortOrder, MergeInto, FieldOp};
-        use caustics::FromModel;
+        use caustics::{FromModel, HasManySetHandler};
         use sea_query::{Condition, Expr, SimpleExpr};
         use sea_orm::{ColumnTrait, IntoSimpleExpr, QueryFilter, QueryOrder, QuerySelect};
         use serde_json;
@@ -2229,7 +2548,7 @@ pub fn generate_entity(
             { crate::get_registry() }
         }
 
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         pub enum SetParam {
             #(#all_set_param_variants,)*
         }
@@ -2519,6 +2838,44 @@ pub fn generate_entity(
                     #(#target_ids_match_arms,)*
                     _ => Vec::new(),
                 }
+            }
+
+            fn is_has_many_create_operation(&self) -> bool {
+                match self {
+                    #(#has_many_create_flag_arms)*
+                    #(#has_many_create_many_flag_arms)*
+                    _ => false,
+                }
+            }
+
+            fn exec_has_many_create_on_conn<'a>(
+                &'a self,
+                conn: &'a sea_orm::DatabaseConnection,
+                parent_id: i32,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+                let fut = async move {
+                    match self {
+                        #(#has_many_create_exec_conn_arms)*
+                        #(#has_many_create_many_exec_conn_arms)*
+                        _ => Ok(()),
+                    }
+                };
+                Box::pin(fut)
+            }
+
+            fn exec_has_many_create_on_txn<'a>(
+                &'a self,
+                txn: &'a sea_orm::DatabaseTransaction,
+                parent_id: i32,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+                let fut = async move {
+                    match self {
+                        #(#has_many_create_exec_txn_arms)*
+                        #(#has_many_create_many_exec_txn_arms)*
+                        _ => Ok(()),
+                    }
+                };
+                Box::pin(fut)
             }
         }
 
@@ -2822,16 +3179,20 @@ pub fn generate_entity(
 
         // Removed inherent impl to avoid E0116 in downstream crates; use GroupByAggExt instead
 
+        #[derive(Clone, Debug)]
         pub struct Create {
             #(#required_struct_fields,)*
             #(#foreign_key_relation_fields,)*
             pub _params: Vec<SetParam>,
         }
 
+        pub(crate) fn __extract_id(m: &<Entity as sea_orm::EntityTrait>::Model) -> i32 { m.#current_primary_key_ident }
+
         impl Create {
-            fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup>) {
+            pub(crate) fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup>, Vec<caustics::PostInsertOp<'static>>) {
                 let mut model = ActiveModel::new();
                 let mut deferred_lookups = Vec::new();
+                let mut post_insert_ops: Vec<caustics::PostInsertOp<'static>> = Vec::new();
 
                 #(#required_assigns)*
                 #(#foreign_key_assigns)*
@@ -2841,13 +3202,15 @@ pub fn generate_entity(
                     match param {
                         #(#relation_connect_deferred_match_arms,)*
                         #(#relation_disconnect_match_arms,)*
+                        #(#has_many_create_match_arms,)*
+                        #(#has_many_create_many_match_arms,)*
                         other => {
                             // For non-relation SetParam values, use the normal merge_into
                             other.merge_into(&mut model);
                         }
                     }
                 }
-                (model, deferred_lookups)
+                (model, deferred_lookups, post_insert_ops)
             }
         }
 
@@ -3088,11 +3451,13 @@ pub fn generate_entity(
                     #(#foreign_key_relation_inits,)*
                     _params,
                 };
-                let (model, deferred_lookups) = create.into_active_model::<C>();
+                let (model, deferred_lookups, post_ops) = create.into_active_model::<C>();
                 caustics::CreateQueryBuilder {
                     model,
                     conn: self.conn,
                     deferred_lookups,
+                    post_insert_ops: post_ops,
+                    id_extractor: (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> i32),
                     _phantom: std::marker::PhantomData,
                 }
             }
@@ -3103,8 +3468,13 @@ pub fn generate_entity(
             {
                 let mut items = Vec::with_capacity(creates.len());
                 for c in creates {
-                    let (model, deferred_lookups) = c.into_active_model::<C>();
-                    items.push((model, deferred_lookups));
+                    let (model, deferred_lookups, post_ops) = c.into_active_model::<C>();
+                    items.push((
+                        model,
+                        deferred_lookups,
+                        post_ops,
+                        (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> i32),
+                    ));
                 }
                 caustics::CreateManyQueryBuilder {
                     items,
@@ -3154,8 +3524,11 @@ pub fn generate_entity(
                         Box::pin(fut)
                     }
                 });
-                let has_many = changes.iter().any(|c| <SetParam as caustics::SetParamInfo>::is_has_many_set_operation(c));
-                if has_many {
+                let has_many_any = changes.iter().any(|c| {
+                    <SetParam as caustics::SetParamInfo>::is_has_many_set_operation(c) ||
+                    <SetParam as caustics::SetParamInfo>::is_has_many_create_operation(c)
+                });
+                if has_many_any {
                     caustics::UnifiedUpdateQueryBuilder::Relations(caustics::HasManySetUpdateQueryBuilder {
                         condition: cond,
                         changes,
@@ -3204,10 +3577,10 @@ pub fn generate_entity(
             }
 
             pub fn upsert(&self, condition: UniqueWhereParam, create: Create, update: Vec<SetParam>) -> caustics::UpsertQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam> {
-                let (model, deferred_lookups) = create.into_active_model::<C>();
+                let (model, deferred_lookups, post_insert_ops) = create.into_active_model::<C>();
                 caustics::UpsertQueryBuilder {
                     condition: condition.into(),
-                    create: (model, deferred_lookups),
+                    create: (model, deferred_lookups, post_insert_ops),
                     update,
                     conn: self.conn,
                     _phantom: std::marker::PhantomData,
@@ -3474,6 +3847,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
         let target = &relation.target;
         let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
         let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
+        let create_variant = format_ident!("Create{}", relation.name.to_pascal_case());
+        let create_many_variant = format_ident!("CreateMany{}", relation.name.to_pascal_case());
         let set_variant = format_ident!("Set{}", relation.name.to_pascal_case());
 
         // Generate conditional functions
@@ -3481,6 +3856,20 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
             quote! {
                 pub fn set(where_params: Vec<super::#target::UniqueWhereParam>) -> super::SetParam {
                     super::SetParam::#set_variant(where_params)
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        // Generate create helpers only for has_many
+        let create_fns = if matches!(relation.kind, RelationKind::HasMany) {
+            quote! {
+                pub fn create(items: Vec<super::#target::Create>) -> super::SetParam {
+                    super::SetParam::#create_variant(items)
+                }
+                pub fn create_many(items: Vec<super::#target::Create>) -> super::SetParam {
+                    super::SetParam::#create_many_variant(items)
                 }
             }
         } else {
@@ -3626,6 +4015,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                 }
 
                 #set_fn
+                #create_fns
                 #disconnect_fn
 
                 // Advanced relation operations for filtering

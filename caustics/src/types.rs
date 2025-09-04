@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use sea_orm::sea_query;
+use sea_orm::{DatabaseConnection, DatabaseTransaction};
 
 pub type QueryError = sea_orm::DbErr;
 // Crate-wide result alias for ergonomics (non-conflicting)
@@ -35,6 +36,26 @@ impl From<CausticsError> for sea_orm::DbErr {
     fn from(err: CausticsError) -> Self {
         sea_orm::DbErr::Custom(err.to_string())
     }
+}
+
+/// Operation to run after a parent insert completes (used by nested writes)
+pub struct PostInsertOp<'a> {
+    pub run_on_conn: Box<
+        dyn for<'b> Fn(
+                &'b DatabaseConnection,
+                i32,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
+            + Send
+            + 'a,
+    >,
+    pub run_on_txn: Box<
+        dyn for<'b> Fn(
+                &'b DatabaseTransaction,
+                i32,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
+            + Send
+            + 'a,
+    >,
 }
 
 // Import query builder types for batch operations
@@ -582,6 +603,23 @@ pub trait SetParamInfo {
     
     /// Extract target IDs from a has_many set operation
     fn extract_target_ids(&self) -> Vec<sea_orm::Value>;
+
+    /// Check if this is a has_many nested create operation (create/createMany)
+    fn is_has_many_create_operation(&self) -> bool;
+
+    /// Execute nested create items on a connection for a given parent id
+    fn exec_has_many_create_on_conn<'a>(
+        &'a self,
+        conn: &'a DatabaseConnection,
+        parent_id: i32,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>;
+
+    /// Execute nested create items in a transaction for a given parent id
+    fn exec_has_many_create_on_txn<'a>(
+        &'a self,
+        txn: &'a DatabaseTransaction,
+        parent_id: i32,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>;
 }
 
 /// Trait for condition types to enable proper ID extraction without string parsing
