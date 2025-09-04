@@ -984,6 +984,113 @@ mod caustics_school_advanced_tests {
     }
 
     #[tokio::test]
+    async fn test_upsert_student_create_with_nested_enrollments() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create department, teacher, and course to enroll into
+        let dept = client
+            .department()
+            .create(
+                "UPDPT".to_string(),
+                "Upsert Dept".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let teacher = client
+            .teacher()
+            .create(
+                "TUPS1".to_string(),
+                "Teach".to_string(),
+                "Upsert".to_string(),
+                "teach.upsert@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let course = client
+            .course()
+            .create(
+                "CUPS1".to_string(),
+                "Course Upsert".to_string(),
+                3,
+                30,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Upsert a student that does not exist, with nested enrollments create in Create params
+        let snum = "UPS_STUD1".to_string();
+        let _created = client
+            .student()
+            .upsert(
+                student::student_number::equals(snum.clone()),
+                student::Create {
+                    student_number: snum.clone(),
+                    first_name: "Nested".to_string(),
+                    last_name: "Upsert".to_string(),
+                    date_of_birth: fixed_now(),
+                    enrollment_date: fixed_now(),
+                    is_active: true,
+                    created_at: fixed_now(),
+                    updated_at: fixed_now(),
+                    _params: vec![
+                        student::enrollments::create(vec![enrollment::Create {
+                            enrollment_date: fixed_now(),
+                            status: "enrolled".to_string(),
+                            created_at: fixed_now(),
+                            updated_at: fixed_now(),
+                            student: student::student_number::equals(snum.clone()),
+                            course: course::id::equals(course.id),
+                            _params: vec![],
+                        }]),
+                    ],
+                },
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify the student exists and has one enrollment created
+        let stud = client
+            .student()
+            .find_unique(student::student_number::equals(snum.clone()))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        let enrollments = client
+            .enrollment()
+            .find_many(vec![enrollment::student_id::equals(stud.id)])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(enrollments.len(), 1);
+        assert_eq!(enrollments[0].course_id, course.id);
+    }
+
+    #[tokio::test]
     async fn test_filter_sort_paginate_students() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());

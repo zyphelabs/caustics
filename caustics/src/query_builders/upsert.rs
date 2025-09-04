@@ -13,7 +13,12 @@ pub struct UpsertQueryBuilder<
     T: MergeInto<ActiveModel>,
 > {
     pub condition: sea_orm::Condition,
-    pub create: (ActiveModel, Vec<DeferredLookup>, Vec<PostInsertOp<'a>>),
+    pub create: (
+        ActiveModel,
+        Vec<DeferredLookup>,
+        Vec<PostInsertOp<'a>>,
+        fn(&<Entity as EntityTrait>::Model) -> i32,
+    ),
     pub update: Vec<T>,
     pub conn: &'a C,
     pub _phantom: std::marker::PhantomData<(Entity, ModelWithRelations)>,
@@ -54,7 +59,7 @@ where
                     .map(ModelWithRelations::from_model)
             }
             None => {
-                let (mut active_model, deferred_lookups, post_ops) = self.create;
+                let (mut active_model, deferred_lookups, post_ops, id_extractor) = self.create;
         for lookup in &deferred_lookups {
             let lookup_result = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
                     (lookup.assign)(&mut active_model as &mut (dyn std::any::Any + 'static), lookup_result);
@@ -63,15 +68,7 @@ where
                     change.merge_into(&mut active_model);
                 }
                 let inserted = active_model.insert(txn).await?;
-                // No id extractor here; try extracting id via ModelWithRelations metadata
-                // Fallback: assume primary key field name is "id"
-                let parent_id: i32 = {
-                    // Best-effort: use reflection-like trait if available, otherwise default 0
-                    #[allow(unused_mut)]
-                    let mut id: i32 = 0;
-                    // SAFETY: no generic way here; if needed the macros should supply id extractor for upsert too
-                    id
-                };
+                let parent_id: i32 = (id_extractor)(&inserted);
                 for op in post_ops {
                     (op.run_on_txn)(txn, parent_id).await?;
                 }
@@ -109,7 +106,7 @@ where
                     .map(ModelWithRelations::from_model)
             }
             None => {
-                let (mut active_model, deferred_lookups, post_ops) = self.create;
+                let (mut active_model, deferred_lookups, post_ops, id_extractor) = self.create;
                 // Execute all deferred lookups in batch (if needed)
                 for lookup in &deferred_lookups {
                     let lookup_result = (lookup.resolve_on_conn)(self.conn, &*lookup.unique_param).await?;
@@ -119,7 +116,7 @@ where
                     change.merge_into(&mut active_model);
                 }
                 let inserted = active_model.insert(self.conn).await?;
-                let parent_id: i32 = 0; // same note as txn path
+                let parent_id: i32 = (id_extractor)(&inserted);
                 for op in post_ops {
                     (op.run_on_conn)(self.conn, parent_id).await?;
                 }

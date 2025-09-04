@@ -3580,7 +3580,12 @@ pub fn generate_entity(
                 let (model, deferred_lookups, post_insert_ops) = create.into_active_model::<C>();
                 caustics::UpsertQueryBuilder {
                     condition: condition.into(),
-                    create: (model, deferred_lookups, post_insert_ops),
+                    create: (
+                        model,
+                        deferred_lookups,
+                        post_insert_ops,
+                        (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> i32),
+                    ),
                     update,
                     conn: self.conn,
                     _phantom: std::marker::PhantomData,

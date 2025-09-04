@@ -1,6 +1,6 @@
 # Caustics Implementation Todo List
 
-## High Priority Features (Core Functionality)
+## High Priority
 
 ### 1. String Operators
 - [x] `contains` operator for string fields
@@ -37,7 +37,7 @@
 - [x] Complex nested logical expressions
 - [x] Update WhereParam enum to support logical operators
 
-## Medium Priority Features (Advanced Functionality)
+## Medium Priority
 
 ### 6. JSON Field Support
 - [x] `JsonNullableFilter` enum with all operators
@@ -66,7 +66,7 @@
 - [x] Support for both nullable and non-nullable numeric fields
 - [x] Update SetParam enum to include atomic operations
 
-### 9. Advanced Relation Operations
+### 9. Advanced Relation Operations (Reads)
 - [x] `some` operator for relation filtering
 - [x] `every` operator for relation filtering
 - [x] `none` operator for relation filtering
@@ -75,7 +75,8 @@
 - [x] `set` operation for relations
 - [x] Nested has_many create/createMany on create
 - [x] Nested has_many create/createMany on update (atomic with scalar update)
-- [ ] Nested relation queries
+- [ ] Nested relation queries (deep include/select trees with per-relation filtering, orderBy, take/skip)
+- [x] Upsert create-branch id extractor (macro-supplied id_extractor, reliable post-insert ops)
 
 ### 10. Raw SQL Capabilities
 - [ ] `_query_raw` method for raw SQL queries
@@ -90,7 +91,7 @@
 - [ ] Batch upserts
 - [ ] Optimized batch execution
 
-## Low Priority Features (Nice to Have)
+## Low Priority
 
 ### 12. Query Modes and Ordering
 - [x] `QueryMode` enum with `Default` and `Insensitive`
@@ -99,7 +100,7 @@
 - [ ] Advanced ordering options
 
 ### 13. Advanced Type System
-- [ ] `ScalarFieldEnum` for each model
+- [x] `ScalarFieldEnum` for each model
 - [ ] `RecursiveSafeType` for preventing infinite recursion
 - [ ] `PartialUnchecked` for partial updates
 - [ ] Enhanced type safety features
@@ -132,13 +133,13 @@
 - [x] Update relation generation to support advanced operations
 
 ### Type System Updates
-- [ ] Add new filter types to `caustics/src/types.rs`
-- [ ] Create JSON-specific filter types
-- [ ] Add atomic operation types
+- [x] Add new filter types to `caustics/src/types.rs` (generic `FieldOp`, `RelationCondition`)
+- [x] Create JSON-specific filter types (operators via existing enums)
+- [x] Add atomic operation types (via macro-generated SetParam variants)
 - [ ] Enhance error type system
 
 ### Query Builder Updates
-- [ ] Update `caustics/src/query_builders.rs` for new operators
+- [x] Operator support integrated in builders (macros + per-builder handling)
 - [ ] Add raw SQL query builders
 - [ ] Enhance batch operation support
 - [ ] Add relation-specific query builders
