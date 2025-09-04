@@ -174,7 +174,15 @@ let students = client
     .student()
     .find_many(vec![])
     .select(vec![student::select::first_name()])
-    .with(student::enrollments::fetch())
+    .with(student::enrollments::include(|rel| rel
+        .filter(vec![enrollment::status::contains("en".to_string())])
+        .order_by(vec![enrollment::id::order(SortOrder::Desc)])
+        .take(10)
+        .skip(0)
+        .cursor(0)
+        .distinct()
+        .with_count()
+    ))
     .exec()
     .await?;
 
@@ -183,15 +191,34 @@ let selected = client
     .student()
     .find_unique(student::id::equals(1))
     .select(vec![student::select::first_name()])
-    .with(
-        student::enrollments::with(
-            enrollment::course::with(
-                course::teacher::with_select(vec![teacher::select::first_name()])
-            )
-        ),
-    )
+    .with(student::enrollments::with(
+        enrollment::course::with(
+            course::teacher::include(|rel| rel.select(vec![teacher::select::first_name()]))
+        )
+    ))
     .exec()
     .await?;
+```
+
+#### Relation include closure API
+
+```rust
+// Include builder per relation node
+let s = client
+  .student()
+  .find_unique(student::id::equals(1))
+  .with(student::enrollments::include(|rel| rel
+    .filter(vec![enrollment::status::equals("enrolled".to_string())])
+    .order_by(vec![enrollment::status::order(SortOrder::Asc)])
+    .cursor(0)
+    .take(5)
+    .skip(0)
+    .distinct()
+    .select(vec![enrollment::select::status()])
+    .with_count()
+  ))
+  .exec()
+  .await?;
 ```
 
 ### Create

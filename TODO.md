@@ -75,7 +75,8 @@
 - [x] `set` operation for relations
 - [x] Nested has_many create/createMany on create
 - [x] Nested has_many create/createMany on update (atomic with scalar update)
-- [ ] Nested relation queries (deep include/select trees with per-relation filtering, orderBy, take/skip)
+- [x] Nested relation queries: per-relation filtering, orderBy (any column), take/skip, cursor, distinct
+- [ ] Nested relation queries: deep nested trees (multi-level) and aggregate orderBy
 - [x] Upsert create-branch id extractor (macro-supplied id_extractor, reliable post-insert ops)
 
 ### 10. Raw SQL Capabilities

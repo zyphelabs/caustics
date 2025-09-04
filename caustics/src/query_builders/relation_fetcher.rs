@@ -57,6 +57,7 @@ where
                             order_by: vec![],
                             cursor_id: None,
                             include_count: false,
+                            distinct: false,
                         },
                     )
                     .await?;

@@ -146,6 +146,72 @@ pub struct RelationFilter {
     pub order_by: Vec<(String, SortOrder)>,
     pub cursor_id: Option<i32>,
     pub include_count: bool,
+    pub distinct: bool,
+}
+
+// IncludeArgs was an internal transitional type. It is now deprecated.
+#[deprecated(since = "0.1.0", note = "Use relation::include(|rel| ...) instead")]
+#[derive(Debug, Clone, Default)]
+pub struct IncludeArgs {
+    pub filters: Vec<Filter>,
+    pub nested_select_aliases: Option<Vec<String>>,
+    pub nested_includes: Vec<RelationFilter>,
+    pub take: Option<i64>,
+    pub skip: Option<i64>,
+    pub order_by: Vec<(String, SortOrder)>,
+    pub cursor_id: Option<i32>,
+    pub include_count: bool,
+}
+
+#[allow(deprecated)]
+impl IncludeArgs {
+    pub fn with_filters(mut self, filters: Vec<Filter>) -> Self { self.filters = filters; self }
+    pub fn push_filters(mut self, mut filters: Vec<Filter>) -> Self { self.filters.append(&mut filters); self }
+    pub fn with_nested_includes(mut self, nested: Vec<RelationFilter>) -> Self { self.nested_includes = nested; self }
+    pub fn take(mut self, n: i64) -> Self { self.take = Some(n); self }
+    pub fn skip(mut self, n: i64) -> Self { self.skip = Some(n); self }
+    pub fn order_by_id(mut self, order: SortOrder) -> Self { self.order_by.push(("id".to_string(), order)); self }
+}
+
+/// Central PCR-like include builder that accumulates generic include state
+#[derive(Debug, Clone, Default)]
+pub struct IncludeBuilderCore {
+    pub filters: Vec<Filter>,
+    pub nested_select_aliases: Option<Vec<String>>,
+    pub nested_includes: Vec<RelationFilter>,
+    pub take: Option<i64>,
+    pub skip: Option<i64>,
+    pub order_by: Vec<(String, SortOrder)>,
+    pub cursor_id: Option<i32>,
+    pub include_count: bool,
+    pub distinct: bool,
+}
+
+impl IncludeBuilderCore {
+    pub fn new() -> Self { Self::default() }
+    pub fn push_filters(&mut self, filters: Vec<Filter>) { self.filters.extend(filters); }
+    pub fn push_order_pairs(&mut self, pairs: Vec<(String, SortOrder)>) { self.order_by.extend(pairs); }
+    pub fn set_select_aliases(&mut self, aliases: Vec<String>) { self.nested_select_aliases = Some(aliases); }
+    pub fn with_nested(&mut self, include: RelationFilter) { self.nested_includes.push(include); }
+    pub fn set_take(&mut self, n: i64) { self.take = Some(n); }
+    pub fn set_skip(&mut self, n: i64) { self.skip = Some(n); }
+    pub fn set_cursor_id(&mut self, id: i32) { self.cursor_id = Some(id); }
+    pub fn enable_count(&mut self) { self.include_count = true; }
+    pub fn enable_distinct(&mut self) { self.distinct = true; }
+    pub fn build(self, relation: &'static str) -> RelationFilter {
+        RelationFilter {
+            relation,
+            filters: self.filters,
+            nested_select_aliases: self.nested_select_aliases,
+            nested_includes: self.nested_includes,
+            take: self.take,
+            skip: self.skip,
+            order_by: self.order_by,
+            cursor_id: self.cursor_id,
+            include_count: self.include_count,
+            distinct: self.distinct,
+        }
+    }
 }
 
 impl RelationFilterTrait for RelationFilter {
@@ -354,6 +420,7 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
                 order_by: vec![],
                 cursor_id: None,
                 include_count: false,
+                distinct: false,
             };
             fetcher
                 .fetch_by_foreign_key(

@@ -86,23 +86,77 @@ pub fn generate_entity(
             let mut query = #target::Entity::find()
                 .filter(#target::Column::#foreign_key_column_ident.eq(foreign_key_value.unwrap_or_default()));
 
+            // Apply child-level filters from RelationFilter
+            if !filter.filters.is_empty() {
+                let mut cond = Condition::all();
+                for f in &filter.filters {
+                    if let Some(col) = #target::column_from_str(&f.field) {
+                        use sea_orm::IntoSimpleExpr;
+                        let col_expr = col.into_simple_expr();
+                        match &f.operation {
+                            caustics::FieldOp::Equals(v) => {
+                                let val = if f.field == "id" {
+                                    if let Ok(parsed) = v.parse::<i32>() {
+                                        sea_orm::Value::Int(Some(parsed))
+                                    } else { sea_orm::Value::String(Some(Box::new(v.clone()))) }
+                                } else { sea_orm::Value::String(Some(Box::new(v.clone()))) };
+                                cond = cond.add(Expr::expr(col_expr.clone()).eq(val));
+                            }
+                            caustics::FieldOp::NotEquals(v) => {
+                                let val = if f.field == "id" {
+                                    if let Ok(parsed) = v.parse::<i32>() {
+                                        sea_orm::Value::Int(Some(parsed))
+                                    } else { sea_orm::Value::String(Some(Box::new(v.clone()))) }
+                                } else { sea_orm::Value::String(Some(Box::new(v.clone()))) };
+                                cond = cond.add(Expr::expr(col_expr.clone()).ne(val));
+                            }
+                            caustics::FieldOp::Contains(s) => {
+                                let pat = format!("%{}%", s);
+                                cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                            }
+                            caustics::FieldOp::StartsWith(s) => {
+                                let pat = format!("{}%", s);
+                                cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                            }
+                            caustics::FieldOp::EndsWith(s) => {
+                                let pat = format!("%{}", s);
+                                cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                            }
+                            caustics::FieldOp::IsNull => {
+                                cond = cond.add(Expr::expr(col_expr.clone()).is_null());
+                            }
+                            caustics::FieldOp::IsNotNull => {
+                                cond = cond.add(Expr::expr(col_expr.clone()).is_not_null());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                query = query.filter(cond);
+            }
+
             // Apply cursor (id-based simple cursor)
             if let Some(cur) = filter.cursor_id {
                 query = query.filter(#target::Column::Id.gt(cur));
             }
 
-            // Apply order_by (support id only for now)
+            // Apply order_by on any recognized column
             for (field, dir) in &filter.order_by {
-                if field == "id" {
+                if let Some(col) = #target::column_from_str(field) {
                     let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
-                    query = query.order_by(#target::Column::Id, ord);
+                    query = query.order_by(col, ord);
                 }
             }
 
             if let Some(offset) = filter.skip { if offset > 0 { query = query.offset(offset as u64); } }
             if let Some(limit) = filter.take { if limit >= 0 { query = query.limit(limit as u64); } }
 
-            let vec_with_rel = query.all(conn).await?
+            let mut q_exec = query;
+            // Apply distinct if requested
+            if filter.distinct {
+                q_exec = q_exec.distinct();
+            }
+            let vec_with_rel = q_exec.all(conn).await?
                         .into_iter()
                 .map(|model| #target::ModelWithRelations::from_model(model))
                 .collect::<Vec<_>>();
@@ -1451,6 +1505,7 @@ pub fn generate_entity(
             pub order_by: Vec<(String, caustics::SortOrder)>,
             pub cursor_id: Option<i32>,
             pub include_count: bool,
+            pub distinct: bool,
         }
 
         impl caustics::RelationFilterTrait for RelationFilter {
@@ -1475,6 +1530,7 @@ pub fn generate_entity(
                     order_by: relation_filter.order_by,
                     cursor_id: relation_filter.cursor_id,
                     include_count: relation_filter.include_count,
+                    distinct: relation_filter.distinct,
                 }
             }
         }
@@ -3939,8 +3995,74 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         order_by: vec![],
                         cursor_id: None,
                         include_count: false,
+                        distinct: false,
                     }
                 }
+
+                // with_args/with_config removed in favor of include(|rel| ...)
+
+                // Helper to convert typed WhereParams into generic Filters
+                pub fn filters_from_where(params: Vec<super::#target::WhereParam>) -> Vec<super::Filter> {
+                    super::#target::where_params_to_filters(params)
+                }
+
+                // PCR-like closure: include(|rel| rel.filter(...).order_by(...).take(...).skip(...).with_rel(...).select(...))
+                pub fn include<F>(f: F) -> super::RelationFilter
+                where
+                    F: FnOnce(RelBuilder) -> RelBuilder,
+                {
+                    let core = caustics::IncludeBuilderCore::new();
+                    let b = f(RelBuilder { core });
+                    let g = b.core.build(#relation_name_lit);
+                    super::RelationFilter {
+                        relation: g.relation,
+                        filters: g.filters,
+                        nested_select_aliases: g.nested_select_aliases,
+                        nested_includes: g.nested_includes,
+                        take: g.take,
+                        skip: g.skip,
+                        order_by: g.order_by,
+                        cursor_id: g.cursor_id,
+                        include_count: g.include_count,
+                        distinct: g.distinct,
+                    }
+                }
+
+                pub struct RelBuilder { core: caustics::IncludeBuilderCore }
+                impl RelBuilder {
+                    pub fn filter(mut self, filters: Vec<super::#target::WhereParam>) -> Self {
+                        let converted = super::#target::where_params_to_filters(filters);
+                        self.core.push_filters(converted);
+                        self
+                    }
+                    pub fn order_by(mut self, params: Vec<super::#target::OrderByParam>) -> Self {
+                        let mut pairs = Vec::new();
+                        for p in params.into_iter() {
+                            let (col, ord): (<super::#target::Entity as EntityTrait>::Column, sea_orm::Order) = p.into();
+                            let name = format!("{:?}", col).to_string().to_snake_case();
+                            pairs.push((name, match ord { sea_orm::Order::Asc => caustics::SortOrder::Asc, _ => caustics::SortOrder::Desc }));
+                        }
+                        self.core.push_order_pairs(pairs);
+                        self
+                    }
+                    pub fn take(mut self, n: i64) -> Self { self.core.set_take(n); self }
+                    pub fn skip(mut self, n: i64) -> Self { self.core.set_skip(n); self }
+                    pub fn cursor(mut self, id: i32) -> Self { self.core.set_cursor_id(id); self }
+                    pub fn with_rel(mut self, include: super::#target::RelationFilter) -> Self {
+                        self.core.with_nested(include.into());
+                        self
+                    }
+                    pub fn select(mut self, fields: Vec<super::#target::ScalarField>) -> Self {
+                        let aliases = super::#target::scalar_fields_to_aliases(fields);
+                        self.core.set_select_aliases(aliases);
+                        self
+                    }
+                    pub fn with_count(mut self) -> Self { self.core.enable_count(); self }
+                    pub fn distinct(mut self) -> Self { self.core.enable_distinct(); self }
+                }
+
+                // (Typed where/order/take/skip helpers are intentionally omitted to avoid cross-module privacy issues.)
+                // (Nested reads args builder intentionally omitted for now.)
 
                 pub fn fetch_with_includes(includes: Vec<super::#target::RelationFilter>) -> super::RelationFilter {
                     super::RelationFilter {
@@ -3953,67 +4075,23 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         order_by: vec![],
                         cursor_id: None,
                         include_count: false,
+                        distinct: false,
                     }
                 }
 
-                pub fn fetch_with_select(select_aliases: Vec<&str>) -> super::RelationFilter {
-                    super::RelationFilter {
-                        relation: #relation_name_lit,
-                        filters: vec![],
-                        nested_select_aliases: Some(select_aliases.into_iter().map(|s| s.to_string()).collect()),
-                        nested_includes: vec![],
-                        take: None,
-                        skip: None,
-                        order_by: vec![],
-                        cursor_id: None,
-                        include_count: false,
-                    }
-                }
-
-                // PCR-aligned typed helpers
-                pub fn fetch_with_select_params(params: Vec<super::#target::ScalarField>) -> super::RelationFilter {
-                    let aliases: Vec<String> = super::#target::scalar_fields_to_aliases(params);
-                    super::RelationFilter {
-                        relation: #relation_name_lit,
-                        filters: vec![],
-                        nested_select_aliases: Some(aliases),
-                        nested_includes: vec![],
-                        take: None,
-                        skip: None,
-                        order_by: vec![],
-                        cursor_id: None,
-                        include_count: false,
-                    }
-                }
-
-                pub fn with_select(params: Vec<super::#target::ScalarField>) -> super::RelationFilter {
-                    fetch_with_select_params(params)
-                }
+                // Legacy select helpers removed in favor of include(|rel| rel.select(...))
 
                 pub fn with(include: super::#target::RelationFilter) -> super::RelationFilter {
                     fetch_with_includes(vec![include])
                 }
 
-                pub fn with_includes(includes: Vec<super::#target::RelationFilter>) -> super::RelationFilter {
-                    fetch_with_includes(includes)
-                }
+                // with_many was redundant; use multiple `.with(...)` calls or nested include(|rel| ...)
 
-                pub fn take(limit: i64) -> super::RelationFilter { let mut f = fetch(); f.take = Some(limit); f }
-                pub fn skip(offset: i64) -> super::RelationFilter { let mut f = fetch(); f.skip = Some(offset); f }
+                // Legacy pagination helpers removed in favor of include(|rel| rel.take(...).skip(...))
 
-                pub fn with_order(params: Vec<super::OrderByParam>) -> super::RelationFilter {
-                    let mut f = fetch();
-                    for p in params {
-                        let (col, ord): (<Entity as EntityTrait>::Column, sea_orm::Order) = p.into();
-                        // Map column to snake_case alias string via debug
-                        let name = format!("{:?}", col).to_string().to_snake_case();
-                        f.order_by.push((name, match ord { sea_orm::Order::Asc => caustics::SortOrder::Asc, _ => caustics::SortOrder::Desc }));
-                    }
-                    f
-                }
+                // Legacy order helper removed in favor of include(|rel| rel.order_by(...))
 
-                pub fn with_cursor(id: i32) -> super::RelationFilter { let mut f = fetch(); f.cursor_id = Some(id); f }
-                pub fn with_count() -> super::RelationFilter { let mut f = fetch(); f.include_count = true; f }
+                // Legacy cursor/count helpers removed in favor of include(|rel| rel.with_count()) and future rel.cursor
 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)
