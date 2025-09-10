@@ -4006,7 +4006,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                     super::#target::where_params_to_filters(params)
                 }
 
-                // PCR-like closure: include(|rel| rel.filter(...).order_by(...).take(...).skip(...).with_rel(...).select(...))
+                // PCR-like closure: include(|rel| rel.filter(...).order_by(...).take(...).skip(...).with(...).select(...).count())
                 pub fn include<F>(f: F) -> super::RelationFilter
                 where
                     F: FnOnce(RelBuilder) -> RelBuilder,
@@ -4048,7 +4048,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                     pub fn take(mut self, n: i64) -> Self { self.core.set_take(n); self }
                     pub fn skip(mut self, n: i64) -> Self { self.core.set_skip(n); self }
                     pub fn cursor(mut self, id: i32) -> Self { self.core.set_cursor_id(id); self }
-                    pub fn with_rel(mut self, include: super::#target::RelationFilter) -> Self {
+                    pub fn with(mut self, include: super::#target::RelationFilter) -> Self {
                         self.core.with_nested(include.into());
                         self
                     }
@@ -4057,7 +4057,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         self.core.set_select_aliases(aliases);
                         self
                     }
-                    pub fn with_count(mut self) -> Self { self.core.enable_count(); self }
+                    pub fn count(mut self) -> Self { self.core.enable_count(); self }
                     pub fn distinct(mut self) -> Self { self.core.enable_distinct(); self }
                 }
 
@@ -4091,7 +4091,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
 
                 // Legacy order helper removed in favor of include(|rel| rel.order_by(...))
 
-                // Legacy cursor/count helpers removed in favor of include(|rel| rel.with_count()) and future rel.cursor
+                // Legacy cursor/count helpers removed in favor of include(|rel| rel.count()) and rel.cursor(...)
 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)

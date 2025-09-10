@@ -181,20 +181,23 @@ let students = client
         .skip(0)
         .cursor(0)
         .distinct()
-        .with_count()
+        .count()
     ))
     .exec()
     .await?;
 
-// Nested select/include (typed)
+// Deep nested select/include using closure API only
 let selected = client
     .student()
     .find_unique(student::id::equals(1))
     .select(vec![student::select::first_name()])
-    .with(student::enrollments::with(
-        enrollment::course::with(
-            course::teacher::include(|rel| rel.select(vec![teacher::select::first_name()]))
-        )
+    .with(student::enrollments::include(|rel| rel
+        .with(enrollment::course::include(|rel2| rel2
+            .select(vec![course::select::name()])
+            .with(course::teacher::include(|rel3| rel3
+                .select(vec![teacher::select::first_name()])
+            ))
+        ))
     ))
     .exec()
     .await?;
@@ -215,7 +218,7 @@ let s = client
     .skip(0)
     .distinct()
     .select(vec![enrollment::select::status()])
-    .with_count()
+    .count()
   ))
   .exec()
   .await?;

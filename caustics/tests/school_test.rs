@@ -1406,6 +1406,120 @@ mod caustics_school_advanced_tests {
     }
 
     #[tokio::test]
+    async fn test_deep_nested_include_with_closure_api() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Seed minimal graph: department -> teacher -> course; student -> enrollment -> course -> teacher
+        let dept = client
+            .department()
+            .create(
+                "DNC".to_string(),
+                "Deep Nested Dept".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let teacher = client
+            .teacher()
+            .create(
+                "TDNC".to_string(),
+                "Deep".to_string(),
+                "Teach".to_string(),
+                "deep.teach@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let course = client
+            .course()
+            .create(
+                "CDNC".to_string(),
+                "Deep Course".to_string(),
+                3,
+                30,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let student_row = client
+            .student()
+            .create(
+                "SDNC".to_string(),
+                "Deep".to_string(),
+                "Student".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _enrollment = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "enrolled".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(student_row.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Deep nested include using only include(|rel| ...) closures at every level
+        let selected = client
+            .student()
+            .find_unique(student::id::equals(student_row.id))
+            .select(vec![student::select::first_name()])
+            .with(student::enrollments::include(|rel| rel
+                .with(enrollment::course::include(|rel2| rel2
+                    .select(vec![course::select::name()])
+                    .with(course::teacher::include(|rel3| rel3
+                        .select(vec![teacher::select::first_name()])
+                    ))
+                ))
+            ))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(selected.first_name.is_some());
+        let enrollments = selected.enrollments.as_ref().unwrap();
+        assert!(!enrollments.is_empty());
+        let course_rel = enrollments[0].course.as_ref().unwrap();
+        assert_eq!(course_rel.name, "Deep Course");
+        let teacher_rel = course_rel.teacher.as_ref().unwrap();
+        assert_eq!(teacher_rel.first_name, "Deep");
+    }
+
+    #[tokio::test]
     async fn test_student_create_with_nested_enrollments_create_and_create_many() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
