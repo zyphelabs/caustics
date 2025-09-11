@@ -322,6 +322,101 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    async fn test_order_nulls_first_and_last_many() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 2, 1, 0, 0, 0)
+            .unwrap();
+
+        // Seed users with some null ages
+        let _u1 = client
+            .user()
+            .create(
+                "nulls1@example.com".to_string(),
+                "Nulls1".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _u2 = client
+            .user()
+            .create(
+                "nulls2@example.com".to_string(),
+                "Nulls2".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(10)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _u3 = client
+            .user()
+            .create(
+                "nulls3@example.com".to_string(),
+                "Nulls3".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _u4 = client
+            .user()
+            .create(
+                "nulls4@example.com".to_string(),
+                "Nulls4".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(20)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Nulls first with ascending order
+        let users_nulls_first = client
+            .user()
+            .find_many(vec![])
+            .order_by((user::age::order(SortOrder::Asc), caustics::NullsOrder::First))
+            .exec()
+            .await
+            .unwrap();
+        let ages_first: Vec<Option<i32>> = users_nulls_first.iter().map(|u| u.age).collect();
+        // Expect the first two to be None, followed by 10 then 20
+        assert!(ages_first.len() >= 4);
+        assert_eq!(ages_first[0], None);
+        assert_eq!(ages_first[1], None);
+        assert_eq!(ages_first[2], Some(10));
+        assert_eq!(ages_first[3], Some(20));
+
+        // Nulls last with ascending order
+        let users_nulls_last = client
+            .user()
+            .find_many(vec![])
+            .order_by((user::age::order(SortOrder::Asc), caustics::NullsOrder::Last))
+            .exec()
+            .await
+            .unwrap();
+        let ages_last: Vec<Option<i32>> = users_nulls_last.iter().map(|u| u.age).collect();
+        assert!(ages_last.len() >= 4);
+        assert_eq!(ages_last[0], Some(10));
+        assert_eq!(ages_last[1], Some(20));
+        assert_eq!(ages_last[ages_last.len() - 2], None);
+        assert_eq!(ages_last[ages_last.len() - 1], None);
+    }
+
+    
+
+    #[tokio::test]
     async fn test_cursor_pagination_basic() {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;

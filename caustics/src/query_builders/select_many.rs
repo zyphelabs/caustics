@@ -1,5 +1,5 @@
 use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
-use crate::types::{EntityRegistry, ApplyNestedIncludes};
+use crate::types::{EntityRegistry, ApplyNestedIncludes, NullsOrder, IntoOrderSpec};
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Select};
 use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
 
@@ -17,6 +17,7 @@ where
     pub database_backend: DatabaseBackend,
     pub reverse_order: bool,
     pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
+    pub pending_nulls: Option<NullsOrder>,
     pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
     pub is_distinct: bool,
     pub distinct_on_fields: Option<Vec<SimpleExpr>>,
@@ -39,12 +40,15 @@ where
     /// Order the selection (supports scalar columns or relation aggregates via IntoOrderByExpr)
     pub fn order_by<T>(mut self, order_spec: T) -> Self
     where
-        T: crate::types::IntoOrderByExpr,
+        T: IntoOrderSpec,
     {
-        let (expr, order) = order_spec.into_order_by_expr();
+        let (expr, order, nulls) = order_spec.into_order_spec();
         self.pending_order_bys.push((expr, order));
+        if nulls.is_some() { self.pending_nulls = nulls; }
         self
     }
+
+    // order_nulls deprecated in favor of tuple-based API via IntoOrderSpec
 
     /// Execute and return selected rows
     pub async fn exec(self) -> Result<Vec<Selected>, sea_orm::DbErr> {
@@ -83,6 +87,15 @@ where
 
         // Apply orderings
         if !self.pending_order_bys.is_empty() {
+            if let Some(n) = self.pending_nulls {
+                if let Some((first_expr, _)) = self.pending_order_bys.get(0) {
+                    let nulls_expr = Expr::expr(first_expr.clone()).is_null();
+                    match n {
+                        NullsOrder::First => { query = query.order_by(nulls_expr, sea_orm::Order::Desc); }
+                        NullsOrder::Last => { query = query.order_by(nulls_expr, sea_orm::Order::Asc); }
+                    }
+                }
+            }
             for (expr, order) in &self.pending_order_bys {
                 let effective = if self.reverse_order {
                     match order {

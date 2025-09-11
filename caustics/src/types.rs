@@ -67,6 +67,12 @@ pub enum SortOrder {
     Desc,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum NullsOrder {
+    First,
+    Last,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum QueryMode {
     Default,
@@ -392,6 +398,31 @@ where
 {
     fn into_order_by_expr(self) -> (sea_query::SimpleExpr, sea_orm::Order) {
         (self.0.into_simple_expr(), self.1)
+    }
+}
+
+/// Combined order spec that can optionally carry a NullsOrder hint
+pub trait IntoOrderSpec {
+    fn into_order_spec(self) -> (sea_query::SimpleExpr, sea_orm::Order, Option<NullsOrder>);
+}
+
+impl<T> IntoOrderSpec for T
+where
+    T: IntoOrderByExpr,
+{
+    fn into_order_spec(self) -> (sea_query::SimpleExpr, sea_orm::Order, Option<NullsOrder>) {
+        let (expr, ord) = self.into_order_by_expr();
+        (expr, ord, None)
+    }
+}
+
+impl<L> IntoOrderSpec for (L, NullsOrder)
+where
+    L: IntoOrderByExpr,
+{
+    fn into_order_spec(self) -> (sea_query::SimpleExpr, sea_orm::Order, Option<NullsOrder>) {
+        let (expr, ord) = self.0.into_order_by_expr();
+        (expr, ord, Some(self.1))
     }
 }
 

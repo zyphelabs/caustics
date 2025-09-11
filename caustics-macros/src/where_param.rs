@@ -70,6 +70,9 @@ pub fn generate_where_param_logic(
             pub fn order(sort_order: caustics::SortOrder) -> super::OrderByParam {
                 super::OrderByParam::#pascal_name(sort_order)
             }
+            pub fn order_nulls(sort_order: caustics::SortOrder, nulls: caustics::NullsOrder) -> (super::OrderByParam, caustics::NullsOrder) {
+                (super::OrderByParam::#pascal_name(sort_order), nulls)
+            }
         };
 
         // Relation-aggregate helper: count order (returns SortOrder to feed relation::order_by)

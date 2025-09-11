@@ -826,6 +826,50 @@ let posts = client
     .await?;
 ```
 
+### Nulls Order
+
+Caustics supports controlling how NULL values are ordered in query results, similar to Prisma Client Rust:
+
+```rust
+// Order by age ascending with NULLs first
+let users = client
+    .user()
+    .find_many(vec![])
+    .order_by((user::age::order(SortOrder::Asc), caustics::NullsOrder::First))
+    .exec()
+    .await?;
+
+// Order by age ascending with NULLs last
+let users = client
+    .user()
+    .find_many(vec![])
+    .order_by((user::age::order(SortOrder::Asc), caustics::NullsOrder::Last))
+    .exec()
+    .await?;
+
+// Order by age descending with NULLs first
+let users = client
+    .user()
+    .find_many(vec![])
+    .order_by((user::age::order(SortOrder::Desc), caustics::NullsOrder::First))
+    .exec()
+    .await?;
+
+// Order by age descending with NULLs last
+let users = client
+    .user()
+    .find_many(vec![])
+    .order_by((user::age::order(SortOrder::Desc), caustics::NullsOrder::Last))
+    .exec()
+    .await?;
+```
+
+The `NullsOrder` enum provides two options:
+- `NullsOrder::First` - NULL values appear first in the result set
+- `NullsOrder::Last` - NULL values appear last in the result set
+
+This feature is particularly useful when working with nullable fields where you want to control the positioning of NULL values in your sorted results.
+
 ### JSON
 
 Caustics provides comprehensive support for JSON field operations.

@@ -97,7 +97,7 @@
 
 ### 12. Query Modes and Ordering
 - [x] `QueryMode` enum with `Default` and `Insensitive`
-- [ ] `NullsOrder` enum with `First` and `Last`
+- [x] `NullsOrder` enum with `First` and `Last`
 - [ ] `JsonNullValueFilter` with `DbNull`, `JsonNull`, `AnyNull`
 - [ ] Advanced ordering options
 
@@ -192,4 +192,4 @@ Remaining gaps
 - [ ] Middlewares/hooks and transaction API parity with PCR
 - [ ] JSON null handling flags (JsonNullValueFilter/DbNull/JsonNull/AnyNull)
 - [ ] Schema introspection exposure (DATAMODEL_STR/DATABASE_STR) and validation helpers
-- [ ] Advanced ordering options (NullsOrder First/Last, relation aggregates in orderBy)
+- [x] Advanced ordering options (NullsOrder First/Last, relation aggregates in orderBy)
