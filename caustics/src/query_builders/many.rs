@@ -53,13 +53,12 @@ where
         self
     }
 
-    /// Order the results by a column
-    pub fn order_by<Col>(mut self, col_and_order: impl Into<(Col, sea_orm::Order)>) -> Self
+    /// Order the results (supports scalar columns or relation aggregates via IntoOrderByExpr)
+    pub fn order_by<T>(mut self, order_spec: T) -> Self
     where
-        Col: sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr,
+        T: crate::types::IntoOrderByExpr,
     {
-        let (col, order) = col_and_order.into();
-        let expr = col.into_simple_expr();
+        let (expr, order) = order_spec.into_order_by_expr();
         self.pending_order_bys.push((expr, order));
         self
     }

@@ -381,6 +381,20 @@ pub trait EntityRegistry<C: sea_orm::ConnectionTrait> {
     fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>>;
 }
 
+/// Trait for converting various typed order specifications into a (expr, order) pair
+pub trait IntoOrderByExpr {
+    fn into_order_by_expr(self) -> (sea_query::SimpleExpr, sea_orm::Order);
+}
+
+impl<Col> IntoOrderByExpr for (Col, sea_orm::Order)
+where
+    Col: sea_orm::IntoSimpleExpr,
+{
+    fn into_order_by_expr(self) -> (sea_query::SimpleExpr, sea_orm::Order) {
+        (self.0.into_simple_expr(), self.1)
+    }
+}
+
 /// Trait for models capable of applying nested relation filters/includes
 pub trait ApplyNestedIncludes<C: sea_orm::ConnectionTrait> {
     fn apply_relation_filter<'a>(

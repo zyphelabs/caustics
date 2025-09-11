@@ -1622,6 +1622,165 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Relation-aggregate orderBy support: variants and match arms
+    let relation_order_by_variants = relations
+        .iter()
+        .filter_map(|relation| {
+            if matches!(relation.kind, RelationKind::HasMany) {
+                let variant = format_ident!("{}Count", relation.name.to_pascal_case());
+                Some(quote! { #variant(caustics::SortOrder) })
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Function names for the order_by sugar: e.g., enrollments_count(order)
+    let relation_order_by_fn_names: Vec<syn::Ident> = relations
+        .iter()
+        .filter_map(|relation| {
+            if matches!(relation.kind, RelationKind::HasMany) {
+                let fn_name = format_ident!("{}_count", relation.name.to_snake_case());
+                Some(fn_name)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Corresponding enum variant idents to construct
+    let relation_order_by_fn_variants: Vec<syn::Ident> = relations
+        .iter()
+        .filter_map(|relation| {
+            if matches!(relation.kind, RelationKind::HasMany) {
+                let variant = format_ident!("{}Count", relation.name.to_pascal_case());
+                Some(variant)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Determine current entity primary key column name (snake_case field name)
+    let current_pk_column_name: String = if let Some(pk_field) = primary_key_fields.first() {
+        pk_field.ident.as_ref().unwrap().to_string()
+    } else { "id".to_string() };
+
+    let relation_order_match_arms_many = relations
+        .iter()
+        .filter_map(|relation| {
+            if matches!(relation.kind, RelationKind::HasMany) {
+                let variant = format_ident!("{}Count", relation.name.to_pascal_case());
+                let target_table_name = relation
+                    .target_table_name
+                    .as_ref()
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| relation.name.to_snake_case());
+                let current_table_name = relation
+                    .current_table_name
+                    .as_ref()
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let fk_col_snake = relation
+                    .foreign_key_column
+                    .as_ref()
+                    .map(|s| s.to_snake_case())
+                    .unwrap_or_else(|| "id".to_string());
+                let target_table_lit = syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
+                let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
+                let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
+                Some(quote! {
+                    RelationOrderByParam::#variant(order) => {
+                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let expr = sea_orm::sea_query::Expr::cust(&format!(
+                            "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
+                            #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
+                        ));
+                        self.pending_order_bys.push((expr, sea_order));
+                    }
+                })
+            } else { None }
+        })
+        .collect::<Vec<_>>();
+
+    let relation_order_match_arms_select_many = relations
+        .iter()
+        .filter_map(|relation| {
+            if matches!(relation.kind, RelationKind::HasMany) {
+                let variant = format_ident!("{}Count", relation.name.to_pascal_case());
+                let target_table_name = relation
+                    .target_table_name
+                    .as_ref()
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| relation.name.to_snake_case());
+                let current_table_name = relation
+                    .current_table_name
+                    .as_ref()
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let fk_col_snake = relation
+                    .foreign_key_column
+                    .as_ref()
+                    .map(|s| s.to_snake_case())
+                    .unwrap_or_else(|| "id".to_string());
+                let target_table_lit = syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
+                let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
+                let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
+                Some(quote! {
+                    RelationOrderByParam::#variant(order) => {
+                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let expr = sea_orm::sea_query::Expr::cust(&format!(
+                            "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
+                            #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
+                        ));
+                        self.pending_order_bys.push((expr, sea_order));
+                    }
+                })
+            } else { None }
+        })
+        .collect::<Vec<_>>();
+
+    // Arms returning (expr, order) for IntoOrderByExpr impl
+    let relation_order_into_expr_arms = relations
+        .iter()
+        .filter_map(|relation| {
+            if matches!(relation.kind, RelationKind::HasMany) {
+                let variant = format_ident!("{}Count", relation.name.to_pascal_case());
+                let target_table_name = relation
+                    .target_table_name
+                    .as_ref()
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| relation.name.to_snake_case());
+                let current_table_name = relation
+                    .current_table_name
+                    .as_ref()
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let fk_col_snake = relation
+                    .foreign_key_column
+                    .as_ref()
+                    .map(|s| s.to_snake_case())
+                    .unwrap_or_else(|| "id".to_string());
+                let target_table_lit = syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
+                let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
+                let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
+                Some(quote! {
+                    RelationOrderByParam::#variant(order) => {
+                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let expr = sea_orm::sea_query::Expr::cust(&format!(
+                            "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
+                            #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
+                        ));
+                        (expr, sea_order)
+                    }
+                })
+            } else { None }
+        })
+        .collect::<Vec<_>>();
+
     // Precompute per-relation count arms used inside __caustics_apply_relation_filter
     let relation_count_match_arms = relations
         .iter()
@@ -2839,6 +2998,26 @@ pub fn generate_entity(
             #(#group_by_order_by_field_variants,)*
         }
 
+        #[derive(Debug, Clone)]
+        pub enum RelationOrderByParam {
+            #(#relation_order_by_variants,)*
+        }
+
+        // Allow using RelationOrderByParam as an IntoOrderByExpr input
+        #[allow(unreachable_code)]
+        impl caustics::IntoOrderByExpr for RelationOrderByParam {
+            fn into_order_by_expr(self) -> (sea_query::SimpleExpr, sea_orm::Order) {
+                match self { #(#relation_order_into_expr_arms,)* }
+            }
+        }
+
+        // Fluent order DSL for relation aggregates: user().order_by(user::posts::count(SortOrder::Desc))
+        pub mod order_by {
+            use super::RelationOrderByParam;
+            use caustics::SortOrder;
+            #(pub fn #relation_order_by_fn_names(order: SortOrder) -> RelationOrderByParam { RelationOrderByParam::#relation_order_by_fn_variants(order) })*
+        }
+
         
 
         #(#field_ops)*
@@ -2953,6 +3132,15 @@ pub fn generate_entity(
             }
         }
 
+        // Allow using typed OrderByParam directly with generic order_by()
+        impl caustics::IntoOrderByExpr for OrderByParam {
+            fn into_order_by_expr(self) -> (sea_query::SimpleExpr, sea_orm::Order) {
+                use sea_orm::IntoSimpleExpr;
+                let (col, ord): (<Entity as EntityTrait>::Column, sea_orm::Order) = self.into();
+                (col.into_simple_expr(), ord)
+            }
+        }
+
         // Typed aggregate selection enums
         #[derive(Debug, Clone)]
         pub enum SumSelect { #( #sum_select_variants ),* }
@@ -3006,6 +3194,8 @@ pub fn generate_entity(
             pub use super::SelectManyIncludeExt;
             pub use super::SelectUniqueIncludeExt;
             pub use super::SelectFirstIncludeExt;
+            pub use super::RelationOrderExt;
+            pub use super::SelectManyRelationOrderExt;
         }
 
         // PCR-style aggregate selector facade on AggregateQueryBuilder
@@ -3713,6 +3903,40 @@ pub fn generate_entity(
         // Implement ActiveModelBehavior for ActiveModel
         impl sea_orm::ActiveModelBehavior for ActiveModel {}
 
+        // Relation aggregate orderBy (order parents by child counts)
+        pub trait RelationOrderExt<'a, C: sea_orm::ConnectionTrait> {
+            fn order_by(self, order: RelationOrderByParam) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>;
+            fn order_by_many(self, order: Vec<RelationOrderByParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>;
+        }
+
+        impl<'a, C: sea_orm::ConnectionTrait> RelationOrderExt<'a, C>
+            for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
+        {
+            #[allow(unreachable_code)]
+            fn order_by(mut self, order: RelationOrderByParam) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
+                match order { #(#relation_order_match_arms_many)* }
+                self
+            }
+            #[allow(unreachable_code)]
+            fn order_by_many(mut self, order: Vec<RelationOrderByParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> { for o in order { match o { #(#relation_order_match_arms_many)* } } self }
+        }
+
+        pub trait SelectManyRelationOrderExt<'a, C: sea_orm::ConnectionTrait> {
+            fn order_by(self, order: RelationOrderByParam) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
+            fn order_by_many(self, order: Vec<RelationOrderByParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
+        }
+
+        impl<'a, C: sea_orm::ConnectionTrait> SelectManyRelationOrderExt<'a, C>
+            for caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>
+        {
+            #[allow(unreachable_code)]
+            fn order_by(mut self, order: RelationOrderByParam) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
+                match order { #(#relation_order_match_arms_select_many)* }
+                self
+            }
+            #[allow(unreachable_code)]
+            fn order_by_many(mut self, order: Vec<RelationOrderByParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> { for o in order { match o { #(#relation_order_match_arms_select_many)* } } self }
+        }
     };
 
     TokenStream::from(expanded)
@@ -3970,6 +4194,15 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
             format_ident!("Id") // fallback
         };
 
+        let order_by_relation_fn = if matches!(relation.kind, RelationKind::HasMany) {
+            let variant_ident = format_ident!("{}Count", relation_name.to_pascal_case());
+            quote! {
+                pub fn order_by(order: caustics::SortOrder) -> super::RelationOrderByParam {
+                    super::RelationOrderByParam::#variant_ident(order)
+                }
+            }
+        } else { quote!{} };
+
         let submodule = quote! {
             pub mod #relation_name_ident {
                 use super::*;
@@ -4030,11 +4263,7 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
 
                 pub struct RelBuilder { core: caustics::IncludeBuilderCore }
                 impl RelBuilder {
-                    pub fn filter(mut self, filters: Vec<super::#target::WhereParam>) -> Self {
-                        let converted = super::#target::where_params_to_filters(filters);
-                        self.core.push_filters(converted);
-                        self
-                    }
+                    // For relation includes, keep field-based order API
                     pub fn order_by(mut self, params: Vec<super::#target::OrderByParam>) -> Self {
                         let mut pairs = Vec::new();
                         for p in params.into_iter() {
@@ -4045,6 +4274,12 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         self.core.push_order_pairs(pairs);
                         self
                     }
+                    pub fn filter(mut self, filters: Vec<super::#target::WhereParam>) -> Self {
+                        let converted = super::#target::where_params_to_filters(filters);
+                        self.core.push_filters(converted);
+                        self
+                    }
+                    
                     pub fn take(mut self, n: i64) -> Self { self.core.set_take(n); self }
                     pub fn skip(mut self, n: i64) -> Self { self.core.set_skip(n); self }
                     pub fn cursor(mut self, id: i32) -> Self { self.core.set_cursor_id(id); self }
@@ -4092,6 +4327,9 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                 // Legacy order helper removed in favor of include(|rel| rel.order_by(...))
 
                 // Legacy cursor/count helpers removed in favor of include(|rel| rel.count()) and rel.cursor(...)
+
+                // Relation-aggregate orderBy sugar entry: relation::order_by(child_field::count(order))
+                #order_by_relation_fn
 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)

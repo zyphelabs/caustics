@@ -1134,6 +1134,16 @@ mod caustics_school_advanced_tests {
             .unwrap();
         assert_eq!(filtered2.len(), 1);
         assert_eq!(filtered2[0].student_number, "S02");
+
+        // Order by enrollments count desc using nested relation sugar
+        let _by_count = client
+            .student()
+            .find_many(vec![])
+            .order_by(student::enrollments::order_by(enrollment::id::count(caustics::SortOrder::Desc)))
+            .take(5)
+            .exec()
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

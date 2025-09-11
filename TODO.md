@@ -76,7 +76,8 @@
 - [x] Nested has_many create/createMany on create
 - [x] Nested has_many create/createMany on update (atomic with scalar update)
 - [x] Nested relation queries: per-relation filtering, orderBy (any column), take/skip, cursor, distinct
-- [ ] Nested relation queries: deep nested trees (multi-level) and aggregate orderBy
+- [x] Nested relation queries: deep nested trees (multi-level)
+- [x] Relation-aggregate orderBy (_count) with nested sugar
 - [x] Upsert create-branch id extractor (macro-supplied id_extractor, reliable post-insert ops)
 
 ### 10. Raw SQL Capabilities

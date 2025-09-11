@@ -186,6 +186,15 @@ let students = client
     .exec()
     .await?;
 
+// Order parents by child relation counts (e.g., students by enrollments count desc)
+let students_by_enrollments = client
+    .student()
+    .find_many(vec[])
+    .order_by(student::enrollments::order_by(enrollment::id::count(SortOrder::Desc)))
+    .take(10)
+    .exec()
+    .await?;
+
 // Deep nested select/include using closure API only
 let selected = client
     .student()

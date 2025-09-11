@@ -72,6 +72,11 @@ pub fn generate_where_param_logic(
             }
         };
 
+        // Relation-aggregate helper: count order (returns SortOrder to feed relation::order_by)
+        let count_fn = quote! {
+            pub fn count(order: caustics::SortOrder) -> caustics::SortOrder { order }
+        };
+
         // Generate type-specific operations
         let type_specific_ops = if !is_unique {
             generate_type_specific_operations(&field_type, &pascal_name, ty)
@@ -243,6 +248,7 @@ pub fn generate_where_param_logic(
             set_fn,
             unique_where_fn,
             order_fn,
+            count_fn,
             type_specific_ops,
             field_not_alias,
             string_ops,

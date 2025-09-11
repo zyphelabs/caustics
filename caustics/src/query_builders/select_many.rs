@@ -36,6 +36,16 @@ where
         self
     }
 
+    /// Order the selection (supports scalar columns or relation aggregates via IntoOrderByExpr)
+    pub fn order_by<T>(mut self, order_spec: T) -> Self
+    where
+        T: crate::types::IntoOrderByExpr,
+    {
+        let (expr, order) = order_spec.into_order_by_expr();
+        self.pending_order_bys.push((expr, order));
+        self
+    }
+
     /// Execute and return selected rows
     pub async fn exec(self) -> Result<Vec<Selected>, sea_orm::DbErr> {
         if self.skip_is_negative {
