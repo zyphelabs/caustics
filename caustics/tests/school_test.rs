@@ -1,3 +1,4 @@
+#![feature(decl_macro)]
 include!(concat!(env!("OUT_DIR"), "/caustics_client_school_test.rs"));
 
 use caustics_macros::caustics;
@@ -508,7 +509,7 @@ mod caustics_school_tests {
     use super::*;
     use caustics::QueryError;
     use chrono::{DateTime, FixedOffset, TimeZone};
-    use super::student::prelude::ManySelectExt;
+    // legacy import removed
 
     fn fixed_now() -> DateTime<FixedOffset> {
         FixedOffset::east_opt(0)
@@ -595,7 +596,7 @@ mod caustics_school_tests {
             .student()
             .find_many(vec![])
             .take(1)
-            .select(vec![student::select::first_name()])
+            .select(student::select!(first_name))
             .with(student::enrollments::fetch())
             .exec()
             .await
@@ -944,8 +945,7 @@ mod caustics_school_tests {
 mod caustics_school_advanced_tests {
     use super::helpers::setup_test_db;
     use super::*;
-    use super::teacher::prelude::FirstSelectExt;
-    use super::student::prelude::UniqueSelectExt;
+    // legacy imports removed
     use chrono::{DateTime, FixedOffset, TimeZone};
 
     fn fixed_now() -> DateTime<FixedOffset> {
@@ -1154,7 +1154,7 @@ mod caustics_school_advanced_tests {
         let row = client
             .teacher()
             .find_first(vec![])
-            .select(vec![teacher::select::first_name()])
+            .select(teacher::select!(first_name))
             .with(teacher::department::fetch())
             .exec()
             .await
@@ -1395,10 +1395,10 @@ mod caustics_school_advanced_tests {
         let selected = client
             .student()
             .find_unique(student::id::equals(student_row.id))
-            .select(vec![student::select::first_name()])
+            .select(student::select!(first_name))
             .with(student::enrollments::with(
                 enrollment::course::with(
-                    course::teacher::include(|rel| rel.select(vec![teacher::select::first_name()]))
+                    course::teacher::include(|rel| rel.select(teacher::select!(first_name)))
                 )
             ))
             .exec()
@@ -1506,12 +1506,12 @@ mod caustics_school_advanced_tests {
         let selected = client
             .student()
             .find_unique(student::id::equals(student_row.id))
-            .select(vec![student::select::first_name()])
+            .select(student::select!(first_name, last_name))
             .with(student::enrollments::include(|rel| rel
                 .with(enrollment::course::include(|rel2| rel2
-                    .select(vec![course::select::name()])
+                    .select(course::select!(name))
                     .with(course::teacher::include(|rel3| rel3
-                        .select(vec![teacher::select::first_name()])
+                        .select(teacher::select!(first_name))
                     ))
                 ))
             ))
@@ -1521,6 +1521,7 @@ mod caustics_school_advanced_tests {
             .unwrap();
 
         assert!(selected.first_name.is_some());
+        assert!(selected.last_name.is_some());
         let enrollments = selected.enrollments.as_ref().unwrap();
         assert!(!enrollments.is_empty());
         let course_rel = enrollments[0].course.as_ref().unwrap();
@@ -2232,12 +2233,16 @@ mod caustics_school_advanced_tests {
         let client = CausticsClient::new(db.clone());
 
         let dept = client.department().create("DD".to_string(), "Distinct Dept".to_string(), fixed_now(), fixed_now(), vec![]).exec().await.unwrap();
-        let teacher = client.teacher().create("TD".to_string(), "Dis".to_string(), "Tinct".to_string(), "dis.tinct@school.edu".to_string(), fixed_now(), true, fixed_now(), fixed_now(), department::id::equals(dept.id), vec![]).exec().await.unwrap();
-        let course = client.course().create("CD".to_string(), "Course Distinct".to_string(), 3, 30, true, fixed_now(), fixed_now(), teacher::id::equals(teacher.id), department::id::equals(dept.id), vec![]).exec().await.unwrap();
-        let stud = client.student().create("SD".to_string(), "Dis".to_string(), "Tinct".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![]).exec().await.unwrap();
+        let teacher = client.teacher().create("TD".to_string(), "Dis".to_string(), "Tinct".to_string(), "dis.tinct@school.edu".to_string(), fixed_now(), true, fixed_now(), fixed_now(), department::id::equals(dept.id), vec![])
+            .exec().await.unwrap();
+        let course = client.course().create("CD".to_string(), "Course Distinct".to_string(), 3, 30, true, fixed_now(), fixed_now(), teacher::id::equals(teacher.id), department::id::equals(dept.id), vec![])
+            .exec().await.unwrap();
+        let stud = client.student().create("SD".to_string(), "Dis".to_string(), "Tinct".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![])
+            .exec().await.unwrap();
 
         let _e1 = client.enrollment().create(fixed_now(), "s1".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![]).exec().await.unwrap();
-        let _e2 = client.enrollment().create(fixed_now(), "s1".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![]).exec().await.unwrap();
+        let _e2 = client.enrollment().create(fixed_now(), "s1".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![])
+            .exec().await.unwrap();
 
         let s = client
             .student()

@@ -13,6 +13,8 @@ Add this to your `Cargo.toml`:
 caustics = { path = "../caustics" }
 ```
 
+Toolchain requirement: this project requires a fixed nightly toolchain for per-entity macro syntax (`entity::select!(...)`). The workspace pins nightly via `rust-toolchain.toml` (nightly-2025-08-31).
+
 ## Usage
 
 ### Quick start
@@ -165,7 +167,7 @@ let users_with_posts = client
 let users_basic = client
     .user()
     .find_many(vec![])
-    .select(vec![user::select::id(), user::select::name()])
+    .select(user::select!(id, name))
     .exec()
     .await?;
 
@@ -173,7 +175,7 @@ let users_basic = client
 let students = client
     .student()
     .find_many(vec![])
-    .select(vec![student::select::first_name()])
+    .select(student::select!(first_name))
     .with(student::enrollments::include(|rel| rel
         .filter(vec![enrollment::status::contains("en".to_string())])
         .order_by(vec![enrollment::id::order(SortOrder::Desc)])
@@ -199,12 +201,12 @@ let students_by_enrollments = client
 let selected = client
     .student()
     .find_unique(student::id::equals(1))
-    .select(vec![student::select::first_name()])
+    .select(student::select!(first_name, last_name))
     .with(student::enrollments::include(|rel| rel
         .with(enrollment::course::include(|rel2| rel2
-            .select(vec![course::select::name()])
+            .select(course::select!(name))
             .with(course::teacher::include(|rel3| rel3
-                .select(vec![teacher::select::first_name()])
+                .select(teacher::select!(first_name))
             ))
         ))
     ))
@@ -226,7 +228,7 @@ let s = client
     .take(5)
     .skip(0)
     .distinct()
-    .select(vec![enrollment::select::status()])
+    .select(enrollment::select!(status))
     .count()
   ))
   .exec()

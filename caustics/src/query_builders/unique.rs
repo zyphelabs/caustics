@@ -1,5 +1,7 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use crate::types::{ApplyNestedIncludes, EntityRegistry};
+use crate::{EntitySelection};
+use crate::types::SelectionSpec;
 use sea_orm::{ConnectionTrait, EntityTrait, Select};
 
 /// Query builder for finding a unique entity record
@@ -21,6 +23,30 @@ where
         + Send
         + 'static,
 {
+    pub fn select<S>(self, spec: S) -> crate::query_builders::select_unique::SelectUniqueQueryBuilder<'a, C, Entity, S::Data>
+    where
+        S: SelectionSpec<Entity = Entity>,
+        S::Data: EntitySelection + HasRelationMetadata<S::Data> + ApplyNestedIncludes<C> + Send + 'static,
+    {
+        let mut builder = crate::query_builders::select_unique::SelectUniqueQueryBuilder {
+            query: self.query,
+            conn: self.conn,
+            selected_fields: Vec::new(),
+            requested_aliases: Vec::new(),
+            relations_to_fetch: self.relations_to_fetch,
+            registry: self.registry,
+            database_backend: self.conn.get_database_backend(),
+            _phantom: std::marker::PhantomData,
+        };
+        let aliases = spec.collect_aliases();
+        for alias in aliases {
+            if let Some(expr) = <S::Data as EntitySelection>::column_for_alias(alias.as_str()) {
+                builder = builder.push_field(expr, alias.as_str());
+                builder.requested_aliases.push(alias);
+            }
+        }
+        builder
+    }
     /// Execute the query and return a single result
     pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
         if self.relations_to_fetch.is_empty() {

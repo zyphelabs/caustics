@@ -1,6 +1,8 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use crate::types::ApplyNestedIncludes;
 use crate::types::EntityRegistry;
+use crate::EntitySelection;
+use crate::types::SelectionSpec;
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, Select};
 
 /// Query builder for finding the first entity record matching conditions
@@ -23,6 +25,30 @@ where
         + Send
         + 'static,
 {
+    pub fn select<S>(self, spec: S) -> crate::query_builders::select_first::SelectFirstQueryBuilder<'a, C, Entity, S::Data>
+    where
+        S: SelectionSpec<Entity = Entity>,
+        S::Data: EntitySelection + HasRelationMetadata<S::Data> + Send + 'static,
+    {
+        let mut builder = crate::query_builders::select_first::SelectFirstQueryBuilder {
+            query: self.query,
+            conn: self.conn,
+            selected_fields: Vec::new(),
+            requested_aliases: Vec::new(),
+            relations_to_fetch: self.relations_to_fetch,
+            registry: self.registry,
+            database_backend: self.database_backend,
+            _phantom: std::marker::PhantomData,
+        };
+        let aliases = spec.collect_aliases();
+        for alias in aliases {
+            if let Some(expr) = <S::Data as EntitySelection>::column_for_alias(alias.as_str()) {
+                builder = builder.push_field(expr, alias.as_str());
+                builder.requested_aliases.push(alias);
+            }
+        }
+        builder
+    }
     /// Execute the query and return a single result
     pub async fn exec(self) -> Result<Option<ModelWithRelations>, sea_orm::DbErr> {
         if self.relations_to_fetch.is_empty() {

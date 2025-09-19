@@ -1,6 +1,8 @@
 use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use crate::types::ApplyNestedIncludes;
 use crate::types::{NullsOrder, IntoOrderSpec};
+use crate::EntitySelection;
+use crate::types::SelectionSpec;
 use crate::types::EntityRegistry;
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select};
 use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
@@ -32,6 +34,37 @@ where
         + Send
         + 'static,
 {
+    pub fn select<S>(self, spec: S) -> crate::query_builders::select_many::SelectManyQueryBuilder<'a, C, Entity, S::Data>
+    where
+        S: SelectionSpec<Entity = Entity>,
+        S::Data: EntitySelection + HasRelationMetadata<S::Data> + crate::types::ApplyNestedIncludes<C> + Send + 'static,
+    {
+        let mut builder = crate::query_builders::select_many::SelectManyQueryBuilder {
+            query: self.query,
+            conn: self.conn,
+            selected_fields: Vec::new(),
+            requested_aliases: Vec::new(),
+            relations_to_fetch: self.relations_to_fetch,
+            registry: self.registry,
+            database_backend: self.database_backend,
+            reverse_order: self.reverse_order,
+            pending_order_bys: self.pending_order_bys,
+            pending_nulls: self.pending_nulls,
+            cursor: self.cursor,
+            is_distinct: self.is_distinct,
+            distinct_on_fields: self.distinct_on_fields,
+            skip_is_negative: self.skip_is_negative,
+            _phantom: std::marker::PhantomData,
+        };
+        let aliases = spec.collect_aliases();
+        for alias in aliases {
+            if let Some(expr) = <S::Data as EntitySelection>::column_for_alias(alias.as_str()) {
+                builder = builder.push_field(expr, alias.as_str());
+                builder.requested_aliases.push(alias);
+            }
+        }
+        builder
+    }
     /// Limit the number of results (aligned with Prisma's i64 API)
     pub fn take(mut self, limit: i64) -> Self {
         let limit_u = if limit < 0 {

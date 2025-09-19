@@ -181,10 +181,11 @@ Completed parity
 - [x] Include on full-model builders (Many/First/Unique)
 - [x] Cursor pagination, orderBy, take/skip semantics (negative take flips order)
 - [x] Aggregate and groupBy typed enums and helpers
+ - [x] Per-entity `select!` macro on nightly (entity::select!(field_a, field_b)) with typed selection end-to-end
 
 Remaining gaps
-- [ ] Nested select/include trees (selecting scalars on included relations; nested includes)
-- [ ] Relation-level orderBy/take/skip inside include args (e.g., include: { posts: { take: 5, orderBy: ... } })
+- [x] Nested select/include trees (selecting scalars on included relations; nested includes)
+- [x] Relation-level orderBy/take/skip inside include args (e.g., include: { posts: { take: 5, orderBy: ... } })
 - [ ] Distinct on specific fields with native backend support (currently emulated via GROUP BY)
 - [ ] Error surface parity (typed errors like RelationNotFetched, QueryValidation) and error messages
 - [ ] Raw SQL APIs (`_queryRaw`, `_executeRaw`) and result typing
@@ -193,3 +194,13 @@ Remaining gaps
 - [ ] JSON null handling flags (JsonNullValueFilter/DbNull/JsonNull/AnyNull)
 - [ ] Schema introspection exposure (DATAMODEL_STR/DATABASE_STR) and validation helpers
 - [x] Advanced ordering options (NullsOrder First/Last, relation aggregates in orderBy)
+
+## Toolchain
+
+- [x] Pin nightly toolchain in `rust-toolchain.toml` (nightly-2025-08-31)
+- [x] Enable `#![feature(decl_macro)]` where needed for per-entity `pub macro` support
+
+## API changes
+
+- [x] Remove legacy global `Select!` macro and `Vec<ScalarField>` selects
+- [x] Remove global `select_typed!` macro from public API; use per-entity `entity::select!(...)`

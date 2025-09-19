@@ -1,6 +1,7 @@
 #![crate_type = "proc-macro"]
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![feature(decl_macro)]
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -12,21 +13,21 @@ mod where_param;
 
 #[proc_macro_attribute]
 pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Parse the namespace parameter from the attribute arguments
-    let namespace = if let Ok(args_str) = syn::parse::<syn::LitStr>(_args.clone()) {
-        // Simple case: just a string literal
-        args_str.value()
-    } else {
-        // Try to parse as a more complex attribute structure
-        let args_str = _args.to_string();
-        if args_str.contains("namespace") {
-            // Extract namespace from the attribute string
-            if let Some(start) = args_str.find("namespace = ") {
-                let after_namespace = &args_str[start + 12..];
-                if let Some(end) = after_namespace.find('"') {
-                    let after_quote = &after_namespace[end + 1..];
-                    if let Some(end_quote) = after_quote.find('"') {
-                        after_quote[..end_quote].to_string()
+    // Parse the namespace parameter robustly: allow string literal or key-value
+    let namespace = {
+        // Try as string literal
+        if let Ok(args_str) = syn::parse::<syn::LitStr>(_args.clone()) {
+            args_str.value()
+        } else {
+            // Fallback: parse key-value tokens, look for namespace = "..."
+            let args_str = _args.to_string();
+            if let Some(pos) = args_str.find("namespace") {
+                if let Some(eq) = args_str[pos..].find('=') {
+                    let after = &args_str[pos + eq + 1..];
+                    let first_quote = after.find('"');
+                    let second_quote = first_quote.and_then(|i| after[i + 1..].find('"').map(|j| i + 1 + j));
+                    if let (Some(i), Some(j)) = (first_quote, second_quote) {
+                        after[i + 1..j].to_string()
                     } else {
                         "default".to_string()
                     }
@@ -36,8 +37,6 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
             } else {
                 "default".to_string()
             }
-        } else {
-            "default".to_string()
         }
     };
 

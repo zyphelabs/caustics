@@ -1,5 +1,5 @@
 use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
-use crate::types::{EntityRegistry};
+use crate::types::{EntityRegistry, SelectionSpec};
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QuerySelect, QueryTrait, Select};
 use sea_orm::sea_query::SimpleExpr;
 
@@ -83,6 +83,58 @@ where
     pub fn with<T: Into<RelationFilter>>(mut self, relation: T) -> Self {
         self.relations_to_fetch.push(relation.into());
         self
+    }
+}
+
+impl<'a, C, Entity, Selected> From<crate::query_builders::FirstQueryBuilder<'a, C, Entity, Selected>> for SelectFirstQueryBuilder<'a, C, Entity, Selected>
+where
+    C: ConnectionTrait,
+    Entity: EntityTrait,
+    Selected: EntitySelection + HasRelationMetadata<Selected> + Send + 'static,
+{
+    fn from(src: crate::query_builders::FirstQueryBuilder<'a, C, Entity, Selected>) -> Self {
+        SelectFirstQueryBuilder {
+            query: src.query,
+            conn: src.conn,
+            selected_fields: Vec::new(),
+            requested_aliases: Vec::new(),
+            relations_to_fetch: src.relations_to_fetch,
+            registry: src.registry,
+            database_backend: src.database_backend,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, C, Entity, Selected> SelectFirstQueryBuilder<'a, C, Entity, Selected>
+where
+    C: ConnectionTrait,
+    Entity: EntityTrait,
+    Selected: EntitySelection + HasRelationMetadata<Selected> + Send + 'static,
+{
+    pub fn select<S>(mut self, spec: S) -> SelectFirstQueryBuilder<'a, C, Entity, S::Data>
+    where
+        S: SelectionSpec<Entity = Entity>,
+        S::Data: EntitySelection + HasRelationMetadata<S::Data> + Send + 'static,
+    {
+        let aliases = spec.collect_aliases();
+        let mut requested = Vec::new();
+        for alias in &aliases {
+            if let Some(expr) = Selected::column_for_alias(alias.as_str()) {
+                self.selected_fields.push((expr, alias.clone()));
+                requested.push(alias.clone());
+            }
+        }
+        SelectFirstQueryBuilder {
+            query: self.query,
+            conn: self.conn,
+            selected_fields: self.selected_fields,
+            requested_aliases: requested,
+            relations_to_fetch: self.relations_to_fetch,
+            registry: self.registry,
+            database_backend: self.database_backend,
+            _phantom: std::marker::PhantomData::<S::Data>,
+        }
     }
 }
 

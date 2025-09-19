@@ -361,6 +361,57 @@ pub trait HasRelationMetadata<ModelWithRelations> {
     }
 }
 
+/// Compile-time selection spec produced by per-entity macros
+pub trait SelectionSpec {
+    /// The entity type this selection targets
+    type Entity: sea_orm::EntityTrait;
+    /// The output data type materialized by the selection
+    type Data: EntitySelection + HasRelationMetadata<Self::Data> + Send + 'static;
+    /// Return the list of scalar aliases (snake_case rust field names) to fetch
+    fn collect_aliases(self) -> Vec<String>;
+}
+
+/// Concrete typed selection marker carrying aliases and output type info
+pub struct TypedSelection<E: sea_orm::EntityTrait, D> {
+    pub aliases: Vec<String>,
+    pub _phantom: std::marker::PhantomData<(E, D)>,
+}
+
+impl<E, D> SelectionSpec for TypedSelection<E, D>
+where
+    E: sea_orm::EntityTrait,
+    D: EntitySelection + HasRelationMetadata<D> + Send + 'static,
+{
+    type Entity = E;
+    type Data = D;
+    fn collect_aliases(self) -> Vec<String> { self.aliases }
+}
+
+/// Helper to construct a typed selection marker
+pub fn typed_selection<E, D>(aliases: Vec<String>) -> TypedSelection<E, D>
+where
+    E: sea_orm::EntityTrait,
+    D: EntitySelection + HasRelationMetadata<D> + Send + 'static,
+{
+    TypedSelection { aliases, _phantom: std::marker::PhantomData }
+}
+
+/// Helper to construct a typed selection marker without placing types in generic args at callsite
+pub fn typed_selection_from_values<E, D>(
+    _e: fn() -> E,
+    _d: fn() -> D,
+    aliases: Vec<String>,
+) -> TypedSelection<E, D>
+where
+    E: sea_orm::EntityTrait,
+    D: EntitySelection + HasRelationMetadata<D> + Send + 'static,
+{
+    TypedSelection { aliases, _phantom: std::marker::PhantomData }
+}
+
+// Macro helper to construct TypedSelection for a module path without exposing type paths in the callsite macro body
+// legacy helper removed
+
 /// Trait for dynamic entity fetching without hardcoding
 pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
     /// Fetch entities by foreign key value

@@ -2723,6 +2723,12 @@ pub fn generate_entity(
             syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
         })
         .collect();
+    // Generate snake_case field idents for macro checks
+    let all_field_idents_snake: Vec<syn::Ident> = fields
+        .iter()
+        .map(|field| field.ident.as_ref().unwrap().clone())
+        .collect();
+
     // Generate the column_from_str function using the variables
     let column_from_str_fn = quote! {
         pub(crate) fn column_from_str(name: &str) -> Option<<Entity as sea_orm::EntityTrait>::Column> {
@@ -2736,6 +2742,7 @@ pub fn generate_entity(
     };
 
     let namespace_ident = format_ident!("{}", namespace);
+    // No per-entity macro exports to avoid redefinition across modules
 
     let expanded = quote! {
         use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
@@ -2795,11 +2802,42 @@ pub fn generate_entity(
             #(#group_by_field_variants,)*
         }
 
-        // Per-entity snake_case select helpers, e.g. user::select::id()
-        pub mod select {
-            use super::ScalarField;
-            #(pub fn #snake_field_fn_idents() -> ScalarField { ScalarField::#group_by_field_variants })*
+        // Back-compat select module removed in favor of per-entity select! macro
+
+        // Helper to map snake_case field name to ScalarField variant
+        pub fn scalar_field_from_str(name: &str) -> Option<ScalarField> {
+            match name {
+                #(
+                    #all_field_names => Some(ScalarField::#group_by_field_variants),
+                )*
+                _ => None,
+            }
         }
+
+        // Per-entity select! macro (nightly `pub macro` path invocation support)
+        // Usage: `entity::select!(field_a, field_b)`
+        // Build-time name check inline with match on valid names
+        pub macro select($($field:ident),* $(,)?) {{
+            macro_rules! __check_field_ident {
+                #( ( #all_field_idents_snake ) => {}; )*
+                ( $other:ident ) => { compile_error!(concat!("unknown field: ", stringify!($other))); };
+            }
+            $( __check_field_ident!($field); )*
+            struct __CausticsSelectMarker;
+            impl caustics::SelectionSpec for __CausticsSelectMarker {
+                type Entity = Entity;
+                type Data = Selected;
+                fn collect_aliases(self) -> Vec<String> { vec![ $( stringify!($field).to_string() ),* ] }
+            }
+            __CausticsSelectMarker
+        }}
+        
+
+        // Note: per-entity macro `select!` is intentionally not generated to avoid
+        // name collisions in modules that define multiple entities. Use the global
+        // `caustics::Select!(entity, { .. })` helper instead.
+
+        // Intentionally no per-entity Select! macro; use global caustics::Select!(entity, { .. })
 
         // Map typed ScalarField to column alias strings (snake_case)
         pub fn scalar_fields_to_aliases(params: Vec<ScalarField>) -> Vec<String> {
@@ -2814,7 +2852,10 @@ pub fn generate_entity(
 
         // Extension traits to apply select on query builders returning Selected builders
         pub trait ManySelectExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
+            fn select<S>(self, spec: S) -> caustics::SelectManyQueryBuilder<'a, C, Entity, S::Data>
+            where
+                S: caustics::SelectionSpec<Entity = Entity>,
+                S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + caustics::ApplyNestedIncludes<C> + Send + 'static;
         }
 
         impl<'a, C> ManySelectExt<'a, C> for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
@@ -2822,7 +2863,12 @@ pub fn generate_entity(
             C: sea_orm::ConnectionTrait,
             ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
         {
-            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
+            fn select<S>(self, spec: S) -> caustics::SelectManyQueryBuilder<'a, C, Entity, S::Data>
+            where
+                S: caustics::SelectionSpec<Entity = Entity>,
+                S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + caustics::ApplyNestedIncludes<C> + Send + 'static,
+            {
+                // implementation identical to select_typed inline
                 use sea_orm::IntoSimpleExpr;
                 let mut builder = caustics::SelectManyQueryBuilder {
                     query: self.query,
@@ -2834,28 +2880,31 @@ pub fn generate_entity(
                     database_backend: self.database_backend,
                     reverse_order: self.reverse_order,
                     pending_order_bys: self.pending_order_bys,
-                    pending_nulls: None,
+                    pending_nulls: self.pending_nulls,
                     cursor: self.cursor,
                     is_distinct: self.is_distinct,
                     distinct_on_fields: self.distinct_on_fields,
-                    skip_is_negative: false,
+                    skip_is_negative: self.skip_is_negative,
                     _phantom: std::marker::PhantomData,
                 };
-                for s in selects {
-                    match s {
-                        #( ScalarField::#group_by_field_variants => {
-                            let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
-                            builder = builder.push_field(expr, #all_field_names);
-                            builder.requested_aliases.push(#all_field_names.to_string());
-                        } ),*
+                let aliases = spec.collect_aliases();
+                for alias in aliases {
+                    if let Some(expr) = <S::Data as caustics::EntitySelection>::column_for_alias(alias.as_str()) {
+                        builder = builder.push_field(expr, alias.as_str());
+                        builder.requested_aliases.push(alias);
                     }
                 }
                 builder
             }
         }
 
+        // Legacy Vec<ScalarField> select APIs removed
+
         pub trait UniqueSelectExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
+            fn select<S>(self, spec: S) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, S::Data>
+            where
+                S: caustics::SelectionSpec<Entity = Entity>,
+                S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + caustics::ApplyNestedIncludes<C> + Send + 'static;
         }
 
         impl<'a, C> UniqueSelectExt<'a, C> for caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>
@@ -2863,7 +2912,11 @@ pub fn generate_entity(
             C: sea_orm::ConnectionTrait,
             ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
         {
-            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
+            fn select<S>(self, spec: S) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, S::Data>
+            where
+                S: caustics::SelectionSpec<Entity = Entity>,
+                S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + caustics::ApplyNestedIncludes<C> + Send + 'static,
+            {
                 use sea_orm::IntoSimpleExpr;
                 let mut builder = caustics::SelectUniqueQueryBuilder {
                     query: self.query,
@@ -2875,13 +2928,11 @@ pub fn generate_entity(
                     database_backend: self.conn.get_database_backend(),
                     _phantom: std::marker::PhantomData,
                 };
-                for s in selects {
-                    match s {
-                        #( ScalarField::#group_by_field_variants => {
-                            let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
-                            builder = builder.push_field(expr, #all_field_names);
-                            builder.requested_aliases.push(#all_field_names.to_string());
-                        } ),*
+                let aliases = spec.collect_aliases();
+                for alias in aliases {
+                    if let Some(expr) = <S::Data as caustics::EntitySelection>::column_for_alias(alias.as_str()) {
+                        builder = builder.push_field(expr, alias.as_str());
+                        builder.requested_aliases.push(alias);
                     }
                 }
                 builder
@@ -2889,7 +2940,10 @@ pub fn generate_entity(
         }
 
         pub trait FirstSelectExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
+            fn select<S>(self, spec: S) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, S::Data>
+            where
+                S: caustics::SelectionSpec<Entity = Entity>,
+                S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + Send + 'static;
         }
 
         impl<'a, C> FirstSelectExt<'a, C> for caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
@@ -2897,7 +2951,11 @@ pub fn generate_entity(
             C: sea_orm::ConnectionTrait,
             ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model> + caustics::HasRelationMetadata<ModelWithRelations> + Send + 'static,
         {
-            fn select(self, selects: Vec<ScalarField>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
+            fn select<S>(self, spec: S) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, S::Data>
+            where
+                S: caustics::SelectionSpec<Entity = Entity>,
+                S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + Send + 'static,
+            {
                 use sea_orm::IntoSimpleExpr;
                 let mut builder = caustics::SelectFirstQueryBuilder {
                     query: self.query,
@@ -2909,13 +2967,11 @@ pub fn generate_entity(
                     database_backend: self.database_backend,
                     _phantom: std::marker::PhantomData,
                 };
-                for s in selects {
-                    match s {
-                        #( ScalarField::#group_by_field_variants => {
-                            let expr = <Entity as sea_orm::EntityTrait>::Column::#group_by_field_variants.into_simple_expr();
-                            builder = builder.push_field(expr, #all_field_names);
-                            builder.requested_aliases.push(#all_field_names.to_string());
-                        } ),*
+                let aliases = spec.collect_aliases();
+                for alias in aliases {
+                    if let Some(expr) = <S::Data as caustics::EntitySelection>::column_for_alias(alias.as_str()) {
+                        builder = builder.push_field(expr, alias.as_str());
+                        builder.requested_aliases.push(alias);
                     }
                 }
                 builder
@@ -4289,8 +4345,8 @@ fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) 
                         self.core.with_nested(include.into());
                         self
                     }
-                    pub fn select(mut self, fields: Vec<super::#target::ScalarField>) -> Self {
-                        let aliases = super::#target::scalar_fields_to_aliases(fields);
+                    pub fn select(mut self, spec: impl caustics::SelectionSpec<Entity = super::#target::Entity, Data = super::#target::Selected>) -> Self {
+                        let aliases = spec.collect_aliases();
                         self.core.set_select_aliases(aliases);
                         self
                     }
