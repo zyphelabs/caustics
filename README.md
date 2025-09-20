@@ -26,6 +26,52 @@ use caustics_client::CausticsClient;
 let client = CausticsClient::new(db.clone());
 ```
 
+### Raw SQL APIs (typed)
+
+```rust
+use sea_orm::FromQueryResult;
+
+#[derive(FromQueryResult)]
+struct Row { value: i32 }
+
+// Typed query (returns Vec<Row>)
+let rows: Vec<Row> = client
+    ._query_raw::<Row>(raw!("SELECT {} as value", 1))
+    .exec()
+    .await?;
+
+// Execute statement (no result set)
+let res = client
+    ._execute_raw(raw!("CREATE TEMP TABLE {} (id int)", ident!("__raw_tmp")))
+    .exec()
+    .await?;
+
+// Binding helpers
+use caustics::{ident, in_params};
+
+let (ph, args) = in_params!(&[1,2,3]);
+// Injection-safe: values (strings, numbers, json, etc.) are always bound as params
+// Use ident!(..) for identifiers (table/column names); never inline user input as identifiers
+#[derive(FromQueryResult)]
+struct UserRow { id: i32, name: String }
+let users: Vec<UserRow> = client
+    ._query_raw::<UserRow>(raw!(
+        "SELECT id, name FROM {} WHERE id IN ({})",
+        ident!("users"),
+        caustics::raw::Inline(ph)
+    ).with_params(args))
+    .exec()
+    .await?;
+
+// Mixed bound types
+#[derive(FromQueryResult)]
+struct Mixed { s: String, n: i64 }
+let rows: Vec<Mixed> = client
+    ._query_raw::<Mixed>(raw!("SELECT {} as s, {} as n", "hello", 42))
+    .exec()
+    .await?;
+```
+
 ### Define entities
 
 ```rust

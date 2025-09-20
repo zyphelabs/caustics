@@ -414,6 +414,33 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         )
     };
 
+    let raw_block = if is_test {
+        quote! {
+            // Use the library Raw type in tests to avoid duplicate types
+            pub use caustics::Raw;
+        }
+    } else {
+        quote! {
+            // Raw SQL support (typed bindings and results)
+            #[derive(Clone, Debug)]
+            pub struct Raw {
+                pub sql: String,
+                pub params: Vec<sea_orm::Value>,
+            }
+
+            impl Raw {
+                pub fn new<S: Into<String>>(sql: S, params: Vec<sea_orm::Value>) -> Self {
+                    Self { sql: sql.into(), params }
+                }
+                pub fn push_param<T: Into<sea_orm::Value>>(&mut self, v: T) { self.params.push(v.into()); }
+                pub fn with_params(mut self, mut extra: Vec<sea_orm::Value>) -> Self {
+                    self.params.append(&mut extra);
+                    self
+                }
+            }
+        }
+    };
+
     let client_code = quote! {
         #imports
         // Bring all extension traits into scope automatically (generated)
@@ -424,6 +451,42 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         pub struct CausticsClient {
             db: std::sync::Arc<DatabaseConnection>,
             database_backend: sea_orm::DatabaseBackend,
+        }
+
+        #raw_block
+
+        pub struct RawQuery<T> {
+            db: std::sync::Arc<DatabaseConnection>,
+            backend: sea_orm::DatabaseBackend,
+            raw: Raw,
+            _marker: std::marker::PhantomData<T>,
+        }
+
+        impl<T> RawQuery<T> {
+            pub async fn exec(self) -> Result<Vec<T>, sea_orm::DbErr>
+            where
+                T: sea_orm::FromQueryResult + Send + Sync + 'static,
+            {
+                use sea_orm::{Statement, SelectorRaw, SelectModel};
+                let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
+                let rows = SelectorRaw::<SelectModel<T>>::from_statement(stmt).all(self.db.as_ref()).await?;
+                Ok(rows)
+            }
+        }
+
+        pub struct RawExecute {
+            db: std::sync::Arc<DatabaseConnection>,
+            backend: sea_orm::DatabaseBackend,
+            raw: Raw,
+        }
+
+        impl RawExecute {
+            pub async fn exec(self) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
+                use sea_orm::{Statement, ConnectionTrait};
+                let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
+                let res = self.db.execute(stmt).await?;
+                Ok(res)
+            }
         }
 
         #[allow(dead_code)]
@@ -493,6 +556,15 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
                 self._transaction()
             }
 
+            // Raw SQL APIs
+            pub fn _query_raw<T>(&self, raw: Raw) -> RawQuery<T> {
+                RawQuery { db: self.db.clone(), backend: self.database_backend, raw, _marker: std::marker::PhantomData }
+            }
+
+            pub fn _execute_raw(&self, raw: Raw) -> RawExecute {
+                RawExecute { db: self.db.clone(), backend: self.database_backend, raw }
+            }
+
             pub async fn _batch<'a, Entity, ActiveModel, ModelWithRelations, T, Container>(
                 &self,
                 queries: Container,
@@ -550,6 +622,49 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
             }
 
             #(#tx_entity_methods)*
+
+            // Raw SQL APIs within a transaction
+            pub fn _query_raw<T>(&self, raw: Raw) -> TxRawQuery<T> {
+                TxRawQuery { tx: self.tx.clone(), backend: self.database_backend, raw, _marker: std::marker::PhantomData }
+            }
+
+            pub fn _execute_raw(&self, raw: Raw) -> TxRawExecute {
+                TxRawExecute { tx: self.tx.clone(), backend: self.database_backend, raw }
+            }
+        }
+
+        pub struct TxRawQuery<T> {
+            tx: std::sync::Arc<DatabaseTransaction>,
+            backend: sea_orm::DatabaseBackend,
+            raw: Raw,
+            _marker: std::marker::PhantomData<T>,
+        }
+
+        impl<T> TxRawQuery<T> {
+            pub async fn exec(self) -> Result<Vec<T>, sea_orm::DbErr>
+            where
+                T: sea_orm::FromQueryResult + Send + Sync + 'static,
+            {
+                use sea_orm::{Statement, SelectorRaw, SelectModel};
+                let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
+                let rows = SelectorRaw::<SelectModel<T>>::from_statement(stmt).all(self.tx.as_ref()).await?;
+                Ok(rows)
+            }
+        }
+
+        pub struct TxRawExecute {
+            tx: std::sync::Arc<DatabaseTransaction>,
+            backend: sea_orm::DatabaseBackend,
+            raw: Raw,
+        }
+
+        impl TxRawExecute {
+            pub async fn exec(self) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
+                use sea_orm::{Statement, ConnectionTrait};
+                let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
+                let res = self.tx.execute(stmt).await?;
+                Ok(res)
+            }
         }
 
         impl TransactionBuilder {

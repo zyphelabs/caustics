@@ -2768,6 +2768,102 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    async fn test_raw_sql_query_and_execute() {
+        use sea_orm::FromQueryResult;
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        #[derive(Debug, FromQueryResult)]
+        struct OneRow { value: i32 }
+
+        let rows: Vec<OneRow> = client
+            ._query_raw::<OneRow>(caustics::raw!("SELECT 1 as value"))
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value, 1);
+
+        // Create a small row to affect count
+        let u = client
+            .user()
+            .create(
+                format!("raw_{}@example.com", chrono::Utc::now().timestamp()),
+                "Raw User".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        assert!(u.id > 0);
+
+        // Another typed query
+        #[derive(Debug, FromQueryResult)]
+        struct Cnt { c: i64 }
+        let rows: Vec<Cnt> = client
+            ._query_raw::<Cnt>(caustics::raw!("SELECT {} as c", 42))
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].c, 42);
+
+        // Execute raw (no result set)
+        // Execute DDL via raw
+        let _res = client
+            ._execute_raw(caustics::raw!("CREATE TEMP TABLE {} (id int)", caustics::ident!("__raw_tmp")))
+            .exec()
+            .await
+            .unwrap();
+        let _res = client
+            ._execute_raw(caustics::raw!("DROP TABLE {}", caustics::ident!("__raw_tmp")))
+            .exec()
+            .await
+            .unwrap();
+
+        // Advanced: IN list and JSON binding
+        #[derive(Debug, FromQueryResult)]
+        struct U { id: i32, name: String }
+        let (ph, params) = caustics::in_params!(&[1, 2, 3]);
+        let users: Vec<U> = client
+            ._query_raw::<U>(
+                caustics::raw!(
+                    "SELECT id, name FROM {} WHERE id IN ({}) ORDER BY id",
+                    caustics::ident!("users"),
+                    caustics::raw::Inline(ph)
+                ).with_params(params)
+            )
+            .exec()
+            .await
+            .unwrap();
+        assert!(users.len() >= 1);
+        assert!(users.iter().next().is_some_and(|u| u.id == 1));
+        assert!(users.iter().next().is_some_and(|u| u.name == "Raw User"));
+
+        // Injection protection: user-provided string is bound, not inlined
+        let evil = "1); DROP TABLE User; --".to_string();
+        let rows: Vec<Cnt> = client
+            ._query_raw::<Cnt>(caustics::raw!("SELECT COUNT(*) as c FROM {} WHERE name = {}", caustics::ident!("users"), evil))
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+
+        // Multiple bound params of different types
+        #[derive(Debug, FromQueryResult)]
+        struct Multi { s: String, n: i32 }
+        let rows: Vec<Multi> = client
+            ._query_raw::<Multi>(caustics::raw!("SELECT {} as s, {} as n", "hello", 7))
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(rows[0].s, "hello");
+        assert_eq!(rows[0].n, 7);
+    }
+
+    #[tokio::test]
     async fn test_has_many_set_operation_structure() {
         let db = helpers::setup_test_db().await;
         let client = CausticsClient::new(db.clone());

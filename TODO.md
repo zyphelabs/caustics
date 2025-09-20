@@ -81,10 +81,13 @@
 - [x] Upsert create-branch id extractor (macro-supplied id_extractor, reliable post-insert ops)
 
 ### 10. Raw SQL Capabilities
-- [ ] `_query_raw` method for raw SQL queries
-- [ ] `_execute_raw` method for raw SQL execution
-- [ ] Type-safe raw query results
-- [ ] Raw query builder interface
+- [x] `_query_raw` method for raw SQL queries
+- [x] `_execute_raw` method for raw SQL execution
+- [x] Type-safe raw query results (FromQueryResult + SelectModel)
+- [x] Raw query/execute builders (connection + transaction)
+- [x] `raw!` macro with `{}` placeholders and binding
+- [x] `ident!` for safe identifier inlining
+- [x] `in_params!` for IN-lists; `.with_params(...)` to append args
 
 ### 11. Enhanced Batch Operations
 - [x] createMany (multi-insert via client.user().create_many([...]).exec())
@@ -191,7 +194,7 @@ Remaining gaps
 - [x] Relation-level orderBy/take/skip inside include args (e.g., include: { posts: { take: 5, orderBy: ... } })
 - [x] Native DISTINCT ON for Postgres (wired via SeaQuery distinct_on with typed columns)
 - [ ] Error surface parity (typed errors like RelationNotFetched, QueryValidation) and error messages
-- [ ] Raw SQL APIs (`_queryRaw`, `_executeRaw`) and result typing
+- [x] Raw SQL APIs (`_queryRaw`, `_executeRaw`) and result typing (PCR parity)
 - [x] Full batch API parity (batch update/delete/upsert builders consolidated)
 - [ ] Middlewares/hooks and transaction API parity with PCR
  - [x] JSON null handling flags (DbNull/JsonNull/AnyNull) with `FieldOp::JsonNull`
