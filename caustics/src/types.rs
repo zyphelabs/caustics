@@ -14,6 +14,8 @@ pub enum CausticsError {
     RelationNotFound { relation: String },
     EntityFetcherMissing { entity: String },
     DeferredLookupFailed { target: String, detail: String },
+    NotFoundForCondition { entity: String, condition: String },
+    QueryValidation { message: String },
 }
 
 impl core::fmt::Display for CausticsError {
@@ -27,6 +29,12 @@ impl core::fmt::Display for CausticsError {
             }
             CausticsError::DeferredLookupFailed { target, detail } => {
                 write!(f, "CausticsError::DeferredLookupFailed: target='{}' detail='{}'", target, detail)
+            }
+            CausticsError::NotFoundForCondition { entity, condition } => {
+                write!(f, "CausticsError::NotFoundForCondition: entity='{}' condition='{}'", entity, condition)
+            }
+            CausticsError::QueryValidation { message } => {
+                write!(f, "CausticsError::QueryValidation: {}", message)
             }
         }
     }

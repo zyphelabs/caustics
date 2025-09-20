@@ -182,11 +182,14 @@ Completed parity
 - [x] Cursor pagination, orderBy, take/skip semantics (negative take flips order)
 - [x] Aggregate and groupBy typed enums and helpers
  - [x] Per-entity `select!` macro on nightly (entity::select!(field_a, field_b)) with typed selection end-to-end
+- [x] Field selection optimization wired to SQL (only requested columns fetched)
+- [x] Relation-level orderBy/take/skip/cursor/distinct inside include closures
+- [x] Distinct emulation via GROUP BY for specific fields (cross-backend)
 
 Remaining gaps
 - [x] Nested select/include trees (selecting scalars on included relations; nested includes)
 - [x] Relation-level orderBy/take/skip inside include args (e.g., include: { posts: { take: 5, orderBy: ... } })
-- [ ] Distinct on specific fields with native backend support (currently emulated via GROUP BY)
+- [x] Native DISTINCT ON for Postgres (wired via SeaQuery distinct_on with typed columns)
 - [ ] Error surface parity (typed errors like RelationNotFetched, QueryValidation) and error messages
 - [ ] Raw SQL APIs (`_queryRaw`, `_executeRaw`) and result typing
 - [ ] Full batch API parity (batch update/delete/upsert builders consolidated)

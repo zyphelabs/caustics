@@ -20,6 +20,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
     pub is_distinct: bool,
     pub distinct_on_fields: Option<Vec<SimpleExpr>>,
+    pub distinct_on_columns: Option<Vec<<Entity as EntityTrait>::Column>>,
     pub skip_is_negative: bool,
     pub _phantom: std::marker::PhantomData<ModelWithRelations>,
 }
@@ -53,6 +54,7 @@ where
             cursor: self.cursor,
             is_distinct: self.is_distinct,
             distinct_on_fields: self.distinct_on_fields,
+            distinct_on_columns: self.distinct_on_columns,
             skip_is_negative: self.skip_is_negative,
             _phantom: std::marker::PhantomData,
         };
@@ -117,6 +119,14 @@ where
         self
     }
 
+    /// Distinct on typed columns (enables native DISTINCT ON on Postgres)
+    pub fn distinct_on_columns(mut self, cols: Vec<<Entity as EntityTrait>::Column>) -> Self {
+        self.distinct_on_columns = Some(cols);
+        self.query = self.query.distinct();
+        self.is_distinct = true;
+        self
+    }
+
     /// Internal helper used by generated code to provide a cursor column/value
     pub fn with_cursor(mut self, expr: SimpleExpr, value: sea_orm::Value) -> Self {
         self.cursor = Some((expr, value));
@@ -130,7 +140,7 @@ where
         ModelWithRelations: FromModel<Entity::Model>,
     {
         if self.skip_is_negative {
-            return Err(sea_orm::DbErr::Custom("skip must be >= 0".to_string()));
+            return Err(crate::types::CausticsError::QueryValidation { message: "skip must be >= 0".to_string() }.into());
         }
         let mut query = self.query.clone();
         // Apply cursor filtering if provided
@@ -197,11 +207,26 @@ where
             }
         }
 
-        // Apply per-field distinct if provided (best-effort): emulate by grouping when possible
+        // Apply per-field distinct if provided:
+        // - Postgres: try to use DISTINCT ON natively when available
+        // - Others: best-effort emulation via GROUP BY
         if let Some(fields) = &self.distinct_on_fields {
             if !fields.is_empty() {
-                for f in fields {
-                    sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                match self.database_backend {
+                    DatabaseBackend::Postgres => {
+                        if let Some(cols) = &self.distinct_on_columns {
+                            sea_orm::QueryTrait::query(&mut query).distinct_on(cols.clone());
+                        } else {
+                            for f in fields {
+                                sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                            }
+                        }
+                    }
+                    _ => {
+                        for f in fields {
+                            sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                        }
+                    }
                 }
             }
         }

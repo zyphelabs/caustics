@@ -22,6 +22,7 @@ where
     pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
     pub is_distinct: bool,
     pub distinct_on_fields: Option<Vec<SimpleExpr>>,
+    pub distinct_on_columns: Option<Vec<<Entity as EntityTrait>::Column>>,
     pub skip_is_negative: bool,
     pub _phantom: std::marker::PhantomData<Selected>,
 }
@@ -54,7 +55,7 @@ where
     /// Execute and return selected rows
     pub async fn exec(self) -> Result<Vec<Selected>, sea_orm::DbErr> {
         if self.skip_is_negative {
-            return Err(sea_orm::DbErr::Custom("skip must be >= 0".to_string()));
+            return Err(crate::types::CausticsError::QueryValidation { message: "skip must be >= 0".to_string() }.into());
         }
         let mut query = self.query.clone();
 
@@ -111,11 +112,26 @@ where
             }
         }
 
-        // Emulate distinct on by group-by when present
+        // Apply per-field distinct:
+        // - Postgres: use native DISTINCT ON if available
+        // - Others: emulate via GROUP BY
         if let Some(fields) = &self.distinct_on_fields {
             if !fields.is_empty() {
-                for f in fields {
-                    sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                match self.database_backend {
+                    DatabaseBackend::Postgres => {
+                        if let Some(cols) = &self.distinct_on_columns {
+                            sea_orm::QueryTrait::query(&mut query).distinct_on(cols.clone());
+                        } else {
+                            for f in fields {
+                                sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                            }
+                        }
+                    }
+                    _ => {
+                        for f in fields {
+                            sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                        }
+                    }
                 }
             }
         }
@@ -151,25 +167,14 @@ where
             // include relations: only works if needed keys are in selection
             if !self.relations_to_fetch.is_empty() {
                 for rel in Selected::relation_descriptors() {
-                    let needed_key = if rel.is_has_many {
-                        rel.current_primary_key_field_name
-                    } else {
-                        rel.foreign_key_field_name
-                    };
-                    // If the key wasn't selected, skip filling that relation
-                    if let Some(_) = s.get_i32(needed_key) {
-                        // okay
-                    } else {
-                        continue;
-                    }
+                    let needed_key = if rel.is_has_many { rel.current_primary_key_field_name } else { rel.foreign_key_field_name };
+                    if let Some(_) = s.get_i32(needed_key) {} else { continue; }
                 }
-
                 for rf in &self.relations_to_fetch {
                     <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(&mut s, self.conn, rf, self.registry).await?;
                 }
             }
 
-            // clear any unselected scalar fields
             s.clear_unselected(&field_names);
             out.push(s);
         }
@@ -217,6 +222,7 @@ where
             cursor: self.cursor,
             is_distinct: self.is_distinct,
             distinct_on_fields: self.distinct_on_fields,
+            distinct_on_columns: self.distinct_on_columns,
             skip_is_negative: self.skip_is_negative,
             _phantom: std::marker::PhantomData::<S::Data>,
         }
@@ -244,6 +250,7 @@ where
             cursor: src.cursor,
             is_distinct: src.is_distinct,
             distinct_on_fields: src.distinct_on_fields,
+            distinct_on_columns: src.distinct_on_columns,
             skip_is_negative: false,
             _phantom: std::marker::PhantomData,
         }

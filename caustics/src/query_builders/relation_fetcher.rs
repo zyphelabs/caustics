@@ -26,10 +26,7 @@ where
             Some(d) => d,
             None => {
                 let fut = async move {
-                    Err(sea_orm::DbErr::Custom(format!(
-                        "Relation '{}' not found",
-                        relation_name
-                    )))
+                    Err(crate::types::CausticsError::RelationNotFound { relation: relation_name.to_string() }.into())
                 };
                 return Box::pin(fut);
             }
@@ -64,10 +61,7 @@ where
                 (descriptor.set_field)(model_with_relations, result);
                 Ok(())
             } else {
-                Err(sea_orm::DbErr::Custom(format!(
-                    "No fetcher found for entity: {}",
-                    fetcher_entity_name
-                )))
+                Err(crate::types::CausticsError::EntityFetcherMissing { entity: fetcher_entity_name }.into())
             }
         };
         Box::pin(fut)

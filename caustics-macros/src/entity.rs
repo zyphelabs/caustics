@@ -501,11 +501,10 @@ pub fn generate_entity(
                                         .one(conn)
                                         .await?;
                                     result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
-                                        sea_orm::DbErr::Custom(format!(
-                                            "No {} found for condition: {:?}",
-                                            stringify!(#target_module),
-                                            param
-                                        ))
+                                        caustics::CausticsError::NotFoundForCondition {
+                                            entity: stringify!(#target_module).to_string(),
+                                            condition: format!("{:?}", param),
+                                        }.into()
                                     })
                                 })
                             },
@@ -521,11 +520,10 @@ pub fn generate_entity(
                                         .one(txn)
                                         .await?;
                                     result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
-                                        sea_orm::DbErr::Custom(format!(
-                                            "No {} found for condition: {:?}",
-                                            stringify!(#target_module),
-                                            param
-                                        ))
+                                        caustics::CausticsError::NotFoundForCondition {
+                                            entity: stringify!(#target_module).to_string(),
+                                            condition: format!("{:?}", param),
+                                        }.into()
                                     })
                                 })
                             },
@@ -2331,11 +2329,10 @@ pub fn generate_entity(
                                                 .one(conn)
                                                 .await?;
                                             result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
-                                                sea_orm::DbErr::Custom(format!(
-                                                    "No {} found for condition: {:?}",
-                                                    stringify!(#target_module),
-                                                    param
-                                                ))
+                                                caustics::CausticsError::NotFoundForCondition {
+                                                    entity: stringify!(#target_module).to_string(),
+                                                    condition: format!("{:?}", param),
+                                                }.into()
                                             })
                                         })
                                     },
@@ -2348,11 +2345,10 @@ pub fn generate_entity(
                                                 .one(txn)
                                                 .await?;
                                             result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
-                                                sea_orm::DbErr::Custom(format!(
-                                                    "No {} found for condition: {:?}",
-                                                    stringify!(#target_module),
-                                                    param
-                                                ))
+                                                caustics::CausticsError::NotFoundForCondition {
+                                                    entity: stringify!(#target_module).to_string(),
+                                                    condition: format!("{:?}", param),
+                                                }.into()
                                             })
                                         })
                                     },
@@ -2884,6 +2880,7 @@ pub fn generate_entity(
                     cursor: self.cursor,
                     is_distinct: self.is_distinct,
                     distinct_on_fields: self.distinct_on_fields,
+                    distinct_on_columns: None,
                     skip_is_negative: self.skip_is_negative,
                     _phantom: std::marker::PhantomData,
                 };
@@ -3530,13 +3527,19 @@ pub fn generate_entity(
         {
             fn distinct(mut self, fields: Vec<ScalarField>) -> Self {
                 let mut exprs: Vec<SimpleExpr> = Vec::with_capacity(fields.len());
+                let mut cols: Vec<<Entity as EntityTrait>::Column> = Vec::with_capacity(fields.len());
                 for f in fields {
                     let e = match f {
                         #(ScalarField::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
                     };
+                    let c = match f {
+                        #(ScalarField::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants,)*
+                    };
                     exprs.push(e);
+                    cols.push(c);
                 }
-                self.distinct_on(exprs)
+                self = self.distinct_on(exprs);
+                self.distinct_on_columns(cols)
             }
         }
 
@@ -3550,13 +3553,19 @@ pub fn generate_entity(
         {
             fn distinct(mut self, fields: Vec<ScalarField>) -> Self {
                 let mut exprs: Vec<SimpleExpr> = Vec::with_capacity(fields.len());
+                let mut cols: Vec<<Entity as EntityTrait>::Column> = Vec::with_capacity(fields.len());
                 for f in fields {
                     let e = match f {
                         #(ScalarField::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
                     };
+                    let c = match f {
+                        #(ScalarField::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants,)*
+                    };
                     exprs.push(e);
+                    cols.push(c);
                 }
                 self.distinct_on_fields = Some(exprs);
+                self.distinct_on_columns = Some(cols);
                 self.is_distinct = true;
                 self
             }
@@ -3606,6 +3615,7 @@ pub fn generate_entity(
                     cursor: None,
                     is_distinct: false,
                     distinct_on_fields: None,
+                    distinct_on_columns: None,
                     skip_is_negative: false,
                     _phantom: std::marker::PhantomData,
                 }
@@ -3942,10 +3952,7 @@ pub fn generate_entity(
                         #(
                         #relation_names_snake_lits => { #relation_fetcher_bodies }
                         )*
-                        _ => Err(sea_orm::DbErr::Custom(format!(
-                            "Unknown relation '{}': ensure relation name matches generated metadata",
-                            relation_name
-                        ))),
+                        _ => Err(caustics::CausticsError::RelationNotFound { relation: relation_name.to_string() }.into()),
                     }
                 })
             }

@@ -55,7 +55,7 @@ where
                 // as mixed relation updates are not batchable.
                 // If needed later, we can add a transactional variant for relations.
                 // Fallback to error to avoid silently ignoring transaction context.
-                Err(sea_orm::DbErr::Custom("Relation update cannot run inside batch/transaction via unified API yet".to_string()))
+                Err(crate::types::CausticsError::QueryValidation { message: "Relation update cannot run inside batch/transaction via unified API yet".to_string() }.into())
             }
         }
     }

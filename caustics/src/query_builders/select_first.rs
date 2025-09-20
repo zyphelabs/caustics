@@ -61,10 +61,7 @@ where
                         let fetcher = self
                             .registry
                             .get_fetcher(desc.target_entity)
-                            .ok_or_else(|| sea_orm::DbErr::Custom(format!(
-                                "Missing fetcher for {}",
-                                desc.target_entity
-                            )))?;
+                            .ok_or_else(|| crate::types::CausticsError::EntityFetcherMissing { entity: desc.target_entity.to_string() })?;
                         let res = fetcher
                             .fetch_by_foreign_key(self.conn, Some(fk), desc.foreign_key_column, desc.target_entity, rf.relation, rf)
                             .await?;

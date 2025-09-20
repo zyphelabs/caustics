@@ -61,14 +61,12 @@ where
         let entity_id = match &self.entity_id_resolver {
             Some(resolver) => (resolver)(self.conn).await?,
             None => {
-                return Err(sea_orm::DbErr::Custom(
-                    "Missing entity id resolver for has_many set".to_string(),
-                ))
+                return Err(crate::types::CausticsError::QueryValidation { message: "Missing entity id resolver for has_many set".to_string() }.into())
             }
         };
         let parent_id_i32 = match entity_id {
             sea_orm::Value::Int(Some(id)) => id,
-            _ => return Err(sea_orm::DbErr::Custom("Unsupported id type for has_many create".to_string())),
+            _ => return Err(crate::types::CausticsError::QueryValidation { message: "Unsupported id type for has_many create".to_string() }.into()),
         };
 
         // Run nested creates, set operations, and regular update in a single transaction
@@ -120,17 +118,14 @@ where
         for change in changes {
             let target_ids = change.extract_target_ids();
             let relation_name = change.extract_relation_name().ok_or_else(|| {
-                sea_orm::DbErr::Custom("Could not extract relation name from change".to_string())
+                sea_orm::DbErr::from(crate::types::CausticsError::QueryValidation { message: "Could not extract relation name from change".to_string() })
             })?;
 
             let relation_metadata = <ModelWithRelations as crate::types::HasRelationMetadata<
                 ModelWithRelations,
             >>::get_relation_descriptor(relation_name)
             .ok_or_else(|| {
-                sea_orm::DbErr::Custom(format!(
-                    "No metadata found for relation: {}",
-                    relation_name
-                ))
+                sea_orm::DbErr::from(crate::types::CausticsError::RelationNotFound { relation: relation_name.to_string() })
             })?;
 
             let handler = DefaultHasManySetHandler::new(
