@@ -1165,6 +1165,7 @@ pub fn generate_entity(
                             caustics::FieldOp::JsonArrayStartsWith(v) => caustics::FieldOp::JsonArrayStartsWith(v),
                             caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
                             caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
+                            caustics::FieldOp::JsonNull(flag) => caustics::FieldOp::JsonNull(flag),
                             caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => unreachable!(),
                         };
                         caustics::Filter { field, operation }
@@ -1196,6 +1197,7 @@ pub fn generate_entity(
                             caustics::FieldOp::JsonArrayStartsWith(v) => caustics::FieldOp::JsonArrayStartsWith(v),
                             caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
                             caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
+                            caustics::FieldOp::JsonNull(flag) => caustics::FieldOp::JsonNull(flag),
                             caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => unreachable!(),
                         };
                         caustics::Filter { field, operation }

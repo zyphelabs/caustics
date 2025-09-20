@@ -181,7 +181,7 @@ pub fn generate_where_param_logic(
 
         // JSON-specific operations (only for JSON types)
         let json_ops = match field_type {
-            FieldType::Json | FieldType::OptionJson => {
+            FieldType::Json => {
                 quote! {
                     pub fn path(path: Vec<String>) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonPath(path))
@@ -207,6 +207,40 @@ pub fn generate_where_param_logic(
                     pub fn json_object_contains(key: String) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonObjectContains(key))
                     }
+                    pub fn db_null() -> WhereParam { WhereParam::#pascal_name(caustics::FieldOp::JsonNull(caustics::JsonNullValueFilter::DbNull)) }
+                    pub fn json_null() -> WhereParam { WhereParam::#pascal_name(caustics::FieldOp::JsonNull(caustics::JsonNullValueFilter::JsonNull)) }
+                    pub fn any_null() -> WhereParam { WhereParam::#pascal_name(caustics::FieldOp::JsonNull(caustics::JsonNullValueFilter::AnyNull)) }
+                }
+            }
+            FieldType::OptionJson => {
+                quote! {
+                    pub fn path(path: Vec<String>) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonPath(path))
+                    }
+                    pub fn json_string_contains(value: String) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonStringContains(value))
+                    }
+                    pub fn json_string_starts_with(value: String) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonStringStartsWith(value))
+                    }
+                    pub fn json_string_ends_with(value: String) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonStringEndsWith(value))
+                    }
+                    pub fn json_array_contains(value: serde_json::Value) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonArrayContains(value))
+                    }
+                    pub fn json_array_starts_with(value: serde_json::Value) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonArrayStartsWith(value))
+                    }
+                    pub fn json_array_ends_with(value: serde_json::Value) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonArrayEndsWith(value))
+                    }
+                    pub fn json_object_contains(key: String) -> WhereParam {
+                        WhereParam::#pascal_name(caustics::FieldOp::JsonObjectContains(key))
+                    }
+                    pub fn db_null() -> WhereParam { WhereParam::#pascal_name(caustics::FieldOp::JsonNull(caustics::JsonNullValueFilter::DbNull)) }
+                    pub fn json_null() -> WhereParam { WhereParam::#pascal_name(caustics::FieldOp::JsonNull(caustics::JsonNullValueFilter::JsonNull)) }
+                    pub fn any_null() -> WhereParam { WhereParam::#pascal_name(caustics::FieldOp::JsonNull(caustics::JsonNullValueFilter::AnyNull)) }
                 }
             }
             _ => quote! {},
@@ -638,8 +672,20 @@ fn generate_where_params_to_condition_function(
                         [format!("$.{}", key)]
                     ))
                 },
+                caustics::FieldOp::JsonNull(flag) => {
+                    match flag {
+                        caustics::JsonNullValueFilter::DbNull => Condition::all().add(sea_query::Expr::cust_with_values(
+                            &format!("\"{}\".{} IS NULL", table_name, filter.field), Vec::<sea_orm::Value>::new())),
+                        caustics::JsonNullValueFilter::JsonNull => Condition::all().add(sea_query::Expr::cust_with_values(
+                            &format!("json_type(\"{}\".{}, '$') = 'null'", table_name, filter.field), Vec::<sea_orm::Value>::new())),
+                        caustics::JsonNullValueFilter::AnyNull => Condition::all().add(sea_query::Expr::cust_with_values(
+                            &format!("(\"{}\".{} IS NULL OR json_type(\"{}\".{}, '$') = 'null')", table_name, filter.field, table_name, filter.field), Vec::<sea_orm::Value>::new())),
+                    }
+                },
+                // JsonNull handled at callsite via composing filters; no-op placeholder removed
                 // Relation operations (should not be used in field mappings) -> no-op
                 caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => Condition::all(),
+                _ => Condition::all(),
             }
         }
 
@@ -647,6 +693,7 @@ fn generate_where_params_to_condition_function(
         pub fn where_params_to_condition(params: Vec<WhereParam>, database_backend: sea_orm::DatabaseBackend) -> sea_query::Condition {
             use std::collections::HashMap;
             use sea_orm::{EntityTrait, ColumnTrait, QuerySelect, QueryTrait};
+            let database_backend = database_backend; // ensure variable in scope for nested closures
             use sea_query::Condition;
 
             let mut final_condition = Condition::all();
@@ -1348,6 +1395,16 @@ fn generate_json_field_handler(
                         [format!("$.{}", key)]
                     ))
                 },
+                caustics::FieldOp::JsonNull(flag) => {
+                    match flag {
+                        caustics::JsonNullValueFilter::DbNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                        caustics::JsonNullValueFilter::JsonNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(serde_json::Value::Null)),
+                        caustics::JsonNullValueFilter::AnyNull => Condition::all().add(sea_query::Expr::cust_with_values(
+                            &format!("({} IS NULL OR {} = 'null')", <Entity as EntityTrait>::Column::#pascal_name.to_string(), <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                            Vec::<sea_orm::Value>::new()
+                        )),
+                    }
+                },
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1414,6 +1471,16 @@ fn generate_json_field_handler(
                                 &format!("json_extract({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                         [format!("$.{}", key)]
                     ))
+                },
+                caustics::FieldOp::JsonNull(flag) => {
+                    match flag {
+                        caustics::JsonNullValueFilter::DbNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                        caustics::JsonNullValueFilter::JsonNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(serde_json::Value::Null)),
+                        caustics::JsonNullValueFilter::AnyNull => Condition::all().add(sea_query::Expr::cust_with_values(
+                            &format!("({} IS NULL OR {} = 'null')", <Entity as EntityTrait>::Column::#pascal_name.to_string(), <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                            Vec::<sea_orm::Value>::new()
+                        )),
+                    }
                 },
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
@@ -1597,6 +1664,7 @@ fn generate_target_field_mappings(
                         [sea_orm::Value::from(key)]
                     ))
                 },
+                _ => Condition::all(),
                 // Relation operations (these should not be used in field mappings)
                 caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => {
                     panic!("Relation operations should not be used in field mappings")

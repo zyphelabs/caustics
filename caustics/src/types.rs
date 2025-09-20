@@ -112,10 +112,20 @@ pub enum FieldOp<T> {
     JsonArrayStartsWith(serde_json::Value),
     JsonArrayEndsWith(serde_json::Value),
     JsonObjectContains(String),
+    // JSON null handling flags
+    JsonNull(JsonNullValueFilter),
     // Relation operations
     Some(()),
     Every(()),
     None(()),
+}
+
+// Keeping type for future, but not used by FieldOp right now
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum JsonNullValueFilter {
+    DbNull,
+    JsonNull,
+    AnyNull,
 }
 
 /// Trait for converting a model to a model with relations

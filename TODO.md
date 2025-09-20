@@ -89,16 +89,16 @@
 ### 11. Enhanced Batch Operations
 - [x] createMany (multi-insert via client.user().create_many([...]).exec())
 - [x] updateMany (multi-update via client.user().update_many(where, changes).exec())
-- [ ] Batch deletes (consolidated multi-delete beyond deleteMany)
-- [ ] Batch upserts
-- [ ] Optimized batch execution
+- [x] Batch deletes (DeleteQueryBuilder in batch)
+- [x] Batch upserts (UpsertQueryBuilder in batch)
+- [x] Optimized batch execution (single transaction)
 
 ## Low Priority
 
 ### 12. Query Modes and Ordering
 - [x] `QueryMode` enum with `Default` and `Insensitive`
 - [x] `NullsOrder` enum with `First` and `Last`
-- [ ] `JsonNullValueFilter` with `DbNull`, `JsonNull`, `AnyNull`
+- [x] `JsonNullValueFilter` with `DbNull`, `JsonNull`, `AnyNull` (PCR parity)
 - [ ] Advanced ordering options
 
 ### 13. Advanced Type System
@@ -192,9 +192,9 @@ Remaining gaps
 - [x] Native DISTINCT ON for Postgres (wired via SeaQuery distinct_on with typed columns)
 - [ ] Error surface parity (typed errors like RelationNotFetched, QueryValidation) and error messages
 - [ ] Raw SQL APIs (`_queryRaw`, `_executeRaw`) and result typing
-- [ ] Full batch API parity (batch update/delete/upsert builders consolidated)
+- [x] Full batch API parity (batch update/delete/upsert builders consolidated)
 - [ ] Middlewares/hooks and transaction API parity with PCR
-- [ ] JSON null handling flags (JsonNullValueFilter/DbNull/JsonNull/AnyNull)
+ - [x] JSON null handling flags (DbNull/JsonNull/AnyNull) with `FieldOp::JsonNull`
 - [ ] Schema introspection exposure (DATAMODEL_STR/DATABASE_STR) and validation helpers
 - [x] Advanced ordering options (NullsOrder First/Last, relation aggregates in orderBy)
 

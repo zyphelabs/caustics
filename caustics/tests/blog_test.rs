@@ -1986,6 +1986,23 @@ mod query_builder_tests {
             .await
             .unwrap();
 
+        // Create a post with explicit JSON null value (JSON = null)
+        let post_with_json_null = client
+            .post()
+            .create(
+                "Post with JSON null".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![
+                    post::content::set(Some("A post with JSON null".to_string())),
+                    post::custom_data::set(Some(serde_json::Value::Null)),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
         // Test basic JSON equals operation
         let posts_with_specific_category = client
             .post()
@@ -2015,13 +2032,46 @@ mod query_builder_tests {
         assert_eq!(posts_without_custom_data.len(), 1);
         assert_eq!(posts_without_custom_data[0].id, post_without_json.id);
 
+        // JSON null parity helpers
+        // DB NULL (column is NULL)
+        let posts_db_null = client
+            .post()
+            .find_many(vec![post::custom_data::db_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_db_null.len(), 1);
+        assert_eq!(posts_db_null[0].id, post_without_json.id);
+
+        // JSON null (value is JSON null)
+        let posts_json_null = client
+            .post()
+            .find_many(vec![post::custom_data::json_null()])
+            .exec()
+            .await
+            .unwrap();
+        assert_eq!(posts_json_null.len(), 1);
+        assert_eq!(posts_json_null[0].id, post_with_json_null.id);
+
+        // Any null (DB NULL or JSON null)
+        let posts_any_null = client
+            .post()
+            .find_many(vec![post::custom_data::any_null()])
+            .exec()
+            .await
+            .unwrap();
+        let any_ids: std::collections::HashSet<_> = posts_any_null.iter().map(|p| p.id).collect();
+        assert!(any_ids.contains(&post_without_json.id));
+        assert!(any_ids.contains(&post_with_json_null.id));
+
         let posts_with_custom_data = client
             .post()
             .find_many(vec![post::custom_data::is_not_null()])
             .exec()
             .await
             .unwrap();
-        assert_eq!(posts_with_custom_data.len(), 3);
+        // Includes posts with JSON values (including JSON null), excludes DB NULL
+        assert_eq!(posts_with_custom_data.len(), 4);
 
         // Test JSON path access - simple key
         let posts_with_category_key = client

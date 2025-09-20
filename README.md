@@ -956,6 +956,20 @@ let posts = client.post()
         ]),
     ])])
     .exec().await?;
+
+// JSON null helpers
+// - db_null(): column IS NULL (DB NULL)
+// - json_null(): column = JSON null
+// - any_null(): DB NULL OR JSON null
+let posts_db_null = client.post()
+    .find_many(vec![post::custom_data::db_null()])
+    .exec().await?;
+let posts_json_null = client.post()
+    .find_many(vec![post::custom_data::json_null()])
+    .exec().await?;
+let posts_any_null = client.post()
+    .find_many(vec![post::custom_data::any_null()])
+    .exec().await?;
 ```
 
 ## Acknowledgments
