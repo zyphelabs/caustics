@@ -2769,12 +2769,22 @@ mod query_builder_tests {
 
     #[tokio::test]
     async fn test_raw_sql_query_and_execute() {
+        use std::sync::{Arc, Mutex};
         use sea_orm::FromQueryResult;
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
         #[derive(Debug, FromQueryResult)]
         struct OneRow { value: i32 }
+
+        // Install a temporary hook to assert emissions
+        struct TestHook { hits: Arc<Mutex<usize>> }
+        impl caustics::hooks::QueryHook for TestHook {
+            fn before(&self, _e: &caustics::hooks::QueryEvent) { *self.hits.lock().unwrap() += 1; }
+            fn after(&self, _e: &caustics::hooks::QueryEvent, _m: &caustics::hooks::QueryResultMeta) { *self.hits.lock().unwrap() += 1; }
+        }
+        let hits = Arc::new(Mutex::new(0usize));
+        caustics::hooks::set_query_hook(Some(Arc::new(TestHook { hits: hits.clone() })));
 
         let rows: Vec<OneRow> = client
             ._query_raw::<OneRow>(caustics::raw!("SELECT 1 as value"))
@@ -2861,6 +2871,10 @@ mod query_builder_tests {
             .unwrap();
         assert_eq!(rows[0].s, "hello");
         assert_eq!(rows[0].n, 7);
+
+        // Hooks should have recorded events
+        caustics::hooks::set_query_hook(None);
+        assert!(*hits.lock().unwrap() > 0);
     }
 
     #[tokio::test]

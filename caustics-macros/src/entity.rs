@@ -1856,8 +1856,12 @@ pub fn generate_entity(
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
                 Box::pin(async move {
                     let descriptor = <Self as caustics::HasRelationMetadata<Self>>::get_relation_descriptor(filter.relation)
-                        .ok_or_else(|| caustics::CausticsError::RelationNotFound { relation: filter.relation.to_string() })?;
+                        .ok_or_else(|| caustics::CausticsError::InvalidIncludePath { relation: filter.relation.to_string() })?;
                     let foreign_key_value = (descriptor.get_foreign_key)(self);
+                    // If FK is missing on belongs_to/has_one, skip fetching gracefully (PCR parity)
+                    if foreign_key_value.is_none() && !descriptor.is_has_many {
+                        return Ok(());
+                    }
                     // Always resolve fetcher for the current entity module
                     let fetcher_entity_name = {
                         let type_name = std::any::type_name::<Self>();

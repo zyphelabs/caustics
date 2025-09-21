@@ -157,28 +157,49 @@ where
         }
 
         let stmt = select.build(self.database_backend);
-        let rows = self.conn.query_all(stmt).await?;
-        let mut out: Vec<Selected> = Vec::with_capacity(rows.len());
-        let field_names: Vec<&str> = self.requested_aliases.iter().map(|a| a.as_str()).collect();
+        let entity_name = core::any::type_name::<Entity>();
+        crate::hooks::emit_before(&crate::hooks::QueryEvent {
+            builder: "SelectManyQueryBuilder",
+            entity: entity_name,
+            details: crate::hooks::compose_details("select_many", entity_name),
+        });
+        let start = std::time::Instant::now();
+        let rows_res = self.conn.query_all(stmt).await;
+        match rows_res {
+            Ok(rows) => {
+                crate::hooks::emit_after(
+                    &crate::hooks::QueryEvent { builder: "SelectManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
+                    &crate::hooks::QueryResultMeta { row_count: Some(rows.len()), error: None, elapsed_ms: Some(start.elapsed().as_millis()) }
+                );
+                let mut out: Vec<Selected> = Vec::with_capacity(rows.len());
+                let field_names: Vec<&str> = self.requested_aliases.iter().map(|a| a.as_str()).collect();
 
-        for row in rows.into_iter() {
-            let mut s = Selected::fill_from_row(&row, &field_names);
+                for row in rows.into_iter() {
+                    let mut s = Selected::fill_from_row(&row, &field_names);
 
-            // include relations: only works if needed keys are in selection
-            if !self.relations_to_fetch.is_empty() {
-                for rel in Selected::relation_descriptors() {
-                    let needed_key = if rel.is_has_many { rel.current_primary_key_field_name } else { rel.foreign_key_field_name };
-                    if let Some(_) = s.get_i32(needed_key) {} else { continue; }
+                    if !self.relations_to_fetch.is_empty() {
+                        for rel in Selected::relation_descriptors() {
+                            let needed_key = if rel.is_has_many { rel.current_primary_key_field_name } else { rel.foreign_key_field_name };
+                            if let Some(_) = s.get_i32(needed_key) {} else { continue; }
+                        }
+                        for rf in &self.relations_to_fetch {
+                            <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(&mut s, self.conn, rf, self.registry).await?;
+                        }
+                    }
+
+                    s.clear_unselected(&field_names);
+                    out.push(s);
                 }
-                for rf in &self.relations_to_fetch {
-                    <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(&mut s, self.conn, rf, self.registry).await?;
-                }
+                Ok(out)
             }
-
-            s.clear_unselected(&field_names);
-            out.push(s);
+            Err(e) => {
+                crate::hooks::emit_after(
+                    &crate::hooks::QueryEvent { builder: "SelectManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
+                    &crate::hooks::QueryResultMeta { row_count: None, error: Some(e.to_string()), elapsed_ms: Some(start.elapsed().as_millis()) }
+                );
+                Err(e)
+            }
         }
-        Ok(out)
     }
 
     /// Add a relation to fetch with the selection

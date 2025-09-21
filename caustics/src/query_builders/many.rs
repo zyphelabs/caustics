@@ -231,7 +231,15 @@ where
             }
         }
 
-        if self.relations_to_fetch.is_empty() {
+        // Emit before hook
+        let entity_name = core::any::type_name::<Entity>();
+        crate::hooks::emit_before(&crate::hooks::QueryEvent {
+            builder: "ManyQueryBuilder",
+            entity: entity_name,
+            details: crate::hooks::compose_details("select_many", entity_name),
+        });
+        let start = std::time::Instant::now();
+        let res = if self.relations_to_fetch.is_empty() {
             query.all(self.conn).await.map(|models| {
                 models
                     .into_iter()
@@ -240,7 +248,19 @@ where
             })
         } else {
             self.exec_with_relations_with_query(query).await
+        };
+        // Emit after hook
+        match &res {
+            Ok(rows) => crate::hooks::emit_after(
+                &crate::hooks::QueryEvent { builder: "ManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
+                &crate::hooks::QueryResultMeta { row_count: Some(rows.len()), error: None, elapsed_ms: Some(start.elapsed().as_millis()) }
+            ),
+            Err(e) => crate::hooks::emit_after(
+                &crate::hooks::QueryEvent { builder: "ManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
+                &crate::hooks::QueryResultMeta { row_count: None, error: Some(e.to_string()), elapsed_ms: Some(start.elapsed().as_millis()) }
+            ),
         }
+        res
     }
 
     /// Add a relation to fetch with the query

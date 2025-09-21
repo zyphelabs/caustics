@@ -389,6 +389,8 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
         )
     };
 
+    let hooks_mod = if is_test { quote! { caustics::hooks } } else { quote! { crate::hooks } };
+
     let entity_prelude_uses: Vec<_> = entities
         .iter()
         .map(|(_, module_path)| {
@@ -630,6 +632,23 @@ fn generate_client_code(entities: &[(String, String)], is_test: bool) -> String 
 
             pub fn _execute_raw(&self, raw: Raw) -> TxRawExecute {
                 TxRawExecute { tx: self.tx.clone(), backend: self.database_backend, raw }
+            }
+
+            // Transaction-scoped hook installer (overrides global while running in this thread)
+            pub fn with_hook<F, Fut, T>(&self, hook: std::sync::Arc<dyn #hooks_mod::QueryHook>, f: F) -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<T, sea_orm::DbErr>> + Send + '_>>
+            where
+                F: FnOnce(Self) -> Fut + Send + 'static,
+                Fut: std::future::Future<Output = Result<T, sea_orm::DbErr>> + Send + 'static,
+                T: Send + 'static,
+            {
+                Box::pin(async move {
+                    #hooks_mod::set_thread_hook(Some(hook));
+                    let _corr = #hooks_mod::set_new_correlation_id();
+                    let res = f(TransactionCausticsClient::new(self.tx.clone(), self.database_backend)).await;
+                    #hooks_mod::set_thread_hook(None);
+                    #hooks_mod::set_thread_correlation_id(None);
+                    res
+                })
             }
         }
 

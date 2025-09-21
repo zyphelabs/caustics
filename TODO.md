@@ -88,6 +88,7 @@
 - [x] `raw!` macro with `{}` placeholders and binding
 - [x] `ident!` for safe identifier inlining
 - [x] `in_params!` for IN-lists; `.with_params(...)` to append args
+- [x] Lightweight query hooks (before/after) for logging/tracing
 
 ### 11. Enhanced Batch Operations
 - [x] createMany (multi-insert via client.user().create_many([...]).exec())
@@ -111,6 +112,7 @@
 - [ ] Enhanced type safety features
 
 ### 14. Comprehensive Error Handling
+- [x] Update returns `CausticsError::NotFoundForCondition` (entity, condition)
 - [ ] `RelationNotFetchedError` type
 - [ ] `NewClientError` type
 - [ ] Specific error types for different operations

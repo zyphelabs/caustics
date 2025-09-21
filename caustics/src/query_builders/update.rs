@@ -72,6 +72,7 @@ where
     <Entity as EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
 {
     pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
+        let cond_dbg = format!("{:?}", self.condition);
         let entity = <Entity as EntityTrait>::find()
             .filter::<sea_orm::Condition>(self.condition)
             .one(self.conn)
@@ -86,9 +87,10 @@ where
                 .await
                 .map(ModelWithRelations::from_model)
         } else {
-            Err(sea_orm::DbErr::RecordNotFound(
-                "No record found to update".to_string(),
-            ))
+            Err(crate::types::CausticsError::NotFoundForCondition {
+                entity: core::any::type_name::<Entity>().to_string(),
+                condition: cond_dbg,
+            }.into())
         }
     }
 
@@ -97,6 +99,7 @@ where
         self,
         txn: &DatabaseTransaction,
     ) -> Result<ModelWithRelations, sea_orm::DbErr> {
+        let cond_dbg = format!("{:?}", self.condition);
         let entity = <Entity as EntityTrait>::find()
             .filter::<sea_orm::Condition>(self.condition)
             .one(txn)
@@ -111,9 +114,10 @@ where
                 .await
                 .map(ModelWithRelations::from_model)
         } else {
-            Err(sea_orm::DbErr::RecordNotFound(
-                "No record found to update".to_string(),
-            ))
+            Err(crate::types::CausticsError::NotFoundForCondition {
+                entity: core::any::type_name::<Entity>().to_string(),
+                condition: cond_dbg,
+            }.into())
         }
     }
 }

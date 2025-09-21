@@ -50,6 +50,9 @@ where
             select.expr_as(expr.clone(), alias.as_str());
         }
         let stmt = select.build(self.database_backend);
+        let entity_name = core::any::type_name::<Entity>();
+        crate::hooks::emit_before(&crate::hooks::QueryEvent { builder: "SelectUniqueQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_unique", entity_name) });
+        let start = std::time::Instant::now();
         if let Some(row) = self.conn.query_one(stmt).await? {
             let field_names: Vec<&str> = self.requested_aliases.iter().map(|a| a.as_str()).collect();
             let mut s = Selected::fill_from_row(&row, &field_names);
@@ -60,8 +63,10 @@ where
             }
 
             s.clear_unselected(&field_names);
+            crate::hooks::emit_after(&crate::hooks::QueryEvent { builder: "SelectUniqueQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_unique", entity_name) }, &crate::hooks::QueryResultMeta { row_count: Some(1), error: None, elapsed_ms: Some(start.elapsed().as_millis()) });
             Ok(Some(s))
         } else {
+            crate::hooks::emit_after(&crate::hooks::QueryEvent { builder: "SelectUniqueQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_unique", entity_name) }, &crate::hooks::QueryResultMeta { row_count: Some(0), error: None, elapsed_ms: Some(start.elapsed().as_millis()) });
             Ok(None)
         }
     }

@@ -11,7 +11,10 @@ pub type CausticsResult<T> = std::result::Result<T, sea_orm::DbErr>;
 /// Typed Caustics errors that can be converted into `sea_orm::DbErr`
 #[derive(Debug, Clone)]
 pub enum CausticsError {
+    // Include/Relation errors
     RelationNotFound { relation: String },
+    InvalidIncludePath { relation: String },
+    RelationNotFetched { relation: String, reason: String },
     EntityFetcherMissing { entity: String },
     DeferredLookupFailed { target: String, detail: String },
     NotFoundForCondition { entity: String, condition: String },
@@ -23,6 +26,12 @@ impl core::fmt::Display for CausticsError {
         match self {
             CausticsError::RelationNotFound { relation } => {
                 write!(f, "CausticsError::RelationNotFound: relation='{}'", relation)
+            }
+            CausticsError::InvalidIncludePath { relation } => {
+                write!(f, "CausticsError::InvalidIncludePath: relation='{}'", relation)
+            }
+            CausticsError::RelationNotFetched { relation, reason } => {
+                write!(f, "CausticsError::RelationNotFetched: relation='{}' reason='{}'", relation, reason)
             }
             CausticsError::EntityFetcherMissing { entity } => {
                 write!(f, "CausticsError::EntityFetcherMissing: entity='{}'", entity)

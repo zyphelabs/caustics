@@ -26,6 +26,32 @@ use caustics_client::CausticsClient;
 let client = CausticsClient::new(db.clone());
 ```
 
+### Query hooks (logging/tracing)
+
+```rust
+use std::sync::{Arc, Mutex};
+
+// Implement a simple logger
+struct Logger { seen: Arc<Mutex<Vec<String>>> }
+impl caustics::hooks::QueryHook for Logger {
+    fn before(&self, e: &caustics::hooks::QueryEvent) {
+        self.seen.lock().unwrap().push(format!("before:{}:{}", e.builder, e.entity));
+    }
+    fn after(&self, e: &caustics::hooks::QueryEvent, m: &caustics::hooks::QueryResultMeta) {
+        self.seen.lock().unwrap().push(format!("after:{}:{}:{:?}", e.builder, e.entity, m.row_count));
+    }
+}
+
+let seen = Arc::new(Mutex::new(Vec::new()));
+caustics::hooks::set_query_hook(Some(Arc::new(Logger { seen: seen.clone() })));
+
+// Any query will emit before/after events
+let _ = client.user().find_many(vec![]).take(1).exec().await?;
+
+// Disable
+caustics::hooks::set_query_hook(None);
+```
+
 ### Raw SQL APIs (typed)
 
 ```rust
@@ -47,7 +73,7 @@ let res = client
     .await?;
 
 // Binding helpers
-use caustics::{ident, in_params};
+use caustics::{ident, in_params, any_params};
 
 let (ph, args) = in_params!(&[1,2,3]);
 // Injection-safe: values (strings, numbers, json, etc.) are always bound as params
@@ -68,6 +94,21 @@ let users: Vec<UserRow> = client
 struct Mixed { s: String, n: i64 }
 let rows: Vec<Mixed> = client
     ._query_raw::<Mixed>(raw!("SELECT {} as s, {} as n", "hello", 42))
+    .exec()
+    .await?;
+```
+
+Postgres ANY helper:
+```rust
+use sea_orm::ConnectionTrait;
+let backend = client.database_backend();
+let (ph, args) = any_params!(backend, &[1,2,3]);
+let rows: Vec<Row> = client
+    ._query_raw::<Row>(raw!(
+        "SELECT * FROM {} WHERE id {}",
+        ident!("users"),
+        caustics::raw::Inline(ph)
+    ).with_params(args))
     .exec()
     .await?;
 ```

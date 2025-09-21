@@ -9,6 +9,7 @@ path = "src/bin/prisma.rs"
 
 [features]
 postgresql = ["prisma-client-rust-cli/postgresql"]
+mocking = ["prisma-client-rust-cli/mocking"]
 
 [dependencies]
 prisma-client-rust-cli = { git = "https://github.com/Brendonovich/prisma-client-rust.git", default-features = false }
