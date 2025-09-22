@@ -3,6 +3,7 @@
 #![allow(unused_variables)]
 #![feature(decl_macro)]
 
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Error, File};

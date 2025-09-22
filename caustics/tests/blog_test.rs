@@ -1,4 +1,5 @@
 #![feature(decl_macro)]
+
 include!(concat!(env!("OUT_DIR"), "/caustics_client_blog_test.rs"));
 
 use caustics_macros::caustics;
@@ -3690,5 +3691,112 @@ mod query_builder_tests {
             panic!("Posts should be included");
         }
     }
+
+    #[tokio::test]
+    async fn test_relation_counts_on_has_many_include() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        let user = client
+            .user()
+            .create(
+                "count_relation@example.com".to_string(),
+                "Count Relation".to_string(),
+                now,
+                now,
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _p1 = client
+            .post()
+            .create(
+                "P1".to_string(),
+                now,
+                now,
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _p2 = client
+            .post()
+            .create(
+                "P2".to_string(),
+                now,
+                now,
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let user_with_posts = client
+            .user()
+            .find_unique(user::id::equals(user.id))
+            .with(user::posts::include(|rel| rel.count()))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(user_with_posts._count.is_some());
+        let counts = user_with_posts._count.unwrap();
+        assert_eq!(counts.posts, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_relation_counts_on_selected_has_many_include() {
+        use chrono::TimeZone;
+        let db = helpers::setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap();
+
+        let user = client
+            .user()
+            .create(
+                "sel_count@example.com".to_string(),
+                "Sel Count".to_string(),
+                now,
+                now,
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _p1 = client.post().create("P1".to_string(), now, now, user::id::equals(user.id), vec![]).exec().await.unwrap();
+        let _p2 = client.post().create("P2".to_string(), now, now, user::id::equals(user.id), vec![]).exec().await.unwrap();
+
+        let selected = client
+            .user()
+            .find_unique(user::id::equals(user.id))
+            .select(user::select!(name))
+            .with(user::posts::include(|rel| rel.count()))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(selected._count.is_some());
+        let counts = selected._count.unwrap();
+        assert_eq!(counts.posts, Some(2));
+    }
+
+    
 
 }

@@ -365,10 +365,21 @@ pub trait EntitySelection: Sized {
     fn clear_unselected(&mut self, allowed: &[&str]);
     /// Set relation field value by relation name
     fn set_relation(&mut self, relation_name: &str, value: Box<dyn Any + Send>);
-    /// Extract i32 scalar by rust field name if present
+    /// Extract i32 scalar by rust field name if present (legacy helper)
     fn get_i32(&self, field_name: &str) -> Option<i32>;
+    /// Extract field value as a database Value by rust field name, if present
+    fn get_value_as_db_value(&self, _field_name: &str) -> Option<sea_orm::Value> { None }
     /// Map an alias/rust field name to a column expression for implicit selection
     fn column_for_alias(alias: &str) -> Option<sea_query::SimpleExpr> where Self: Sized { let _ = alias; None }
+}
+
+/// Helper trait to extract primary key value generically from ModelWithRelations
+pub trait ExtractPkValue {
+    fn extract_pk_value(&self, pk_field_name: &str) -> Option<sea_orm::Value>;
+}
+// Default no-op; entity macro will implement on ModelWithRelations if needed
+impl<T> ExtractPkValue for T {
+    fn extract_pk_value(&self, _pk_field_name: &str) -> Option<sea_orm::Value> { None }
 }
 
 /// Trait implemented by per-entity Selected holder to construct from full model

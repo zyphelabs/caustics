@@ -1609,6 +1609,12 @@ pub fn generate_entity(
         })
         .collect();
 
+    // Snake_case field idents for Selected struct field access (available early)
+    let selected_field_idents_snake: Vec<syn::Ident> = fields
+        .iter()
+        .map(|field| field.ident.as_ref().unwrap().clone())
+        .collect();
+
     // Generate Counts struct fields for has_many relations
     let counts_struct_fields = relations
         .iter()
@@ -1781,33 +1787,157 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
-    // Precompute per-relation count arms used inside __caustics_apply_relation_filter
+    // Precompute per-relation count arms used inside __caustics_apply_relation_filter (ModelWithRelations)
     let relation_count_match_arms = relations
         .iter()
-        .map(|relation| {
+        .filter_map(|relation| {
             let relation_name_snake = relation.name.to_snake_case();
             let relation_name_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
             let target = &relation.target;
             match relation.kind {
-                RelationKind::HasMany => {
+                RelationKind::HasMany => Some({
                     let foreign_key_column = relation.foreign_key_column.as_ref().map_or("Id", |v| v);
                     let foreign_key_column_ident = format_ident!("{}", foreign_key_column);
                     let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
                     quote! {
                         #relation_name_lit => {
                             if let Some(fkv) = foreign_key_value {
-                                let total: i64 = #target::Entity::find()
-                                    .filter(#target::Column::#foreign_key_column_ident.eq(fkv))
-                                    .count(conn)
-                                    .await?;
+                                // Build a count query applying the same filter semantics as the fetcher (ignoring pagination)
+                                let mut query = #target::Entity::find()
+                                    .filter(#target::Column::#foreign_key_column_ident.eq(fkv));
+
+                                if !filter.filters.is_empty() {
+                                    let mut cond = Condition::all();
+                                    for f in &filter.filters {
+                                        if let Some(col) = #target::column_from_str(&f.field) {
+                                            use sea_orm::IntoSimpleExpr;
+                                            let col_expr = col.into_simple_expr();
+                                            match &f.operation {
+                                                caustics::FieldOp::Equals(v) => {
+                                                    let val = if f.field == "id" {
+                                                        if let Ok(parsed) = v.parse::<i32>() { sea_orm::Value::Int(Some(parsed)) } else { sea_orm::Value::String(Some(Box::new(v.clone()))) }
+                                                    } else { sea_orm::Value::String(Some(Box::new(v.clone()))) };
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).eq(val));
+                                                }
+                                                caustics::FieldOp::NotEquals(v) => {
+                                                    let val = if f.field == "id" {
+                                                        if let Ok(parsed) = v.parse::<i32>() { sea_orm::Value::Int(Some(parsed)) } else { sea_orm::Value::String(Some(Box::new(v.clone()))) }
+                                                    } else { sea_orm::Value::String(Some(Box::new(v.clone()))) };
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).ne(val));
+                                                }
+                                                caustics::FieldOp::Contains(s) => {
+                                                    let pat = format!("%{}%", s);
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                                                }
+                                                caustics::FieldOp::StartsWith(s) => {
+                                                    let pat = format!("{}%", s);
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                                                }
+                                                caustics::FieldOp::EndsWith(s) => {
+                                                    let pat = format!("%{}", s);
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                                                }
+                                                caustics::FieldOp::IsNull => {
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).is_null());
+                                                }
+                                                caustics::FieldOp::IsNotNull => {
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).is_not_null());
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    query = query.filter(cond);
+                                }
+
+                                if filter.distinct {
+                                    query = query.distinct();
+                                }
+
+                                let total = query.count(conn).await? as i64;
                                 let mut c = self._count.take().unwrap_or_default();
                                 c.#count_field_ident = Some(total as i32);
                                 self._count = Some(c);
                             }
                         }
                     }
-                }
-                _ => quote! {},
+                }),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Precompute per-relation count arms for Selected that use generic Value equality
+    let relation_count_match_arms_selected = relations
+        .iter()
+        .filter_map(|relation| {
+            let relation_name_snake = relation.name.to_snake_case();
+            let relation_name_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
+            let target = &relation.target;
+            match relation.kind {
+                RelationKind::HasMany => Some({
+                    let foreign_key_column = relation.foreign_key_column.as_ref().map_or("Id", |v| v);
+                    let foreign_key_column_ident = format_ident!("{}", foreign_key_column);
+                    let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
+                    quote! {
+                        #relation_name_lit => {
+                            if let Some(fkv) = foreign_key_value_any.clone() {
+                                // Build a count query applying the same filter semantics as the fetcher (ignoring pagination)
+                                let col_expr = <#target::Entity as sea_orm::EntityTrait>::Column::#foreign_key_column_ident.into_simple_expr();
+                                let mut query = #target::Entity::find()
+                                    .filter(Expr::expr(col_expr).eq(fkv));
+
+                                if !filter.filters.is_empty() {
+                                    let mut cond = Condition::all();
+                                    for f in &filter.filters {
+                                        if let Some(col) = #target::column_from_str(&f.field) {
+                                            use sea_orm::IntoSimpleExpr;
+                                            let col_expr = col.into_simple_expr();
+                                            match &f.operation {
+                                                caustics::FieldOp::Equals(v) => {
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).eq(sea_orm::Value::from(v)));
+                                                }
+                                                caustics::FieldOp::NotEquals(v) => {
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).ne(sea_orm::Value::from(v)));
+                                                }
+                                                caustics::FieldOp::Contains(s) => {
+                                                    let pat = format!("%{}%", s);
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                                                }
+                                                caustics::FieldOp::StartsWith(s) => {
+                                                    let pat = format!("{}%", s);
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                                                }
+                                                caustics::FieldOp::EndsWith(s) => {
+                                                    let pat = format!("%{}", s);
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).like(pat));
+                                                }
+                                                caustics::FieldOp::IsNull => {
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).is_null());
+                                                }
+                                                caustics::FieldOp::IsNotNull => {
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).is_not_null());
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    query = query.filter(cond);
+                                }
+
+                                if filter.distinct {
+                                    query = query.distinct();
+                                }
+
+                                let total = query.count(conn).await? as i64;
+                                let mut c = self._count.take().unwrap_or_default();
+                                c.#count_field_ident = Some(total as i32);
+                                self._count = Some(c);
+                            }
+                        }
+                    }
+                }),
+                _ => None,
             }
         })
         .collect::<Vec<_>>();
@@ -1882,7 +2012,15 @@ pub fn generate_entity(
 
                     // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
-                    // relation counts not yet implemented
+                    // Populate relation counts when requested (has_many only), independent of pagination
+                    if filter.include_count && descriptor.is_has_many {
+                        // Use the same foreign key extractor used for fetching and wrap into DB Value
+                        let foreign_key_value_any: Option<sea_orm::Value> = (descriptor.get_foreign_key)(self).map(|v| sea_orm::Value::Int(Some(v)));
+                        match filter.relation {
+                            #(#relation_count_match_arms_selected,)*
+                            _ => {}
+                        }
+                    }
 
                     // Apply nested includes recursively, if any
                     if !filter.nested_includes.is_empty() {
@@ -1932,6 +2070,7 @@ pub fn generate_entity(
         pub struct Selected {
             #(#selected_scalar_fields,)*
             #(#relation_fields,)*
+            pub _count: Option<Counts>,
         }
 
         impl Selected { fn new() -> Self { Default::default() } }
@@ -1970,6 +2109,20 @@ pub fn generate_entity(
                     _ => None,
                 }
             }
+            fn get_value_as_db_value(&self, field_name: &str) -> Option<sea_orm::Value> {
+                match field_name {
+                    #(
+                        stringify!(#selected_field_idents_snake) => {
+                            let v = self.#selected_field_idents_snake.clone();
+                            match v {
+                                Some(val) => Some(sea_orm::Value::from(val)),
+                                None => None,
+                            }
+                        }
+                    ),*
+                    _ => None,
+                }
+            }
         }
 
         impl Selected {
@@ -2002,7 +2155,13 @@ pub fn generate_entity(
 
                     // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
-                    // relation counts not yet implemented
+                    // Populate relation counts when requested (has_many only), independent of pagination
+                    if filter.include_count && descriptor.is_has_many {
+                        match filter.relation {
+                            #(#relation_count_match_arms,)*
+                            _ => {}
+                        }
+                    }
 
                     if !filter.nested_includes.is_empty() {
                         match filter.relation {
@@ -2841,16 +3000,7 @@ pub fn generate_entity(
 
         // Intentionally no per-entity Select! macro; use global caustics::Select!(entity, { .. })
 
-        // Map typed ScalarField to column alias strings (snake_case)
-        pub fn scalar_fields_to_aliases(params: Vec<ScalarField>) -> Vec<String> {
-            let mut out: Vec<String> = Vec::with_capacity(params.len());
-            for p in params {
-                match p {
-                    #( ScalarField::#group_by_field_variants => out.push(#all_field_names.to_string()), )*
-                }
-            }
-            out
-        }
+        // Legacy helper removed: scalar_fields_to_aliases
 
         // Extension traits to apply select on query builders returning Selected builders
         pub trait ManySelectExt<'a, C: sea_orm::ConnectionTrait> {

@@ -1067,3 +1067,41 @@ This project is inspired by the excellent work done on [Prisma Client Rust](http
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details. 
 
+### Relation counts in includes (_count)
+
+```rust
+// Count child relations while including them (has_many)
+let user = client
+  .user()
+  .find_unique(user::id::equals(1))
+  .with(user::posts::include(|rel| rel.count()))
+  .exec()
+  .await?;
+
+if let Some(c) = user._count {
+  // Access per-relation counts by field name
+  assert_eq!(c.posts, Some(42));
+}
+
+// Counts respect filters in the include
+let user = client
+  .user()
+  .find_unique(user::id::equals(1))
+  .with(user::posts::include(|rel| rel
+    .filter(vec![post::title::contains("rust".to_string())])
+    .count()
+  ))
+  .exec()
+  .await?;
+
+if let Some(c) = user._count {
+  // Number of posts for this user whose title matches filter
+  let filtered = c.posts;
+}
+```
+
+Notes:
+- `_count` is emitted when `.count()` is requested on a has_many include.
+- The count query applies the same filters passed to the include but ignores pagination (take/skip/cursor).
+- For selected outputs, `_count` is also populated for has_many includes (shape parity with full models).
+

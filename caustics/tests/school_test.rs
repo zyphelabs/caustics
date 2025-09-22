@@ -1,4 +1,5 @@
 #![feature(decl_macro)]
+
 include!(concat!(env!("OUT_DIR"), "/caustics_client_school_test.rs"));
 
 use caustics_macros::caustics;
