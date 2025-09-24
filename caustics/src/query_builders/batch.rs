@@ -1,7 +1,10 @@
-use crate::{MergeInto};
+use crate::MergeInto;
 use sea_orm::{ConnectionTrait, EntityTrait};
 
-use super::{create::CreateQueryBuilder, delete::DeleteQueryBuilder, update::UpdateQueryBuilder, upsert::UpsertQueryBuilder};
+use super::{
+    create::CreateQueryBuilder, delete::DeleteQueryBuilder, update::UpdateQueryBuilder,
+    upsert::UpsertQueryBuilder,
+};
 
 /// Batch query types that can be executed in a transaction
 pub enum BatchQuery<
@@ -25,4 +28,3 @@ pub enum BatchResult<ModelWithRelations> {
     Delete(ModelWithRelations),
     Upsert(ModelWithRelations),
 }
-

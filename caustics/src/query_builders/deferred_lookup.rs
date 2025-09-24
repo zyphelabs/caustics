@@ -62,7 +62,8 @@ impl DeferredResolveFor<DatabaseConnection> for DeferredLookup {
     fn resolve_for<'a>(
         &'a self,
         conn: &'a DatabaseConnection,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<i32, sea_orm::DbErr>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<i32, sea_orm::DbErr>> + Send + 'a>>
+    {
         (self.resolve_on_conn)(conn, &*self.unique_param)
     }
 }
@@ -71,8 +72,8 @@ impl DeferredResolveFor<DatabaseTransaction> for DeferredLookup {
     fn resolve_for<'a>(
         &'a self,
         conn: &'a DatabaseTransaction,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<i32, sea_orm::DbErr>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<i32, sea_orm::DbErr>> + Send + 'a>>
+    {
         (self.resolve_on_txn)(conn, &*self.unique_param)
     }
 }
-

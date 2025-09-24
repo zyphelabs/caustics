@@ -30,5 +30,3 @@ where
         Ok(res.rows_affected as i64)
     }
 }
-
-

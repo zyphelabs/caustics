@@ -4,4 +4,3 @@ use sea_orm::ConnectionTrait;
 pub trait ConnectionLike: ConnectionTrait {}
 
 impl<T: ConnectionTrait> ConnectionLike for T {}
-

@@ -1,5 +1,5 @@
-use sea_orm::{ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, QueryTrait};
 use sea_orm::sea_query::{Expr, Func, SimpleExpr};
+use sea_orm::{ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, QueryTrait};
 
 pub struct GroupByQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait> {
     pub condition: sea_orm::sea_query::Condition,
@@ -50,7 +50,11 @@ where
         self
     }
 
-    pub fn order_by<Col: sea_orm::IntoSimpleExpr>(mut self, col: Col, order: sea_orm::Order) -> Self {
+    pub fn order_by<Col: sea_orm::IntoSimpleExpr>(
+        mut self,
+        col: Col,
+        order: sea_orm::Order,
+    ) -> Self {
         self.order_by.push((col.into_simple_expr(), order));
         self
     }
@@ -63,15 +67,18 @@ where
 
     // Minimal typed helpers for having on count
     pub fn having_count_gt(mut self, v: i64) -> Self {
-        self.having.push(Expr::cust_with_values("COUNT(*) > ?", [v]));
+        self.having
+            .push(Expr::cust_with_values("COUNT(*) > ?", [v]));
         self
     }
     pub fn having_count_lt(mut self, v: i64) -> Self {
-        self.having.push(Expr::cust_with_values("COUNT(*) < ?", [v]));
+        self.having
+            .push(Expr::cust_with_values("COUNT(*) < ?", [v]));
         self
     }
     pub fn having_count_eq(mut self, v: i64) -> Self {
-        self.having.push(Expr::cust_with_values("COUNT(*) = ?", [v]));
+        self.having
+            .push(Expr::cust_with_values("COUNT(*) = ?", [v]));
         self
     }
 
@@ -91,23 +98,51 @@ where
         self
     }
 
-    pub fn select_min<Col: sea_orm::IntoSimpleExpr>(mut self, col: Col, alias: &'static str) -> Self {
-        self.aggregates.push((SimpleExpr::FunctionCall(Func::min(col.into_simple_expr())), alias));
+    pub fn select_min<Col: sea_orm::IntoSimpleExpr>(
+        mut self,
+        col: Col,
+        alias: &'static str,
+    ) -> Self {
+        self.aggregates.push((
+            SimpleExpr::FunctionCall(Func::min(col.into_simple_expr())),
+            alias,
+        ));
         self
     }
 
-    pub fn select_max<Col: sea_orm::IntoSimpleExpr>(mut self, col: Col, alias: &'static str) -> Self {
-        self.aggregates.push((SimpleExpr::FunctionCall(Func::max(col.into_simple_expr())), alias));
+    pub fn select_max<Col: sea_orm::IntoSimpleExpr>(
+        mut self,
+        col: Col,
+        alias: &'static str,
+    ) -> Self {
+        self.aggregates.push((
+            SimpleExpr::FunctionCall(Func::max(col.into_simple_expr())),
+            alias,
+        ));
         self
     }
 
-    pub fn select_sum<Col: sea_orm::IntoSimpleExpr>(mut self, col: Col, alias: &'static str) -> Self {
-        self.aggregates.push((SimpleExpr::FunctionCall(Func::sum(col.into_simple_expr())), alias));
+    pub fn select_sum<Col: sea_orm::IntoSimpleExpr>(
+        mut self,
+        col: Col,
+        alias: &'static str,
+    ) -> Self {
+        self.aggregates.push((
+            SimpleExpr::FunctionCall(Func::sum(col.into_simple_expr())),
+            alias,
+        ));
         self
     }
 
-    pub fn select_avg<Col: sea_orm::IntoSimpleExpr>(mut self, col: Col, alias: &'static str) -> Self {
-        self.aggregates.push((SimpleExpr::FunctionCall(Func::avg(col.into_simple_expr())), alias));
+    pub fn select_avg<Col: sea_orm::IntoSimpleExpr>(
+        mut self,
+        col: Col,
+        alias: &'static str,
+    ) -> Self {
+        self.aggregates.push((
+            SimpleExpr::FunctionCall(Func::avg(col.into_simple_expr())),
+            alias,
+        ));
         self
     }
 
@@ -124,15 +159,27 @@ where
             }
         }
 
-        for (expr, alias) in &self.aggregates { select.expr_as(expr.clone(), *alias); }
+        for (expr, alias) in &self.aggregates {
+            select.expr_as(expr.clone(), *alias);
+        }
 
-        for having in &self.having { sea_orm::QueryTrait::query(&mut select).and_having(having.clone()); }
-        if let Some(cond) = &self.having_condition { sea_orm::QueryTrait::query(&mut select).cond_having(cond.clone()); }
+        for having in &self.having {
+            sea_orm::QueryTrait::query(&mut select).and_having(having.clone());
+        }
+        if let Some(cond) = &self.having_condition {
+            sea_orm::QueryTrait::query(&mut select).cond_having(cond.clone());
+        }
 
-        for (expr, ord) in &self.order_by { sea_orm::QueryTrait::query(&mut select).order_by_expr(expr.clone(), ord.clone()); }
+        for (expr, ord) in &self.order_by {
+            sea_orm::QueryTrait::query(&mut select).order_by_expr(expr.clone(), ord.clone());
+        }
 
-        if let Some(n) = self.take { sea_orm::QueryTrait::query(&mut select).limit(n); }
-        if let Some(n) = self.skip { sea_orm::QueryTrait::query(&mut select).offset(n); }
+        if let Some(n) = self.take {
+            sea_orm::QueryTrait::query(&mut select).limit(n);
+        }
+        if let Some(n) = self.skip {
+            sea_orm::QueryTrait::query(&mut select).offset(n);
+        }
 
         let stmt = select.build(db_backend);
         let rows = self.conn.query_all(stmt).await?;
@@ -141,22 +188,47 @@ where
         for r in rows {
             let mut keys = std::collections::HashMap::new();
             for k in &self.group_by_columns {
-                if let Ok(v) = r.try_get::<i64>("", k) { keys.insert(k.clone(), v.to_string()); continue; }
-                if let Ok(v) = r.try_get::<i32>("", k) { keys.insert(k.clone(), v.to_string()); continue; }
-                if let Ok(v) = r.try_get::<f64>("", k) { keys.insert(k.clone(), v.to_string()); continue; }
-                if let Ok(v) = r.try_get::<String>("", k) { keys.insert(k.clone(), v); continue; }
+                if let Ok(v) = r.try_get::<i64>("", k) {
+                    keys.insert(k.clone(), v.to_string());
+                    continue;
+                }
+                if let Ok(v) = r.try_get::<i32>("", k) {
+                    keys.insert(k.clone(), v.to_string());
+                    continue;
+                }
+                if let Ok(v) = r.try_get::<f64>("", k) {
+                    keys.insert(k.clone(), v.to_string());
+                    continue;
+                }
+                if let Ok(v) = r.try_get::<String>("", k) {
+                    keys.insert(k.clone(), v);
+                    continue;
+                }
             }
             let mut aggs = std::collections::HashMap::new();
             for (_, alias) in &self.aggregates {
-                if let Ok(v) = r.try_get::<i64>("", alias) { aggs.insert((*alias).to_string(), v.to_string()); continue; }
-                if let Ok(v) = r.try_get::<i32>("", alias) { aggs.insert((*alias).to_string(), v.to_string()); continue; }
-                if let Ok(v) = r.try_get::<f64>("", alias) { aggs.insert((*alias).to_string(), v.to_string()); continue; }
-                if let Ok(v) = r.try_get::<String>("", alias) { aggs.insert((*alias).to_string(), v); continue; }
+                if let Ok(v) = r.try_get::<i64>("", alias) {
+                    aggs.insert((*alias).to_string(), v.to_string());
+                    continue;
+                }
+                if let Ok(v) = r.try_get::<i32>("", alias) {
+                    aggs.insert((*alias).to_string(), v.to_string());
+                    continue;
+                }
+                if let Ok(v) = r.try_get::<f64>("", alias) {
+                    aggs.insert((*alias).to_string(), v.to_string());
+                    continue;
+                }
+                if let Ok(v) = r.try_get::<String>("", alias) {
+                    aggs.insert((*alias).to_string(), v);
+                    continue;
+                }
             }
-            out.push(GroupByTypedRow { keys, aggregates: aggs });
+            out.push(GroupByTypedRow {
+                keys,
+                aggregates: aggs,
+            });
         }
         Ok(out)
     }
 }
-
-

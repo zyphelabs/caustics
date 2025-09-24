@@ -1,11 +1,13 @@
-use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use crate::types::ApplyNestedIncludes;
-use crate::types::{NullsOrder, IntoOrderSpec};
-use crate::EntitySelection;
-use crate::types::SelectionSpec;
 use crate::types::EntityRegistry;
-use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select};
+use crate::types::SelectionSpec;
+use crate::types::{IntoOrderSpec, NullsOrder};
+use crate::EntitySelection;
+use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
+use sea_orm::{
+    ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+};
 
 /// Query builder for finding multiple entity records matching conditions
 pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations> {
@@ -28,17 +30,23 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
 impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations>
     ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
 where
-    ModelWithRelations:
-        FromModel<Entity::Model>
+    ModelWithRelations: FromModel<Entity::Model>
         + HasRelationMetadata<ModelWithRelations>
         + crate::types::ApplyNestedIncludes<C>
         + Send
         + 'static,
 {
-    pub fn select<S>(self, spec: S) -> crate::query_builders::select_many::SelectManyQueryBuilder<'a, C, Entity, S::Data>
+    pub fn select<S>(
+        self,
+        spec: S,
+    ) -> crate::query_builders::select_many::SelectManyQueryBuilder<'a, C, Entity, S::Data>
     where
         S: SelectionSpec<Entity = Entity>,
-        S::Data: EntitySelection + HasRelationMetadata<S::Data> + crate::types::ApplyNestedIncludes<C> + Send + 'static,
+        S::Data: EntitySelection
+            + HasRelationMetadata<S::Data>
+            + crate::types::ApplyNestedIncludes<C>
+            + Send
+            + 'static,
     {
         let mut builder = crate::query_builders::select_many::SelectManyQueryBuilder {
             query: self.query,
@@ -97,7 +105,9 @@ where
     {
         let (expr, order, nulls) = order_spec.into_order_spec();
         self.pending_order_bys.push((expr, order));
-        if nulls.is_some() { self.pending_nulls = nulls; }
+        if nulls.is_some() {
+            self.pending_nulls = nulls;
+        }
         self
     }
 
@@ -133,14 +143,16 @@ where
         self
     }
 
-
     /// Execute the query and return multiple results
     pub async fn exec(self) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
         if self.skip_is_negative {
-            return Err(crate::types::CausticsError::QueryValidation { message: "skip must be >= 0".to_string() }.into());
+            return Err(crate::types::CausticsError::QueryValidation {
+                message: "skip must be >= 0".to_string(),
+            }
+            .into());
         }
         let mut query = self.query.clone();
         // Apply cursor filtering if provided
@@ -172,7 +184,11 @@ where
 
             // If no explicit order_by was provided, order by the cursor column for stability
             if self.pending_order_bys.is_empty() {
-                let ord = if self.reverse_order { sea_orm::Order::Desc } else { sea_orm::Order::Asc };
+                let ord = if self.reverse_order {
+                    sea_orm::Order::Desc
+                } else {
+                    sea_orm::Order::Asc
+                };
                 query = query.order_by(cursor_expr.clone(), ord);
             }
         }
@@ -218,13 +234,15 @@ where
                             sea_orm::QueryTrait::query(&mut query).distinct_on(cols.clone());
                         } else {
                             for f in fields {
-                                sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                                sea_orm::QueryTrait::query(&mut query)
+                                    .add_group_by(std::iter::once(f.clone()));
                             }
                         }
                     }
                     _ => {
                         for f in fields {
-                            sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                            sea_orm::QueryTrait::query(&mut query)
+                                .add_group_by(std::iter::once(f.clone()));
                         }
                     }
                 }
@@ -252,12 +270,28 @@ where
         // Emit after hook
         match &res {
             Ok(rows) => crate::hooks::emit_after(
-                &crate::hooks::QueryEvent { builder: "ManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
-                &crate::hooks::QueryResultMeta { row_count: Some(rows.len()), error: None, elapsed_ms: Some(start.elapsed().as_millis()) }
+                &crate::hooks::QueryEvent {
+                    builder: "ManyQueryBuilder",
+                    entity: entity_name,
+                    details: crate::hooks::compose_details("select_many", entity_name),
+                },
+                &crate::hooks::QueryResultMeta {
+                    row_count: Some(rows.len()),
+                    error: None,
+                    elapsed_ms: Some(start.elapsed().as_millis()),
+                },
             ),
             Err(e) => crate::hooks::emit_after(
-                &crate::hooks::QueryEvent { builder: "ManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
-                &crate::hooks::QueryResultMeta { row_count: None, error: Some(e.to_string()), elapsed_ms: Some(start.elapsed().as_millis()) }
+                &crate::hooks::QueryEvent {
+                    builder: "ManyQueryBuilder",
+                    entity: entity_name,
+                    details: crate::hooks::compose_details("select_many", entity_name),
+                },
+                &crate::hooks::QueryResultMeta {
+                    row_count: None,
+                    error: Some(e.to_string()),
+                    elapsed_ms: Some(start.elapsed().as_millis()),
+                },
             ),
         }
         res
@@ -270,12 +304,14 @@ where
     }
 
     /// Execute query with relations
-    async fn exec_with_relations_with_query(self, query: Select<Entity>) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
+    async fn exec_with_relations_with_query(
+        self,
+        query: Select<Entity>,
+    ) -> Result<Vec<ModelWithRelations>, sea_orm::DbErr>
     where
         ModelWithRelations: FromModel<Entity::Model>,
     {
         let Self {
-            
             conn,
             relations_to_fetch,
             registry,
@@ -288,14 +324,17 @@ where
         for main_model in main_results {
             let mut model_with_relations = ModelWithRelations::from_model(main_model);
             for relation_filter in &relations_to_fetch {
-                ApplyNestedIncludes::apply_relation_filter(&mut model_with_relations, conn, relation_filter, registry).await?;
+                ApplyNestedIncludes::apply_relation_filter(
+                    &mut model_with_relations,
+                    conn,
+                    relation_filter,
+                    registry,
+                )
+                .await?;
             }
             models_with_relations.push(model_with_relations);
         }
 
         Ok(models_with_relations)
     }
-
-    
 }
-

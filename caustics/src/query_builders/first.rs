@@ -1,8 +1,8 @@
-use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use crate::types::ApplyNestedIncludes;
 use crate::types::EntityRegistry;
-use crate::EntitySelection;
 use crate::types::SelectionSpec;
+use crate::EntitySelection;
+use crate::{FromModel, HasRelationMetadata, RelationFilter};
 use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, Select};
 
 /// Query builder for finding the first entity record matching conditions
@@ -18,14 +18,16 @@ pub struct FirstQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelW
 impl<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWithRelations>
     FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
 where
-    ModelWithRelations:
-        FromModel<Entity::Model>
+    ModelWithRelations: FromModel<Entity::Model>
         + HasRelationMetadata<ModelWithRelations>
         + crate::types::ApplyNestedIncludes<C>
         + Send
         + 'static,
 {
-    pub fn select<S>(self, spec: S) -> crate::query_builders::select_first::SelectFirstQueryBuilder<'a, C, Entity, S::Data>
+    pub fn select<S>(
+        self,
+        spec: S,
+    ) -> crate::query_builders::select_first::SelectFirstQueryBuilder<'a, C, Entity, S::Data>
     where
         S: SelectionSpec<Entity = Entity>,
         S::Data: EntitySelection + HasRelationMetadata<S::Data> + Send + 'static,
@@ -82,11 +84,18 @@ where
         let main_result = query.one(conn).await?;
 
         if let Some(main_model) = main_result {
+            // For now, use the old approach until we can properly access the Selected type
             let mut model_with_relations = ModelWithRelations::from_model(main_model);
 
             // Fetch relations for the main model (nested-aware)
             for relation_filter in relations_to_fetch {
-                ApplyNestedIncludes::apply_relation_filter(&mut model_with_relations, conn, &relation_filter, registry).await?;
+                ApplyNestedIncludes::apply_relation_filter(
+                    &mut model_with_relations,
+                    conn,
+                    &relation_filter,
+                    registry,
+                )
+                .await?;
             }
 
             Ok(Some(model_with_relations))
@@ -94,6 +103,4 @@ where
             Ok(None)
         }
     }
-
 }
-

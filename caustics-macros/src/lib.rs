@@ -3,13 +3,13 @@
 #![allow(unused_variables)]
 #![feature(decl_macro)]
 
-
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Error, File};
 
 mod common;
 mod entity;
+mod primary_key;
 mod where_param;
 
 #[proc_macro_attribute]
@@ -26,7 +26,8 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                 if let Some(eq) = args_str[pos..].find('=') {
                     let after = &args_str[pos + eq + 1..];
                     let first_quote = after.find('"');
-                    let second_quote = first_quote.and_then(|i| after[i + 1..].find('"').map(|j| i + 1 + j));
+                    let second_quote =
+                        first_quote.and_then(|i| after[i + 1..].find('"').map(|j| i + 1 + j));
                     if let (Some(i), Some(j)) = (first_quote, second_quote) {
                         after[i + 1..j].to_string()
                     } else {

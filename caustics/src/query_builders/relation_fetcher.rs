@@ -8,31 +8,35 @@ pub struct SeaOrmRelationFetcher<R: EntityRegistry<C>, C: ConnectionTrait> {
     pub _phantom: std::marker::PhantomData<C>,
 }
 
-impl<C: ConnectionTrait, ModelWithRelations, R: EntityRegistry<C>>
-    RelationFetcher<C, ModelWithRelations> for SeaOrmRelationFetcher<R, C>
+impl<C: ConnectionTrait, Selected, R: EntityRegistry<C>> RelationFetcher<C, Selected>
+    for SeaOrmRelationFetcher<R, C>
 where
-    ModelWithRelations: HasRelationMetadata<ModelWithRelations> + Send + 'static,
+    Selected: HasRelationMetadata<Selected> + Send + 'static,
     R: Send + Sync,
     C: Send + Sync,
 {
     fn fetch_relation_for_model<'a>(
         &'a self,
         conn: &'a C,
-        model_with_relations: &'a mut ModelWithRelations,
+        selected: &'a mut Selected,
         relation_name: &'a str,
         _filters: &'a [crate::types::Filter],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
-        let descriptor = match ModelWithRelations::get_relation_descriptor(relation_name) {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>
+    {
+        let descriptor = match Selected::get_relation_descriptor(relation_name) {
             Some(d) => d,
             None => {
                 let fut = async move {
-                    Err(crate::types::CausticsError::RelationNotFound { relation: relation_name.to_string() }.into())
+                    Err(crate::types::CausticsError::RelationNotFound {
+                        relation: relation_name.to_string(),
+                    }
+                    .into())
                 };
                 return Box::pin(fut);
             }
         };
 
-        let type_name = std::any::type_name::<ModelWithRelations>();
+        let type_name = std::any::type_name::<Selected>();
         let fetcher_entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
 
         let fut = async move {
@@ -40,7 +44,7 @@ where
                 let result = fetcher
                     .fetch_by_foreign_key(
                         conn,
-                        (descriptor.get_foreign_key)(model_with_relations),
+                        (descriptor.get_foreign_key)(selected),
                         descriptor.foreign_key_column,
                         &fetcher_entity_name,
                         relation_name,
@@ -58,13 +62,15 @@ where
                         },
                     )
                     .await?;
-                (descriptor.set_field)(model_with_relations, result);
+                (descriptor.set_field)(selected, result);
                 Ok(())
             } else {
-                Err(crate::types::CausticsError::EntityFetcherMissing { entity: fetcher_entity_name }.into())
+                Err(crate::types::CausticsError::EntityFetcherMissing {
+                    entity: fetcher_entity_name,
+                }
+                .into())
             }
         };
         Box::pin(fut)
     }
 }
-

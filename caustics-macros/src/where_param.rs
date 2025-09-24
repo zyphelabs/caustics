@@ -428,7 +428,7 @@ fn generate_where_params_to_condition_function(
 
         // Get the foreign key column identifier
         let foreign_key_column_ident = if let Some(fk_col) = &relation.foreign_key_column {
-            format_ident!("{}", fk_col)
+            format_ident!("{}", fk_col.to_pascal_case())
         } else {
             format_ident!("Id") // fallback
         };
@@ -437,8 +437,12 @@ fn generate_where_params_to_condition_function(
         let foreign_key_column_str = if let Some(fk_col) = &relation.foreign_key_column {
             // Convert PascalCase to snake_case for database column name
             fk_col.to_string().to_snake_case()
+        } else if let Some(pk_field) = &relation.primary_key_field {
+            // Use the relation's primary key field if available
+            pk_field.to_string()
         } else {
-            "id".to_string() // fallback
+            // No fallback - this should be configured in the relation definition
+            panic!("No foreign key column or primary key field specified for relation '{}'. Please specify either foreign_key_column or primary_key_field in the relation definition.", relation.name)
         };
 
         // Get table names from relation metadata

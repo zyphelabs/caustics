@@ -1,5 +1,5 @@
 use crate::MergeInto;
-use sea_orm::{ConnectionTrait, EntityTrait, QueryFilter, IntoActiveModel};
+use sea_orm::{ConnectionTrait, EntityTrait, IntoActiveModel, QueryFilter};
 
 /// Query builder for updating many records; returns affected row count
 pub struct UpdateManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ActiveModel, T>
@@ -42,4 +42,3 @@ where
         Ok(affected)
     }
 }
-

@@ -145,13 +145,15 @@ mod client_tests {
 mod query_builder_tests {
     use std::str::FromStr;
 
+    use super::user::DistinctFieldsExt;
+    use super::user::ManyCursorExt;
     use caustics::{QueryError, SortOrder};
     use chrono::{DateTime, FixedOffset, TimeZone};
     use serde_json;
-    use super::user::ManyCursorExt;
-    use super::user::DistinctFieldsExt;
     // Bring typed aggregate extension traits into scope
-    use super::user::{AggregateAggExt as UserAggregateAggExt, GroupByHavingAggExt as UserGroupByHavingAggExt};
+    use super::user::{
+        AggregateAggExt as UserAggregateAggExt, GroupByHavingAggExt as UserGroupByHavingAggExt,
+    };
 
     use super::helpers::setup_test_db;
 
@@ -388,7 +390,10 @@ mod query_builder_tests {
         let users_nulls_first = client
             .user()
             .find_many(vec![])
-            .order_by((user::age::order(SortOrder::Asc), caustics::NullsOrder::First))
+            .order_by((
+                user::age::order(SortOrder::Asc),
+                caustics::NullsOrder::First,
+            ))
             .exec()
             .await
             .unwrap();
@@ -415,8 +420,6 @@ mod query_builder_tests {
         assert_eq!(ages_last[ages_last.len() - 2], None);
         assert_eq!(ages_last[ages_last.len() - 1], None);
     }
-
-    
 
     #[tokio::test]
     async fn test_cursor_pagination_basic() {
@@ -519,8 +522,8 @@ mod query_builder_tests {
 
     #[tokio::test]
     async fn test_count_server_side() {
-        use std::str::FromStr;
         use chrono::{DateTime, FixedOffset};
+        use std::str::FromStr;
 
         let db = helpers::setup_test_db().await;
         let client = CausticsClient::new(db.clone());
@@ -1002,7 +1005,10 @@ mod query_builder_tests {
             .unwrap();
         let _u2_after = client
             .user()
-            .update(user::id::equals(u2.id), vec![user::name::set("U2-upd"), user::age::decrement(10)])
+            .update(
+                user::id::equals(u2.id),
+                vec![user::name::set("U2-upd"), user::age::decrement(10)],
+            )
             .exec()
             .await
             .unwrap();
@@ -1065,16 +1071,20 @@ mod query_builder_tests {
 
         // Batch delete both (tuple style, fluent; no local query var)
         let (_d1, _d2) = client
-            ._batch::<
-                user::Entity,
-                user::ActiveModel,
-                user::ModelWithRelations,
-                (),
-                (
-                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity, user::ModelWithRelations>,
-                    caustics::query_builders::DeleteQueryBuilder<'_, sea_orm::DatabaseConnection, user::Entity, user::ModelWithRelations>,
-                ),
-            >((
+            ._batch::<user::Entity, user::ActiveModel, user::ModelWithRelations, (), (
+                caustics::query_builders::DeleteQueryBuilder<
+                    '_,
+                    sea_orm::DatabaseConnection,
+                    user::Entity,
+                    user::ModelWithRelations,
+                >,
+                caustics::query_builders::DeleteQueryBuilder<
+                    '_,
+                    sea_orm::DatabaseConnection,
+                    user::Entity,
+                    user::ModelWithRelations,
+                >,
+            )>((
                 client.user().delete(user::id::equals(u1.id)),
                 client.user().delete(user::id::equals(u2.id)),
             ))
@@ -1082,12 +1092,7 @@ mod query_builder_tests {
             .unwrap();
 
         // Verify deletion
-        let left = client
-            .user()
-            .find_many(vec![])
-            .exec()
-            .await
-            .unwrap();
+        let left = client.user().find_many(vec![]).exec().await.unwrap();
         assert!(left.is_empty());
     }
 
@@ -1108,8 +1113,10 @@ mod query_builder_tests {
                     user::Create {
                         name: "Bus1".to_string(),
                         email: "bus1@example.com".to_string(),
-                        created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z")
+                            .unwrap(),
+                        updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z")
+                            .unwrap(),
                         _params: vec![],
                     },
                     vec![user::age::set(10)],
@@ -1119,8 +1126,10 @@ mod query_builder_tests {
                     user::Create {
                         name: "Bus2".to_string(),
                         email: "bus2@example.com".to_string(),
-                        created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
-                        updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                        created_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z")
+                            .unwrap(),
+                        updated_at: DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z")
+                            .unwrap(),
                         _params: vec![],
                     },
                     vec![user::age::set(20)],
@@ -2220,7 +2229,7 @@ mod query_builder_tests {
         assert_eq!(user.age, Some(25));
 
         // Test increment operation
-   
+
         let updated_user = client
             .user()
             .update(user::id::equals(user.id), vec![user::age::increment(5)])
@@ -2770,19 +2779,31 @@ mod query_builder_tests {
 
     #[tokio::test]
     async fn test_raw_sql_query_and_execute() {
-        use std::sync::{Arc, Mutex};
         use sea_orm::FromQueryResult;
+        use std::sync::{Arc, Mutex};
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
         #[derive(Debug, FromQueryResult)]
-        struct OneRow { value: i32 }
+        struct OneRow {
+            value: i32,
+        }
 
         // Install a temporary hook to assert emissions
-        struct TestHook { hits: Arc<Mutex<usize>> }
+        struct TestHook {
+            hits: Arc<Mutex<usize>>,
+        }
         impl caustics::hooks::QueryHook for TestHook {
-            fn before(&self, _e: &caustics::hooks::QueryEvent) { *self.hits.lock().unwrap() += 1; }
-            fn after(&self, _e: &caustics::hooks::QueryEvent, _m: &caustics::hooks::QueryResultMeta) { *self.hits.lock().unwrap() += 1; }
+            fn before(&self, _e: &caustics::hooks::QueryEvent) {
+                *self.hits.lock().unwrap() += 1;
+            }
+            fn after(
+                &self,
+                _e: &caustics::hooks::QueryEvent,
+                _m: &caustics::hooks::QueryResultMeta,
+            ) {
+                *self.hits.lock().unwrap() += 1;
+            }
         }
         let hits = Arc::new(Mutex::new(0usize));
         caustics::hooks::set_query_hook(Some(Arc::new(TestHook { hits: hits.clone() })));
@@ -2812,7 +2833,9 @@ mod query_builder_tests {
 
         // Another typed query
         #[derive(Debug, FromQueryResult)]
-        struct Cnt { c: i64 }
+        struct Cnt {
+            c: i64,
+        }
         let rows: Vec<Cnt> = client
             ._query_raw::<Cnt>(caustics::raw!("SELECT {} as c", 42))
             .exec()
@@ -2824,19 +2847,28 @@ mod query_builder_tests {
         // Execute raw (no result set)
         // Execute DDL via raw
         let _res = client
-            ._execute_raw(caustics::raw!("CREATE TEMP TABLE {} (id int)", caustics::ident!("__raw_tmp")))
+            ._execute_raw(caustics::raw!(
+                "CREATE TEMP TABLE {} (id int)",
+                caustics::ident!("__raw_tmp")
+            ))
             .exec()
             .await
             .unwrap();
         let _res = client
-            ._execute_raw(caustics::raw!("DROP TABLE {}", caustics::ident!("__raw_tmp")))
+            ._execute_raw(caustics::raw!(
+                "DROP TABLE {}",
+                caustics::ident!("__raw_tmp")
+            ))
             .exec()
             .await
             .unwrap();
 
         // Advanced: IN list and JSON binding
         #[derive(Debug, FromQueryResult)]
-        struct U { id: i32, name: String }
+        struct U {
+            id: i32,
+            name: String,
+        }
         let (ph, params) = caustics::in_params!(&[1, 2, 3]);
         let users: Vec<U> = client
             ._query_raw::<U>(
@@ -2844,7 +2876,8 @@ mod query_builder_tests {
                     "SELECT id, name FROM {} WHERE id IN ({}) ORDER BY id",
                     caustics::ident!("users"),
                     caustics::raw::Inline(ph)
-                ).with_params(params)
+                )
+                .with_params(params),
             )
             .exec()
             .await
@@ -2856,7 +2889,11 @@ mod query_builder_tests {
         // Injection protection: user-provided string is bound, not inlined
         let evil = "1); DROP TABLE User; --".to_string();
         let rows: Vec<Cnt> = client
-            ._query_raw::<Cnt>(caustics::raw!("SELECT COUNT(*) as c FROM {} WHERE name = {}", caustics::ident!("users"), evil))
+            ._query_raw::<Cnt>(caustics::raw!(
+                "SELECT COUNT(*) as c FROM {} WHERE name = {}",
+                caustics::ident!("users"),
+                evil
+            ))
             .exec()
             .await
             .unwrap();
@@ -2864,7 +2901,10 @@ mod query_builder_tests {
 
         // Multiple bound params of different types
         #[derive(Debug, FromQueryResult)]
-        struct Multi { s: String, n: i32 }
+        struct Multi {
+            s: String,
+            n: i32,
+        }
         let rows: Vec<Multi> = client
             ._query_raw::<Multi>(caustics::raw!("SELECT {} as s, {} as n", "hello", 7))
             .exec()
@@ -2944,6 +2984,8 @@ mod query_builder_tests {
 
         // Test that the has_many set operation structure compiles and runs
         // This should work even though the actual set operation is not implemented yet
+        
+        
         let updated_user = client
             .user()
             .update(
@@ -3081,13 +3123,11 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        
 
-        
         // Now we expect exactly 2 posts since the set operation should replace all associations
         // The set operation should have removed post3 and kept only post1 and post2
         assert_eq!(final_posts.len(), 2);
-        
+
         // Verify that only post1 and post2 are associated with the user
         let final_post_ids: Vec<i32> = final_posts.iter().map(|p| p.id).collect();
         assert!(final_post_ids.contains(&post1.id));
@@ -3146,15 +3186,17 @@ mod query_builder_tests {
             .user()
             .update(
                 user::id::equals(user.id),
-                vec![user::posts::set(vec![
-                    post::id::equals(post.id),
-                ])],
+                vec![user::posts::set(vec![post::id::equals(post.id)])],
             )
             .exec()
             .await;
 
         // Verify the update succeeded and the record matches
-        assert!(result.is_ok(), "agnostic has_many set update failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "agnostic has_many set update failed: {:?}",
+            result
+        );
         let updated = result.unwrap();
         assert_eq!(updated.id, user.id);
 
@@ -3463,7 +3505,7 @@ mod query_builder_tests {
 
         let final_posts = final_user.posts.unwrap();
         assert_eq!(final_posts.len(), 2);
-        
+
         // Verify that only post1 and post2 are associated with the user
         let final_post_ids: Vec<i32> = final_posts.iter().map(|p| p.id).collect();
         assert!(final_post_ids.contains(&post1.id));
@@ -3483,15 +3525,19 @@ mod query_builder_tests {
                 user::Create {
                     email: format!("cm1_{}@example.com", ts),
                     name: "CM1".to_string(),
-                    created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
-                    updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                    created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z")
+                        .unwrap(),
+                    updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z")
+                        .unwrap(),
                     _params: vec![user::age::set(Some(21)), user::deleted_at::set(None)],
                 },
                 user::Create {
                     email: format!("cm2_{}@example.com", ts),
                     name: "CM2".to_string(),
-                    created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
-                    updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap(),
+                    created_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z")
+                        .unwrap(),
+                    updated_at: DateTime::<FixedOffset>::parse_from_rfc3339("2021-01-01T00:00:00Z")
+                        .unwrap(),
                     _params: vec![user::age::set(Some(22)), user::deleted_at::set(None)],
                 },
             ])
@@ -3604,9 +3650,7 @@ mod query_builder_tests {
         let user_with_posts = client
             .user()
             .find_unique(user::id::equals(user.id))
-            .with(user::posts::include(|posts| posts
-                .take(1)
-            ))
+            .with(user::posts::include(|posts| posts.take(1)))
             .exec()
             .await
             .unwrap()
@@ -3614,7 +3658,7 @@ mod query_builder_tests {
 
         // Verify the user and posts are fetched
         assert_eq!(user_with_posts.name, "Nested Select Test");
-        
+
         // Verify the post is included
         if let Some(posts) = user_with_posts.posts {
             assert_eq!(posts.len(), 1);
@@ -3657,20 +3701,21 @@ mod query_builder_tests {
                 now,
                 now,
                 user::id::equals(user.id),
-                vec![post::content::set(Some("Field selection content".to_string()))],
+                vec![post::content::set(Some(
+                    "Field selection content".to_string(),
+                ))],
             )
             .exec()
             .await
             .unwrap();
 
-        // Test field selection functionality - currently fetches all fields
-        // TODO: Implement proper field selection optimization
+        // Test field selection functionality
         let user_with_selected_posts = client
             .user()
             .find_unique(user::id::equals(user.id))
-            .with(user::posts::include(|posts| posts
-                .select(post::select!(title))
-            ))
+            .with(user::posts::include(|posts| {
+                posts.select(post::select!(title))
+            }))
             .exec()
             .await
             .unwrap()
@@ -3678,15 +3723,12 @@ mod query_builder_tests {
 
         // Verify the user is fetched
         assert_eq!(user_with_selected_posts.name, "Field Selection Test");
-        
+
         // Verify the post is included
         if let Some(posts) = user_with_selected_posts.posts {
             assert_eq!(posts.len(), 1);
             assert_eq!(posts[0].title, "Field Selection Post");
-            // TODO: When field selection optimization is implemented,
-            // the content field should be None since it wasn't selected
-            // For now, it will contain the full content
-            assert_eq!(posts[0].content, Some("Field selection content".to_string()));
+            assert_eq!(posts[0].content, None);
         } else {
             panic!("Posts should be included");
         }
@@ -3779,8 +3821,30 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        let _p1 = client.post().create("P1".to_string(), now, now, user::id::equals(user.id), vec![]).exec().await.unwrap();
-        let _p2 = client.post().create("P2".to_string(), now, now, user::id::equals(user.id), vec![]).exec().await.unwrap();
+        let _p1 = client
+            .post()
+            .create(
+                "P1".to_string(),
+                now,
+                now,
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _p2 = client
+            .post()
+            .create(
+                "P2".to_string(),
+                now,
+                now,
+                user::id::equals(user.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
 
         let selected = client
             .user()
@@ -3796,7 +3860,4 @@ mod query_builder_tests {
         let counts = selected._count.unwrap();
         assert_eq!(counts.posts, Some(2));
     }
-
-    
-
 }

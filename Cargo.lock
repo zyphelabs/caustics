@@ -321,6 +321,7 @@ dependencies = [
  "chrono",
  "env_logger",
  "heck 0.4.1",
+ "proc-macro2",
  "quote",
  "regex",
  "rust_decimal",

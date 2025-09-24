@@ -1,7 +1,7 @@
+use crate::types::{ApplyNestedIncludes, EntityRegistry, SelectionSpec};
 use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
-use crate::types::{EntityRegistry, ApplyNestedIncludes, SelectionSpec};
-use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QuerySelect, QueryTrait, Select};
 use sea_orm::sea_query::SimpleExpr;
+use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QuerySelect, QueryTrait, Select};
 
 /// Query builder for selected scalar fields on unique
 pub struct SelectUniqueQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, Selected>
@@ -22,7 +22,8 @@ impl<'a, C, Entity, Selected> SelectUniqueQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    Selected: EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
+    Selected:
+        EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
 {
     pub fn push_field(mut self, expr: SimpleExpr, alias: &str) -> Self {
         self.selected_fields.push((expr, alias.to_string()));
@@ -33,17 +34,50 @@ where
         // Ensure required key columns for any requested relations are added implicitly by resolving alias to expr via Selected
         let query = self.query.clone();
         let mut selected = self.selected_fields.clone();
+        let mut defensive_fields = Vec::new();
+
         if !self.relations_to_fetch.is_empty() {
             for rf in &self.relations_to_fetch {
                 if let Some(desc) = Selected::get_relation_descriptor(rf.relation) {
-                    let needed_alias = if desc.is_has_many { desc.current_primary_key_field_name } else { desc.foreign_key_field_name };
+                    let needed_alias = if desc.is_has_many {
+                        desc.current_primary_key_field_name
+                    } else {
+                        desc.foreign_key_field_name
+                    };
+
+                    // Check if this field is already requested
                     if !self.requested_aliases.iter().any(|a| a == needed_alias) {
                         if let Some(expr) = Selected::column_for_alias(needed_alias) {
                             selected.push((expr, needed_alias.to_string()));
+                            defensive_fields.push(needed_alias.to_string());
+                        }
+                    }
+
+                    // For now, we'll rely on the basic defensive field logic
+                    // The macro-generated code will handle the defensive field fetching
+
+                    // For has_many relations, also ensure we have the foreign key field from the target
+                    if desc.is_has_many {
+                        // Add any additional fields that might be needed for relation filtering
+                        if let Some(nested_aliases) = &rf.nested_select_aliases {
+                            for nested_alias in nested_aliases {
+                                if !self.requested_aliases.iter().any(|a| a == nested_alias) {
+                                    if let Some(expr) = Selected::column_for_alias(nested_alias) {
+                                        selected.push((expr, nested_alias.clone()));
+                                        defensive_fields.push(nested_alias.clone());
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+
+        // Log defensive fields for debugging (can be removed in production)
+        if !defensive_fields.is_empty() {
+            // Debug logging can be enabled here if needed
+            // println!("Defensive fields added for relations: {:?}", defensive_fields);
         }
         let mut select = query.select_only();
         for (expr, alias) in &selected {
@@ -51,22 +85,55 @@ where
         }
         let stmt = select.build(self.database_backend);
         let entity_name = core::any::type_name::<Entity>();
-        crate::hooks::emit_before(&crate::hooks::QueryEvent { builder: "SelectUniqueQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_unique", entity_name) });
+        crate::hooks::emit_before(&crate::hooks::QueryEvent {
+            builder: "SelectUniqueQueryBuilder",
+            entity: entity_name,
+            details: crate::hooks::compose_details("select_unique", entity_name),
+        });
         let start = std::time::Instant::now();
         if let Some(row) = self.conn.query_one(stmt).await? {
-            let field_names: Vec<&str> = self.requested_aliases.iter().map(|a| a.as_str()).collect();
+            let field_names: Vec<&str> =
+                self.requested_aliases.iter().map(|a| a.as_str()).collect();
             let mut s = Selected::fill_from_row(&row, &field_names);
 
             for rf in &self.relations_to_fetch {
                 // Delegate fetching and nested application to the macro-generated impl
-                <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(&mut s, self.conn, rf, self.registry).await?;
+                <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(
+                    &mut s,
+                    self.conn,
+                    rf,
+                    self.registry,
+                )
+                .await?;
             }
 
-            s.clear_unselected(&field_names);
-            crate::hooks::emit_after(&crate::hooks::QueryEvent { builder: "SelectUniqueQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_unique", entity_name) }, &crate::hooks::QueryResultMeta { row_count: Some(1), error: None, elapsed_ms: Some(start.elapsed().as_millis()) });
+            // clear_unselected no longer needed - fields are only populated if selected
+            crate::hooks::emit_after(
+                &crate::hooks::QueryEvent {
+                    builder: "SelectUniqueQueryBuilder",
+                    entity: entity_name,
+                    details: crate::hooks::compose_details("select_unique", entity_name),
+                },
+                &crate::hooks::QueryResultMeta {
+                    row_count: Some(1),
+                    error: None,
+                    elapsed_ms: Some(start.elapsed().as_millis()),
+                },
+            );
             Ok(Some(s))
         } else {
-            crate::hooks::emit_after(&crate::hooks::QueryEvent { builder: "SelectUniqueQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_unique", entity_name) }, &crate::hooks::QueryResultMeta { row_count: Some(0), error: None, elapsed_ms: Some(start.elapsed().as_millis()) });
+            crate::hooks::emit_after(
+                &crate::hooks::QueryEvent {
+                    builder: "SelectUniqueQueryBuilder",
+                    entity: entity_name,
+                    details: crate::hooks::compose_details("select_unique", entity_name),
+                },
+                &crate::hooks::QueryResultMeta {
+                    row_count: Some(0),
+                    error: None,
+                    elapsed_ms: Some(start.elapsed().as_millis()),
+                },
+            );
             Ok(None)
         }
     }
@@ -77,7 +144,9 @@ where
     }
 }
 
-impl<'a, C, Entity, Selected> From<crate::query_builders::UniqueQueryBuilder<'a, C, Entity, Selected>> for SelectUniqueQueryBuilder<'a, C, Entity, Selected>
+impl<'a, C, Entity, Selected>
+    From<crate::query_builders::UniqueQueryBuilder<'a, C, Entity, Selected>>
+    for SelectUniqueQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
@@ -101,12 +170,17 @@ impl<'a, C, Entity, Selected> SelectUniqueQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    Selected: EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
+    Selected:
+        EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
 {
     pub fn select<S>(mut self, spec: S) -> SelectUniqueQueryBuilder<'a, C, Entity, S::Data>
     where
         S: SelectionSpec<Entity = Entity>,
-        S::Data: EntitySelection + HasRelationMetadata<S::Data> + ApplyNestedIncludes<C> + Send + 'static,
+        S::Data: EntitySelection
+            + HasRelationMetadata<S::Data>
+            + ApplyNestedIncludes<C>
+            + Send
+            + 'static,
     {
         let aliases = spec.collect_aliases();
         let mut requested = Vec::new();
@@ -128,5 +202,3 @@ where
         }
     }
 }
-
-

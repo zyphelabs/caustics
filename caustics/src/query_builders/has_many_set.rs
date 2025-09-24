@@ -1,6 +1,6 @@
-use crate::{FromModel, HasRelationMetadata, MergeInto};
 use crate::types::SetParamInfo;
-use sea_orm::{ConnectionTrait, DatabaseBackend, TransactionTrait, DatabaseTransaction};
+use crate::{FromModel, HasRelationMetadata, MergeInto};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, TransactionTrait};
 
 /// Query builder for updates that include has_many set operations
 pub struct HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
@@ -14,7 +14,8 @@ where
     pub condition: sea_orm::Condition,
     pub changes: Vec<T>,
     pub conn: &'a C,
-        pub entity_id_resolver: Option<Box<
+    pub entity_id_resolver: Option<
+        Box<
             dyn for<'b> Fn(
                     &'b C,
                 ) -> std::pin::Pin<
@@ -24,7 +25,8 @@ where
                             + 'b,
                     >,
                 > + Send,
-        >>,
+        >,
+    >,
     pub _phantom: std::marker::PhantomData<(Entity, ActiveModel, ModelWithRelations)>,
 }
 
@@ -61,12 +63,20 @@ where
         let entity_id = match &self.entity_id_resolver {
             Some(resolver) => (resolver)(self.conn).await?,
             None => {
-                return Err(crate::types::CausticsError::QueryValidation { message: "Missing entity id resolver for has_many set".to_string() }.into())
+                return Err(crate::types::CausticsError::QueryValidation {
+                    message: "Missing entity id resolver for has_many set".to_string(),
+                }
+                .into())
             }
         };
         let parent_id_i32 = match entity_id {
             sea_orm::Value::Int(Some(id)) => id,
-            _ => return Err(crate::types::CausticsError::QueryValidation { message: "Unsupported id type for has_many create".to_string() }.into()),
+            _ => {
+                return Err(crate::types::CausticsError::QueryValidation {
+                    message: "Unsupported id type for has_many create".to_string(),
+                }
+                .into())
+            }
         };
 
         // Run nested creates, set operations, and regular update in a single transaction
@@ -74,18 +84,19 @@ where
 
         if !has_many_create_changes.is_empty() {
             for change in has_many_create_changes {
-                change.exec_has_many_create_on_txn(&txn, parent_id_i32).await?;
+                change
+                    .exec_has_many_create_on_txn(&txn, parent_id_i32)
+                    .await?;
             }
         }
 
         if !has_many_set_changes.is_empty() {
-            self
-                .process_has_many_set_operations_in_txn(
-                    has_many_set_changes,
-                    sea_orm::Value::Int(Some(parent_id_i32)),
-                    &txn,
-                )
-                .await?;
+            self.process_has_many_set_operations_in_txn(
+                has_many_set_changes,
+                sea_orm::Value::Int(Some(parent_id_i32)),
+                &txn,
+            )
+            .await?;
         }
 
         // Then execute regular update within the same transaction
@@ -118,21 +129,41 @@ where
         for change in changes {
             let target_ids = change.extract_target_ids();
             let relation_name = change.extract_relation_name().ok_or_else(|| {
-                sea_orm::DbErr::from(crate::types::CausticsError::QueryValidation { message: "Could not extract relation name from change".to_string() })
+                sea_orm::DbErr::from(crate::types::CausticsError::QueryValidation {
+                    message: "Could not extract relation name from change".to_string(),
+                })
             })?;
 
             let relation_metadata = <ModelWithRelations as crate::types::HasRelationMetadata<
                 ModelWithRelations,
             >>::get_relation_descriptor(relation_name)
             .ok_or_else(|| {
-                sea_orm::DbErr::from(crate::types::CausticsError::RelationNotFound { relation: relation_name.to_string() })
+                sea_orm::DbErr::from(crate::types::CausticsError::RelationNotFound {
+                    relation: relation_name.to_string(),
+                })
             })?;
+
+            // Resolve the target primary key column name at runtime
+            let target_primary_key_column = if let Some(target_entity_name) = relation_metadata.target_entity_name {
+                // We have a target entity name, so we need to resolve the actual primary key from entity metadata
+                crate::get_entity_metadata(target_entity_name)
+                    .map(|metadata| metadata.primary_key_field.to_string())
+                    .ok_or_else(|| {
+                        sea_orm::DbErr::Custom(format!(
+                            "Entity '{}' not found in registry. This indicates a problem with entity metadata generation.",
+                            target_entity_name
+                        ))
+                    })?
+            } else {
+                // No target entity name available - use the explicitly specified primary key column
+                relation_metadata.target_primary_key_column.to_string()
+            };
 
             let handler = DefaultHasManySetHandler::new(
                 relation_metadata.foreign_key_column.to_string(),
                 relation_metadata.target_table_name.to_string(),
                 relation_metadata.current_primary_key_column.to_string(),
-                relation_metadata.target_primary_key_column.to_string(),
+                target_primary_key_column,
                 relation_metadata.is_foreign_key_nullable,
             );
 
@@ -256,9 +287,7 @@ where
                     db_backend,
                     format!(
                         "UPDATE {} SET {} = NULL WHERE {} = ?",
-                        self.target_table_name,
-                        self.foreign_key_column,
-                        self.foreign_key_column
+                        self.target_table_name, self.foreign_key_column, self.foreign_key_column
                     ),
                     vec![current_entity_id.clone()],
                 );
@@ -266,11 +295,7 @@ where
             } else {
                 // For non-nullable foreign keys, delete associations not in target list
                 if !target_ids.is_empty() {
-                    let placeholders = target_ids
-                        .iter()
-                        .map(|_| "?")
-                        .collect::<Vec<_>>()
-                        .join(",");
+                    let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
                     let delete_stmt = sea_orm::Statement::from_sql_and_values(
                         db_backend,
@@ -295,8 +320,7 @@ where
                         db_backend,
                         format!(
                             "DELETE FROM {} WHERE {} = ?",
-                            self.target_table_name,
-                            self.foreign_key_column
+                            self.target_table_name, self.foreign_key_column
                         ),
                         vec![current_entity_id.clone()],
                     );
@@ -307,11 +331,7 @@ where
 
             // Then, set the target associations
             if !target_ids.is_empty() {
-                let placeholders = target_ids
-                    .iter()
-                    .map(|_| "?")
-                    .collect::<Vec<_>>()
-                    .join(",");
+                let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                 let set_query = format!(
                     "UPDATE {} SET {} = ? WHERE {} IN ({})",
                     self.target_table_name,
@@ -323,11 +343,8 @@ where
                 let mut values = vec![current_entity_id];
                 values.extend(target_ids.clone());
 
-                let set_stmt = sea_orm::Statement::from_sql_and_values(
-                    db_backend,
-                    set_query,
-                    values,
-                );
+                let set_stmt =
+                    sea_orm::Statement::from_sql_and_values(db_backend, set_query, values);
                 txn.execute(set_stmt).await?;
             }
 
@@ -356,22 +373,21 @@ where
                     db_backend,
                     format!(
                         "UPDATE {} SET {} = NULL WHERE {} = ?",
-                        target_table_name,
-                        foreign_key_column,
-                        foreign_key_column
+                        target_table_name, foreign_key_column, foreign_key_column
                     ),
                     vec![current_entity_id.clone()],
                 );
-                <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, remove_stmt).await?;
+                <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, remove_stmt)
+                    .await?;
             } else {
-                // For non-nullable foreign keys, delete associations not in target list
+                // For non-nullable foreign keys, we can't set them to NULL.
+                // Instead, we need to DELETE the associated records that are not in the target list.
+                // This is how Prisma handles this scenario - it deletes the records rather than trying to set foreign keys to NULL.
+                
                 if !target_ids.is_empty() {
-                    let placeholders = target_ids
-                        .iter()
-                        .map(|_| "?")
-                        .collect::<Vec<_>>()
-                        .join(",");
+                    let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
+                    // Delete records that are currently associated but not in the target list
                     let delete_stmt = sea_orm::Statement::from_sql_and_values(
                         db_backend,
                         format!(
@@ -387,47 +403,36 @@ where
                             values
                         },
                     );
-
-                    <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, delete_stmt).await?;
+                    <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, delete_stmt)
+                        .await?;
                 } else {
                     // If no target IDs, delete all existing associations
                     let delete_stmt = sea_orm::Statement::from_sql_and_values(
                         db_backend,
                         format!(
                             "DELETE FROM {} WHERE {} = ?",
-                            target_table_name,
-                            foreign_key_column
+                            target_table_name, foreign_key_column
                         ),
                         vec![current_entity_id.clone()],
                     );
-
-                    <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, delete_stmt).await?;
+                    <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, delete_stmt)
+                        .await?;
                 }
             }
 
             // Then, set the target associations
             if !target_ids.is_empty() {
-                let placeholders = target_ids
-                    .iter()
-                    .map(|_| "?")
-                    .collect::<Vec<_>>()
-                    .join(",");
+                let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                 let set_query = format!(
                     "UPDATE {} SET {} = ? WHERE {} IN ({})",
-                    target_table_name,
-                    foreign_key_column,
-                    target_primary_key_column,
-                    placeholders
+                    target_table_name, foreign_key_column, target_primary_key_column, placeholders
                 );
 
                 let mut values = vec![current_entity_id];
                 values.extend(target_ids.clone());
 
-                let set_stmt = sea_orm::Statement::from_sql_and_values(
-                    db_backend,
-                    set_query,
-                    values,
-                );
+                let set_stmt =
+                    sea_orm::Statement::from_sql_and_values(db_backend, set_query, values);
                 <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, set_stmt).await?;
             }
 
@@ -435,4 +440,3 @@ where
         }
     }
 }
-

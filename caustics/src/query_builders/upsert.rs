@@ -1,6 +1,9 @@
 use super::deferred_lookup::DeferredLookup;
 use crate::{FromModel, MergeInto, PostInsertOp};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, IntoActiveModel,
+    QueryFilter,
+};
 use std::any::Any;
 
 /// Query builder for upserting (insert or update) entity records
@@ -35,13 +38,11 @@ where
     T: MergeInto<ActiveModel>,
     <Entity as EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
 {
-
     /// Execute the upsert within a transaction
     pub async fn exec_in_txn(
         self,
         txn: &DatabaseTransaction,
-    ) -> Result<ModelWithRelations, sea_orm::DbErr>
-    {
+    ) -> Result<ModelWithRelations, sea_orm::DbErr> {
         let existing = Entity::find()
             .filter::<sea_orm::Condition>(self.condition.clone())
             .one(txn)
@@ -60,9 +61,12 @@ where
             }
             None => {
                 let (mut active_model, deferred_lookups, post_ops, id_extractor) = self.create;
-        for lookup in &deferred_lookups {
-            let lookup_result = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
-                    (lookup.assign)(&mut active_model as &mut (dyn std::any::Any + 'static), lookup_result);
+                for lookup in &deferred_lookups {
+                    let lookup_result = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
+                    (lookup.assign)(
+                        &mut active_model as &mut (dyn std::any::Any + 'static),
+                        lookup_result,
+                    );
                 }
                 for change in self.update {
                     change.merge_into(&mut active_model);
@@ -109,7 +113,8 @@ where
                 let (mut active_model, deferred_lookups, post_ops, id_extractor) = self.create;
                 // Execute all deferred lookups in batch (if needed)
                 for lookup in &deferred_lookups {
-                    let lookup_result = (lookup.resolve_on_conn)(self.conn, &*lookup.unique_param).await?;
+                    let lookup_result =
+                        (lookup.resolve_on_conn)(self.conn, &*lookup.unique_param).await?;
                     (lookup.assign)(&mut active_model as &mut (dyn Any + 'static), lookup_result);
                 }
                 for change in self.update {
@@ -125,4 +130,3 @@ where
         }
     }
 }
-

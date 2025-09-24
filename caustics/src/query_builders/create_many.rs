@@ -1,12 +1,15 @@
 use super::deferred_lookup::{DeferredLookup, DeferredResolveFor};
 use crate::PostInsertOp;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, IntoActiveModel};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, IntoActiveModel,
+};
 use std::any::Any;
 
 /// Query builder for creating many records; returns affected row count
 pub struct CreateManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ActiveModel>
 where
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
 {
     pub items: Vec<(
         ActiveModel,
@@ -21,7 +24,8 @@ where
 impl<'a, Entity, ActiveModel> CreateManyQueryBuilder<'a, DatabaseConnection, Entity, ActiveModel>
 where
     Entity: EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
 {
     /// Execute all inserts and return number of rows inserted
     pub async fn exec(self) -> Result<i64, sea_orm::DbErr>
@@ -49,7 +53,8 @@ where
 impl<'a, Entity, ActiveModel> CreateManyQueryBuilder<'a, DatabaseTransaction, Entity, ActiveModel>
 where
     Entity: EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
 {
     /// Execute all inserts in a transaction and return number of rows inserted
     pub async fn exec(self) -> Result<i64, sea_orm::DbErr>
@@ -73,4 +78,3 @@ where
         Ok(affected)
     }
 }
-

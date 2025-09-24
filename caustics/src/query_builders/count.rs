@@ -1,6 +1,6 @@
-use sea_orm::{ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, QueryTrait};
-use sea_orm::sea_query::Expr;
 use sea_orm::sea_query::Condition as SeaQueryCondition;
+use sea_orm::sea_query::Expr;
+use sea_orm::{ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, QueryTrait};
 
 /// Query builder for counting entity records matching conditions
 pub struct CountQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait> {
@@ -27,5 +27,3 @@ where
         Ok(count)
     }
 }
-
-

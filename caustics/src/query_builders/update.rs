@@ -1,6 +1,6 @@
+use super::has_many_set::HasManySetUpdateQueryBuilder;
 use crate::{FromModel, MergeInto};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter};
-use super::has_many_set::HasManySetUpdateQueryBuilder;
 
 /// Query builder for updating entity records
 pub struct UpdateQueryBuilder<
@@ -36,7 +36,9 @@ where
     C: ConnectionTrait + sea_orm::TransactionTrait,
     Entity: EntityTrait,
     ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send,
-    ModelWithRelations: FromModel<<Entity as EntityTrait>::Model> + crate::types::HasRelationMetadata<ModelWithRelations> + 'static,
+    ModelWithRelations: FromModel<<Entity as EntityTrait>::Model>
+        + crate::types::HasRelationMetadata<ModelWithRelations>
+        + 'static,
     T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
     <Entity as EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
 {
@@ -47,7 +49,10 @@ where
         }
     }
 
-    pub async fn exec_in_txn(self, txn: &DatabaseTransaction) -> Result<ModelWithRelations, sea_orm::DbErr> {
+    pub async fn exec_in_txn(
+        self,
+        txn: &DatabaseTransaction,
+    ) -> Result<ModelWithRelations, sea_orm::DbErr> {
         match self {
             UnifiedUpdateQueryBuilder::Scalar(b) => b.exec_in_txn(txn).await,
             UnifiedUpdateQueryBuilder::Relations(_b) => {
@@ -55,7 +60,12 @@ where
                 // as mixed relation updates are not batchable.
                 // If needed later, we can add a transactional variant for relations.
                 // Fallback to error to avoid silently ignoring transaction context.
-                Err(crate::types::CausticsError::QueryValidation { message: "Relation update cannot run inside batch/transaction via unified API yet".to_string() }.into())
+                Err(crate::types::CausticsError::QueryValidation {
+                    message:
+                        "Relation update cannot run inside batch/transaction via unified API yet"
+                            .to_string(),
+                }
+                .into())
             }
         }
     }
@@ -90,7 +100,8 @@ where
             Err(crate::types::CausticsError::NotFoundForCondition {
                 entity: core::any::type_name::<Entity>().to_string(),
                 condition: cond_dbg,
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -117,8 +128,8 @@ where
             Err(crate::types::CausticsError::NotFoundForCondition {
                 entity: core::any::type_name::<Entity>().to_string(),
                 condition: cond_dbg,
-            }.into())
+            }
+            .into())
         }
     }
 }
-

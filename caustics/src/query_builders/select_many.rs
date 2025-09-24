@@ -1,8 +1,11 @@
-use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
 use crate::types::SelectionSpec;
-use crate::types::{EntityRegistry, ApplyNestedIncludes, NullsOrder, IntoOrderSpec};
-use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Select};
+use crate::types::{ApplyNestedIncludes, EntityRegistry, IntoOrderSpec, NullsOrder};
+use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
 use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
+use sea_orm::{
+    ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    QueryTrait, Select,
+};
 
 /// Query builder for selected scalar fields on many
 pub struct SelectManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, Selected>
@@ -31,7 +34,8 @@ impl<'a, C, Entity, Selected> SelectManyQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    Selected: EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
+    Selected:
+        EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
 {
     /// Add a scalar field (expr, alias)
     pub fn push_field(mut self, expr: SimpleExpr, alias: &str) -> Self {
@@ -46,7 +50,9 @@ where
     {
         let (expr, order, nulls) = order_spec.into_order_spec();
         self.pending_order_bys.push((expr, order));
-        if nulls.is_some() { self.pending_nulls = nulls; }
+        if nulls.is_some() {
+            self.pending_nulls = nulls;
+        }
         self
     }
 
@@ -55,7 +61,10 @@ where
     /// Execute and return selected rows
     pub async fn exec(self) -> Result<Vec<Selected>, sea_orm::DbErr> {
         if self.skip_is_negative {
-            return Err(crate::types::CausticsError::QueryValidation { message: "skip must be >= 0".to_string() }.into());
+            return Err(crate::types::CausticsError::QueryValidation {
+                message: "skip must be >= 0".to_string(),
+            }
+            .into());
         }
         let mut query = self.query.clone();
 
@@ -82,7 +91,11 @@ where
             };
             query = query.filter(Condition::all().add(cmp_expr));
             if self.pending_order_bys.is_empty() {
-                let ord = if self.reverse_order { sea_orm::Order::Desc } else { sea_orm::Order::Asc };
+                let ord = if self.reverse_order {
+                    sea_orm::Order::Desc
+                } else {
+                    sea_orm::Order::Asc
+                };
                 query = query.order_by(cursor_expr.clone(), ord);
             }
         }
@@ -93,8 +106,12 @@ where
                 if let Some((first_expr, _)) = self.pending_order_bys.get(0) {
                     let nulls_expr = Expr::expr(first_expr.clone()).is_null();
                     match n {
-                        NullsOrder::First => { query = query.order_by(nulls_expr, sea_orm::Order::Desc); }
-                        NullsOrder::Last => { query = query.order_by(nulls_expr, sea_orm::Order::Asc); }
+                        NullsOrder::First => {
+                            query = query.order_by(nulls_expr, sea_orm::Order::Desc);
+                        }
+                        NullsOrder::Last => {
+                            query = query.order_by(nulls_expr, sea_orm::Order::Asc);
+                        }
                     }
                 }
             }
@@ -123,13 +140,15 @@ where
                             sea_orm::QueryTrait::query(&mut query).distinct_on(cols.clone());
                         } else {
                             for f in fields {
-                                sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                                sea_orm::QueryTrait::query(&mut query)
+                                    .add_group_by(std::iter::once(f.clone()));
                             }
                         }
                     }
                     _ => {
                         for f in fields {
-                            sea_orm::QueryTrait::query(&mut query).add_group_by(std::iter::once(f.clone()));
+                            sea_orm::QueryTrait::query(&mut query)
+                                .add_group_by(std::iter::once(f.clone()));
                         }
                     }
                 }
@@ -138,17 +157,50 @@ where
 
         // Ensure required key columns for any requested relations are added implicitly by resolving alias to expr via Selected
         let mut selected = self.selected_fields.clone();
+        let mut defensive_fields = Vec::new();
+
         if !self.relations_to_fetch.is_empty() {
             for rf in &self.relations_to_fetch {
                 if let Some(desc) = Selected::get_relation_descriptor(rf.relation) {
-                    let needed_alias = if desc.is_has_many { desc.current_primary_key_field_name } else { desc.foreign_key_field_name };
+                    let needed_alias = if desc.is_has_many {
+                        desc.current_primary_key_field_name
+                    } else {
+                        desc.foreign_key_field_name
+                    };
+
+                    // Check if this field is already requested
                     if !self.requested_aliases.iter().any(|a| a == needed_alias) {
                         if let Some(expr) = Selected::column_for_alias(needed_alias) {
                             selected.push((expr, needed_alias.to_string()));
+                            defensive_fields.push(needed_alias.to_string());
+                        }
+                    }
+
+                    // For now, we'll rely on the basic defensive field logic
+                    // The macro-generated code will handle the defensive field fetching
+
+                    // For has_many relations, also ensure we have the foreign key field from the target
+                    if desc.is_has_many {
+                        // Add any additional fields that might be needed for relation filtering
+                        if let Some(nested_aliases) = &rf.nested_select_aliases {
+                            for nested_alias in nested_aliases {
+                                if !self.requested_aliases.iter().any(|a| a == nested_alias) {
+                                    if let Some(expr) = Selected::column_for_alias(nested_alias) {
+                                        selected.push((expr, nested_alias.clone()));
+                                        defensive_fields.push(nested_alias.clone());
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+
+        // Log defensive fields for debugging (can be removed in production)
+        if !defensive_fields.is_empty() {
+            // Debug logging can be enabled here if needed
+            // println!("Defensive fields added for relations: {:?}", defensive_fields);
         }
 
         let mut select = query.select_only();
@@ -168,34 +220,64 @@ where
         match rows_res {
             Ok(rows) => {
                 crate::hooks::emit_after(
-                    &crate::hooks::QueryEvent { builder: "SelectManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
-                    &crate::hooks::QueryResultMeta { row_count: Some(rows.len()), error: None, elapsed_ms: Some(start.elapsed().as_millis()) }
+                    &crate::hooks::QueryEvent {
+                        builder: "SelectManyQueryBuilder",
+                        entity: entity_name,
+                        details: crate::hooks::compose_details("select_many", entity_name),
+                    },
+                    &crate::hooks::QueryResultMeta {
+                        row_count: Some(rows.len()),
+                        error: None,
+                        elapsed_ms: Some(start.elapsed().as_millis()),
+                    },
                 );
                 let mut out: Vec<Selected> = Vec::with_capacity(rows.len());
-                let field_names: Vec<&str> = self.requested_aliases.iter().map(|a| a.as_str()).collect();
+                let field_names: Vec<&str> =
+                    self.requested_aliases.iter().map(|a| a.as_str()).collect();
 
                 for row in rows.into_iter() {
                     let mut s = Selected::fill_from_row(&row, &field_names);
 
                     if !self.relations_to_fetch.is_empty() {
                         for rel in Selected::relation_descriptors() {
-                            let needed_key = if rel.is_has_many { rel.current_primary_key_field_name } else { rel.foreign_key_field_name };
-                            if let Some(_) = s.get_i32(needed_key) {} else { continue; }
+                            let needed_key = if rel.is_has_many {
+                                rel.current_primary_key_field_name
+                            } else {
+                                rel.foreign_key_field_name
+                            };
+                            if let Some(_) = s.get_i32(needed_key) {
+                            } else {
+                                continue;
+                            }
                         }
                         for rf in &self.relations_to_fetch {
-                            <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(&mut s, self.conn, rf, self.registry).await?;
+                            <Selected as ApplyNestedIncludes<C>>::apply_relation_filter(
+                                &mut s,
+                                self.conn,
+                                rf,
+                                self.registry,
+                            )
+                            .await?;
                         }
                     }
 
-                    s.clear_unselected(&field_names);
+                    // clear_unselected no longer needed - fields are only populated if selected
                     out.push(s);
                 }
                 Ok(out)
             }
             Err(e) => {
                 crate::hooks::emit_after(
-                    &crate::hooks::QueryEvent { builder: "SelectManyQueryBuilder", entity: entity_name, details: crate::hooks::compose_details("select_many", entity_name) },
-                    &crate::hooks::QueryResultMeta { row_count: None, error: Some(e.to_string()), elapsed_ms: Some(start.elapsed().as_millis()) }
+                    &crate::hooks::QueryEvent {
+                        builder: "SelectManyQueryBuilder",
+                        entity: entity_name,
+                        details: crate::hooks::compose_details("select_many", entity_name),
+                    },
+                    &crate::hooks::QueryResultMeta {
+                        row_count: None,
+                        error: Some(e.to_string()),
+                        elapsed_ms: Some(start.elapsed().as_millis()),
+                    },
                 );
                 Err(e)
             }
@@ -213,13 +295,18 @@ impl<'a, C, Entity, Selected> SelectManyQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
-    Selected: EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
+    Selected:
+        EntitySelection + HasRelationMetadata<Selected> + ApplyNestedIncludes<C> + Send + 'static,
 {
     /// Accept a typed selection spec generated by per-entity select! macro
     pub fn select<S>(mut self, spec: S) -> SelectManyQueryBuilder<'a, C, Entity, S::Data>
     where
         S: SelectionSpec<Entity = Entity>,
-        S::Data: EntitySelection + HasRelationMetadata<S::Data> + ApplyNestedIncludes<C> + Send + 'static,
+        S::Data: EntitySelection
+            + HasRelationMetadata<S::Data>
+            + ApplyNestedIncludes<C>
+            + Send
+            + 'static,
     {
         let aliases = spec.collect_aliases();
         let mut requested = Vec::new();
@@ -250,7 +337,8 @@ where
     }
 }
 
-impl<'a, C, Entity, Selected> From<crate::query_builders::ManyQueryBuilder<'a, C, Entity, Selected>> for SelectManyQueryBuilder<'a, C, Entity, Selected>
+impl<'a, C, Entity, Selected> From<crate::query_builders::ManyQueryBuilder<'a, C, Entity, Selected>>
+    for SelectManyQueryBuilder<'a, C, Entity, Selected>
 where
     C: ConnectionTrait,
     Entity: EntityTrait,
@@ -277,5 +365,3 @@ where
         }
     }
 }
-
-

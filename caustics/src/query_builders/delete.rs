@@ -37,7 +37,10 @@ where
     }
 
     /// Execute the query within a transaction
-    pub async fn exec_in_txn(self, txn: &DatabaseTransaction) -> Result<ModelWithRelations, sea_orm::DbErr> {
+    pub async fn exec_in_txn(
+        self,
+        txn: &DatabaseTransaction,
+    ) -> Result<ModelWithRelations, sea_orm::DbErr> {
         let found = <Entity as EntityTrait>::find()
             .filter::<sea_orm::Condition>(self.condition.clone())
             .one(txn)
@@ -56,4 +59,3 @@ where
         }
     }
 }
-

@@ -597,13 +597,19 @@ mod caustics_school_tests {
             .student()
             .find_many(vec![])
             .take(1)
-            .select(student::select!(first_name))
+            .select(student::select!(first_name, last_name))
             .with(student::enrollments::fetch())
             .exec()
             .await
             .unwrap();
         assert!(!rows.is_empty());
         assert!(rows[0].first_name.is_some());
+        assert!(rows[0].last_name.is_some());
+        // Verify that only selected fields are populated
+        assert!(
+            rows[0].email.is_none(),
+            "email should not be populated when not selected"
+        );
         let _ = &rows[0].enrollments;
     }
 
@@ -1054,17 +1060,15 @@ mod caustics_school_advanced_tests {
                     is_active: true,
                     created_at: fixed_now(),
                     updated_at: fixed_now(),
-                    _params: vec![
-                        student::enrollments::create(vec![enrollment::Create {
-                            enrollment_date: fixed_now(),
-                            status: "enrolled".to_string(),
-                            created_at: fixed_now(),
-                            updated_at: fixed_now(),
-                            student: student::student_number::equals(snum.clone()),
-                            course: course::id::equals(course.id),
-                            _params: vec![],
-                        }]),
-                    ],
+                    _params: vec![student::enrollments::create(vec![enrollment::Create {
+                        enrollment_date: fixed_now(),
+                        status: "enrolled".to_string(),
+                        created_at: fixed_now(),
+                        updated_at: fixed_now(),
+                        student: student::student_number::equals(snum.clone()),
+                        course: course::id::equals(course.id),
+                        _params: vec![],
+                    }])],
                 },
                 vec![],
             )
@@ -1140,7 +1144,9 @@ mod caustics_school_advanced_tests {
         let _by_count = client
             .student()
             .find_many(vec![])
-            .order_by(student::enrollments::order_by(enrollment::id::count(caustics::SortOrder::Desc)))
+            .order_by(student::enrollments::order_by(enrollment::id::count(
+                caustics::SortOrder::Desc,
+            )))
             .take(5)
             .exec()
             .await
@@ -1397,11 +1403,9 @@ mod caustics_school_advanced_tests {
             .student()
             .find_unique(student::id::equals(student_row.id))
             .select(student::select!(first_name))
-            .with(student::enrollments::with(
-                enrollment::course::with(
-                    course::teacher::include(|rel| rel.select(teacher::select!(first_name)))
-                )
-            ))
+            .with(student::enrollments::with(enrollment::course::with(
+                course::teacher::include(|rel| rel.select(teacher::select!(first_name))),
+            )))
             .exec()
             .await
             .unwrap()
@@ -1508,14 +1512,14 @@ mod caustics_school_advanced_tests {
             .student()
             .find_unique(student::id::equals(student_row.id))
             .select(student::select!(first_name, last_name))
-            .with(student::enrollments::include(|rel| rel
-                .with(enrollment::course::include(|rel2| rel2
-                    .select(course::select!(name))
-                    .with(course::teacher::include(|rel3| rel3
-                        .select(teacher::select!(first_name))
-                    ))
-                ))
-            ))
+            .with(student::enrollments::include(|rel| {
+                rel.with(enrollment::course::include(|rel2| {
+                    rel2.select(course::select!(name))
+                        .with(course::teacher::include(|rel3| {
+                            rel3.select(teacher::select!(first_name))
+                        }))
+                }))
+            }))
             .exec()
             .await
             .unwrap()
@@ -1526,9 +1530,9 @@ mod caustics_school_advanced_tests {
         let enrollments = selected.enrollments.as_ref().unwrap();
         assert!(!enrollments.is_empty());
         let course_rel = enrollments[0].course.as_ref().unwrap();
-        assert_eq!(course_rel.name, "Deep Course");
+        assert_eq!(course_rel.name.as_ref().unwrap(), "Deep Course");
         let teacher_rel = course_rel.teacher.as_ref().unwrap();
-        assert_eq!(teacher_rel.first_name, "Deep");
+        assert_eq!(teacher_rel.first_name.as_ref().unwrap(), "Deep");
     }
 
     #[tokio::test]
@@ -1618,20 +1622,18 @@ mod caustics_school_advanced_tests {
                 fixed_now(),
                 vec![
                     // Single create for course_a
-                    student::enrollments::create(vec![
-                        enrollment::Create {
-                            enrollment_date: fixed_now(),
-                            status: "enrolled".to_string(),
-                            created_at: fixed_now(),
-                            updated_at: fixed_now(),
-                            student: student::student_number::equals("SNEST".to_string()),
-                            course: course::id::equals(course_a.id),
-                            _params: vec![
-                                enrollment::withdrawal_date::set(None),
-                                enrollment::deleted_at::set(None),
-                            ],
-                        },
-                    ]),
+                    student::enrollments::create(vec![enrollment::Create {
+                        enrollment_date: fixed_now(),
+                        status: "enrolled".to_string(),
+                        created_at: fixed_now(),
+                        updated_at: fixed_now(),
+                        student: student::student_number::equals("SNEST".to_string()),
+                        course: course::id::equals(course_a.id),
+                        _params: vec![
+                            enrollment::withdrawal_date::set(None),
+                            enrollment::deleted_at::set(None),
+                        ],
+                    }]),
                     // CreateMany for course_b (two rows)
                     student::enrollments::create_many(vec![
                         enrollment::Create {
@@ -1668,7 +1670,13 @@ mod caustics_school_advanced_tests {
             .unwrap();
         assert_eq!(enrollments.len(), 3);
         assert!(enrollments.iter().any(|e| e.course_id == course_a.id));
-        assert!(enrollments.iter().filter(|e| e.course_id == course_b.id).count() == 2);
+        assert!(
+            enrollments
+                .iter()
+                .filter(|e| e.course_id == course_b.id)
+                .count()
+                == 2
+        );
     }
 
     #[tokio::test]
@@ -2051,12 +2059,12 @@ mod caustics_school_advanced_tests {
         let with_filtered = client
             .student()
             .find_unique(student::id::equals(stud.id))
-            .with(student::enrollments::include(|rel| rel
-                .filter(vec![enrollment::status::equals("enrolled".to_string())])
-                .order_by(vec![enrollment::id::order(SortOrder::Desc)])
-                .take(1)
-                .skip(0)
-            ))
+            .with(student::enrollments::include(|rel| {
+                rel.filter(vec![enrollment::status::equals("enrolled".to_string())])
+                    .order_by(vec![enrollment::id::order(SortOrder::Desc)])
+                    .take(1)
+                    .skip(0)
+            }))
             .exec()
             .await
             .unwrap()
@@ -2070,15 +2078,17 @@ mod caustics_school_advanced_tests {
         let with_contains = client
             .student()
             .find_unique(student::id::equals(stud.id))
-            .with(student::enrollments::include(|rel| rel
-                .filter(vec![enrollment::status::contains("roll".to_string())])
-            ))
+            .with(student::enrollments::include(|rel| {
+                rel.filter(vec![enrollment::status::contains("roll".to_string())])
+            }))
             .exec()
             .await
             .unwrap()
             .unwrap();
         let enrollments_contains = with_contains.enrollments.as_ref().unwrap();
-        assert!(enrollments_contains.iter().all(|e| e.status.contains("roll")));
+        assert!(enrollments_contains
+            .iter()
+            .all(|e| e.status.contains("roll")));
     }
 
     #[tokio::test]
@@ -2140,16 +2150,21 @@ mod caustics_school_advanced_tests {
         let with_teacher = client
             .course()
             .find_unique(course::id::equals(course.id))
-            .with(course::teacher::include(|rel| rel
-                .filter(vec![teacher::last_name::contains("ilt".to_string())])
-            ))
+            .with(course::teacher::include(|rel| {
+                rel.filter(vec![teacher::last_name::contains("ilt".to_string())])
+            }))
             .exec()
             .await
             .unwrap()
             .unwrap();
 
         assert!(with_teacher.teacher.is_some());
-        assert!(with_teacher.teacher.as_ref().unwrap().last_name.contains("ilt"));
+        assert!(with_teacher
+            .teacher
+            .as_ref()
+            .unwrap()
+            .last_name
+            .contains("ilt"));
     }
 
     #[tokio::test]
@@ -2160,34 +2175,122 @@ mod caustics_school_advanced_tests {
 
         let dept = client
             .department()
-            .create("CURSOR".to_string(), "Cursor Dept".to_string(), fixed_now(), fixed_now(), vec![])
-            .exec().await.unwrap();
+            .create(
+                "CURSOR".to_string(),
+                "Cursor Dept".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
         let teacher = client
             .teacher()
-            .create("TCUR".to_string(), "Cur".to_string(), "Sor".to_string(), "cur.sor@school.edu".to_string(), fixed_now(), true, fixed_now(), fixed_now(), department::id::equals(dept.id), vec![])
-            .exec().await.unwrap();
+            .create(
+                "TCUR".to_string(),
+                "Cur".to_string(),
+                "Sor".to_string(),
+                "cur.sor@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
         let course = client
             .course()
-            .create("CCUR".to_string(), "Course Cursor".to_string(), 3, 30, true, fixed_now(), fixed_now(), teacher::id::equals(teacher.id), department::id::equals(dept.id), vec![])
-            .exec().await.unwrap();
+            .create(
+                "CCUR".to_string(),
+                "Course Cursor".to_string(),
+                3,
+                30,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
         let stud = client
             .student()
-            .create("SCUR".to_string(), "Cur".to_string(), "Sor".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![])
-            .exec().await.unwrap();
+            .create(
+                "SCUR".to_string(),
+                "Cur".to_string(),
+                "Sor".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
 
-        let e1 = client.enrollment().create(fixed_now(), "x".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![]).exec().await.unwrap();
-        let e2 = client.enrollment().create(fixed_now(), "y".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![]).exec().await.unwrap();
-        let _e3 = client.enrollment().create(fixed_now(), "z".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![]).exec().await.unwrap();
+        let e1 = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "x".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(stud.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let e2 = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "y".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(stud.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _e3 = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "z".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(stud.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
 
         let s = client
             .student()
             .find_unique(student::id::equals(stud.id))
-            .with(student::enrollments::include(|rel| rel
-                .order_by(vec![enrollment::id::order(SortOrder::Asc)])
-                .cursor(e1.id)
-                .take(1)
-            ))
-            .exec().await.unwrap().unwrap();
+            .with(student::enrollments::include(|rel| {
+                rel.order_by(vec![enrollment::id::order(SortOrder::Asc)])
+                    .cursor(e1.id)
+                    .take(1)
+            }))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
         let children = s.enrollments.unwrap();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].id, e2.id);
@@ -2199,26 +2302,108 @@ mod caustics_school_advanced_tests {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
-        let dept = client.department().create("ORD".to_string(), "Order Dept".to_string(), fixed_now(), fixed_now(), vec![]).exec().await.unwrap();
-        let teacher = client.teacher().create("TORD".to_string(), "Ord".to_string(), "Er".to_string(), "ord.er@school.edu".to_string(), fixed_now(), true, fixed_now(), fixed_now(), department::id::equals(dept.id), vec![])
-            .exec().await.unwrap();
-        let course = client.course().create("CORD".to_string(), "Course Order".to_string(), 3, 30, true, fixed_now(), fixed_now(), teacher::id::equals(teacher.id), department::id::equals(dept.id), vec![])
-            .exec().await.unwrap();
-        let stud = client.student().create("SORD".to_string(), "Ord".to_string(), "Er".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![])
-            .exec().await.unwrap();
+        let dept = client
+            .department()
+            .create(
+                "ORD".to_string(),
+                "Order Dept".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let teacher = client
+            .teacher()
+            .create(
+                "TORD".to_string(),
+                "Ord".to_string(),
+                "Er".to_string(),
+                "ord.er@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let course = client
+            .course()
+            .create(
+                "CORD".to_string(),
+                "Course Order".to_string(),
+                3,
+                30,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let stud = client
+            .student()
+            .create(
+                "SORD".to_string(),
+                "Ord".to_string(),
+                "Er".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
 
-        let _a = client.enrollment().create(fixed_now(), "bstat".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![])
-            .exec().await.unwrap();
-        let _b = client.enrollment().create(fixed_now(), "astat".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![])
-            .exec().await.unwrap();
+        let _a = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "bstat".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(stud.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _b = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "astat".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(stud.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
 
         let s = client
             .student()
             .find_unique(student::id::equals(stud.id))
-            .with(student::enrollments::include(|rel| rel
-                .order_by(vec![enrollment::status::order(SortOrder::Asc)])
-            ))
-            .exec().await.unwrap().unwrap();
+            .with(student::enrollments::include(|rel| {
+                rel.order_by(vec![enrollment::status::order(SortOrder::Asc)])
+            }))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
         let children = s.enrollments.unwrap();
         assert!(children.len() >= 2);
         let statuses: Vec<String> = children.iter().map(|e| e.status.clone()).collect();
@@ -2233,27 +2418,110 @@ mod caustics_school_advanced_tests {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
 
-        let dept = client.department().create("DD".to_string(), "Distinct Dept".to_string(), fixed_now(), fixed_now(), vec![]).exec().await.unwrap();
-        let teacher = client.teacher().create("TD".to_string(), "Dis".to_string(), "Tinct".to_string(), "dis.tinct@school.edu".to_string(), fixed_now(), true, fixed_now(), fixed_now(), department::id::equals(dept.id), vec![])
-            .exec().await.unwrap();
-        let course = client.course().create("CD".to_string(), "Course Distinct".to_string(), 3, 30, true, fixed_now(), fixed_now(), teacher::id::equals(teacher.id), department::id::equals(dept.id), vec![])
-            .exec().await.unwrap();
-        let stud = client.student().create("SD".to_string(), "Dis".to_string(), "Tinct".to_string(), fixed_now(), fixed_now(), true, fixed_now(), fixed_now(), vec![])
-            .exec().await.unwrap();
+        let dept = client
+            .department()
+            .create(
+                "DD".to_string(),
+                "Distinct Dept".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let teacher = client
+            .teacher()
+            .create(
+                "TD".to_string(),
+                "Dis".to_string(),
+                "Tinct".to_string(),
+                "dis.tinct@school.edu".to_string(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let course = client
+            .course()
+            .create(
+                "CD".to_string(),
+                "Course Distinct".to_string(),
+                3,
+                30,
+                true,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let stud = client
+            .student()
+            .create(
+                "SD".to_string(),
+                "Dis".to_string(),
+                "Tinct".to_string(),
+                fixed_now(),
+                fixed_now(),
+                true,
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
 
-        let _e1 = client.enrollment().create(fixed_now(), "s1".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![]).exec().await.unwrap();
-        let _e2 = client.enrollment().create(fixed_now(), "s1".to_string(), fixed_now(), fixed_now(), student::id::equals(stud.id), course::id::equals(course.id), vec![])
-            .exec().await.unwrap();
+        let _e1 = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "s1".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(stud.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let _e2 = client
+            .enrollment()
+            .create(
+                fixed_now(),
+                "s1".to_string(),
+                fixed_now(),
+                fixed_now(),
+                student::id::equals(stud.id),
+                course::id::equals(course.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
 
         let s = client
             .student()
             .find_unique(student::id::equals(stud.id))
-            .with(student::enrollments::include(|rel| rel
-                .filter(vec![])
-                .order_by(vec![enrollment::status::order(SortOrder::Asc)])
-                .distinct()
-            ))
-            .exec().await.unwrap().unwrap();
+            .with(student::enrollments::include(|rel| {
+                rel.filter(vec![])
+                    .order_by(vec![enrollment::status::order(SortOrder::Asc)])
+                    .distinct()
+            }))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
 
         let children = s.enrollments.unwrap();
         assert!(children.len() >= 2);

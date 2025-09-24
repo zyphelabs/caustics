@@ -1,8 +1,8 @@
 #![allow(non_camel_case_types)]
 
-use std::any::Any;
 use sea_orm::sea_query;
 use sea_orm::{DatabaseConnection, DatabaseTransaction};
+use std::any::Any;
 
 pub type QueryError = sea_orm::DbErr;
 // Crate-wide result alias for ergonomics (non-conflicting)
@@ -25,22 +25,46 @@ impl core::fmt::Display for CausticsError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CausticsError::RelationNotFound { relation } => {
-                write!(f, "CausticsError::RelationNotFound: relation='{}'", relation)
+                write!(
+                    f,
+                    "CausticsError::RelationNotFound: relation='{}'",
+                    relation
+                )
             }
             CausticsError::InvalidIncludePath { relation } => {
-                write!(f, "CausticsError::InvalidIncludePath: relation='{}'", relation)
+                write!(
+                    f,
+                    "CausticsError::InvalidIncludePath: relation='{}'",
+                    relation
+                )
             }
             CausticsError::RelationNotFetched { relation, reason } => {
-                write!(f, "CausticsError::RelationNotFetched: relation='{}' reason='{}'", relation, reason)
+                write!(
+                    f,
+                    "CausticsError::RelationNotFetched: relation='{}' reason='{}'",
+                    relation, reason
+                )
             }
             CausticsError::EntityFetcherMissing { entity } => {
-                write!(f, "CausticsError::EntityFetcherMissing: entity='{}'", entity)
+                write!(
+                    f,
+                    "CausticsError::EntityFetcherMissing: entity='{}'",
+                    entity
+                )
             }
             CausticsError::DeferredLookupFailed { target, detail } => {
-                write!(f, "CausticsError::DeferredLookupFailed: target='{}' detail='{}'", target, detail)
+                write!(
+                    f,
+                    "CausticsError::DeferredLookupFailed: target='{}' detail='{}'",
+                    target, detail
+                )
             }
             CausticsError::NotFoundForCondition { entity, condition } => {
-                write!(f, "CausticsError::NotFoundForCondition: entity='{}' condition='{}'", entity, condition)
+                write!(
+                    f,
+                    "CausticsError::NotFoundForCondition: entity='{}' condition='{}'",
+                    entity, condition
+                )
             }
             CausticsError::QueryValidation { message } => {
                 write!(f, "CausticsError::QueryValidation: {}", message)
@@ -61,16 +85,18 @@ pub struct PostInsertOp<'a> {
         dyn for<'b> Fn(
                 &'b DatabaseConnection,
                 i32,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
-            + Send
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>,
+            > + Send
             + 'a,
     >,
     pub run_on_txn: Box<
         dyn for<'b> Fn(
                 &'b DatabaseTransaction,
                 i32,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
-            + Send
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>,
+            > + Send
             + 'a,
     >,
 }
@@ -198,12 +224,26 @@ pub struct IncludeArgs {
 
 #[allow(deprecated)]
 impl IncludeArgs {
-    pub fn with_filters(mut self, filters: Vec<Filter>) -> Self { self.filters = filters; self }
-    pub fn push_filters(mut self, mut filters: Vec<Filter>) -> Self { self.filters.append(&mut filters); self }
-    pub fn with_nested_includes(mut self, nested: Vec<RelationFilter>) -> Self { self.nested_includes = nested; self }
-    pub fn take(mut self, n: i64) -> Self { self.take = Some(n); self }
-    pub fn skip(mut self, n: i64) -> Self { self.skip = Some(n); self }
-    pub fn order_by_id(mut self, order: SortOrder) -> Self { self.order_by.push(("id".to_string(), order)); self }
+    pub fn with_filters(mut self, filters: Vec<Filter>) -> Self {
+        self.filters = filters;
+        self
+    }
+    pub fn push_filters(mut self, mut filters: Vec<Filter>) -> Self {
+        self.filters.append(&mut filters);
+        self
+    }
+    pub fn with_nested_includes(mut self, nested: Vec<RelationFilter>) -> Self {
+        self.nested_includes = nested;
+        self
+    }
+    pub fn take(mut self, n: i64) -> Self {
+        self.take = Some(n);
+        self
+    }
+    pub fn skip(mut self, n: i64) -> Self {
+        self.skip = Some(n);
+        self
+    }
 }
 
 /// Central PCR-like include builder that accumulates generic include state
@@ -221,16 +261,36 @@ pub struct IncludeBuilderCore {
 }
 
 impl IncludeBuilderCore {
-    pub fn new() -> Self { Self::default() }
-    pub fn push_filters(&mut self, filters: Vec<Filter>) { self.filters.extend(filters); }
-    pub fn push_order_pairs(&mut self, pairs: Vec<(String, SortOrder)>) { self.order_by.extend(pairs); }
-    pub fn set_select_aliases(&mut self, aliases: Vec<String>) { self.nested_select_aliases = Some(aliases); }
-    pub fn with_nested(&mut self, include: RelationFilter) { self.nested_includes.push(include); }
-    pub fn set_take(&mut self, n: i64) { self.take = Some(n); }
-    pub fn set_skip(&mut self, n: i64) { self.skip = Some(n); }
-    pub fn set_cursor_id(&mut self, id: i32) { self.cursor_id = Some(id); }
-    pub fn enable_count(&mut self) { self.include_count = true; }
-    pub fn enable_distinct(&mut self) { self.distinct = true; }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn push_filters(&mut self, filters: Vec<Filter>) {
+        self.filters.extend(filters);
+    }
+    pub fn push_order_pairs(&mut self, pairs: Vec<(String, SortOrder)>) {
+        self.order_by.extend(pairs);
+    }
+    pub fn set_select_aliases(&mut self, aliases: Vec<String>) {
+        self.nested_select_aliases = Some(aliases);
+    }
+    pub fn with_nested(&mut self, include: RelationFilter) {
+        self.nested_includes.push(include);
+    }
+    pub fn set_take(&mut self, n: i64) {
+        self.take = Some(n);
+    }
+    pub fn set_skip(&mut self, n: i64) {
+        self.skip = Some(n);
+    }
+    pub fn set_cursor_id(&mut self, id: i32) {
+        self.cursor_id = Some(id);
+    }
+    pub fn enable_count(&mut self) {
+        self.include_count = true;
+    }
+    pub fn enable_distinct(&mut self) {
+        self.distinct = true;
+    }
     pub fn build(self, relation: &'static str) -> RelationFilter {
         RelationFilter {
             relation,
@@ -305,38 +365,37 @@ impl RelationCondition {
 }
 
 /// Trait for dynamic relation fetching
-pub trait RelationFetcher<C: sea_orm::ConnectionTrait, ModelWithRelations> {
+pub trait RelationFetcher<C: sea_orm::ConnectionTrait, Selected> {
     fn fetch_relation_for_model<'a>(
         &'a self,
         conn: &'a C,
-        model_with_relations: &'a mut ModelWithRelations,
+        selected: &'a mut Selected,
         relation_name: &'a str,
         filters: &'a [Filter],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>;
 }
 
 // Provide a default no-op implementation for all types
-impl<C: sea_orm::ConnectionTrait, ModelWithRelations> RelationFetcher<C, ModelWithRelations>
-    for ()
-{
+impl<C: sea_orm::ConnectionTrait, Selected> RelationFetcher<C, Selected> for () {
     fn fetch_relation_for_model<'a>(
         &'a self,
         _conn: &'a C,
-        _model_with_relations: &'a mut ModelWithRelations,
+        _selected: &'a mut Selected,
         _relation_name: &'a str,
         _filters: &'a [Filter],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>
+    {
         Box::pin(async { Ok(()) })
     }
 }
 
 /// Descriptor for a relation, used for dynamic lookup
-pub struct RelationDescriptor<ModelWithRelations> {
+pub struct RelationDescriptor<Selected> {
     pub name: &'static str,
     // Function to set the relation field on the model
-    pub set_field: fn(&mut ModelWithRelations, Box<dyn Any + Send>),
+    pub set_field: fn(&mut Selected, Box<dyn Any + Send>),
     // Function to get the foreign key value from the model
-    pub get_foreign_key: fn(&ModelWithRelations) -> Option<i32>,
+    pub get_foreign_key: fn(&Selected) -> Option<i32>,
     // The target entity name for the relation
     pub target_entity: &'static str,
     // The foreign key column name
@@ -351,6 +410,8 @@ pub struct RelationDescriptor<ModelWithRelations> {
     pub current_primary_key_field_name: &'static str,
     // The target entity's primary key column name
     pub target_primary_key_column: &'static str,
+    // The target entity name extracted from "to" attribute (for runtime primary key resolution)
+    pub target_entity_name: Option<&'static str>,
     // Whether the foreign key is nullable
     pub is_foreign_key_nullable: bool,
     // Whether this relation is has_many
@@ -361,16 +422,22 @@ pub struct RelationDescriptor<ModelWithRelations> {
 pub trait EntitySelection: Sized {
     /// Fill a selection from a query row using aliased field names
     fn fill_from_row(row: &sea_orm::QueryResult, fields: &[&str]) -> Self;
-    /// Clear any scalar fields that were not explicitly selected
-    fn clear_unselected(&mut self, allowed: &[&str]);
     /// Set relation field value by relation name
     fn set_relation(&mut self, relation_name: &str, value: Box<dyn Any + Send>);
     /// Extract i32 scalar by rust field name if present (legacy helper)
     fn get_i32(&self, field_name: &str) -> Option<i32>;
     /// Extract field value as a database Value by rust field name, if present
-    fn get_value_as_db_value(&self, _field_name: &str) -> Option<sea_orm::Value> { None }
+    fn get_value_as_db_value(&self, _field_name: &str) -> Option<sea_orm::Value> {
+        None
+    }
     /// Map an alias/rust field name to a column expression for implicit selection
-    fn column_for_alias(alias: &str) -> Option<sea_query::SimpleExpr> where Self: Sized { let _ = alias; None }
+    fn column_for_alias(alias: &str) -> Option<sea_query::SimpleExpr>
+    where
+        Self: Sized,
+    {
+        let _ = alias;
+        None
+    }
 }
 
 /// Helper trait to extract primary key value generically from ModelWithRelations
@@ -379,7 +446,9 @@ pub trait ExtractPkValue {
 }
 // Default no-op; entity macro will implement on ModelWithRelations if needed
 impl<T> ExtractPkValue for T {
-    fn extract_pk_value(&self, _pk_field_name: &str) -> Option<sea_orm::Value> { None }
+    fn extract_pk_value(&self, _pk_field_name: &str) -> Option<sea_orm::Value> {
+        None
+    }
 }
 
 /// Trait implemented by per-entity Selected holder to construct from full model
@@ -388,14 +457,29 @@ pub trait BuildSelectedFromModel<Model>: Sized {
 }
 
 /// Trait for types that provide relation metadata
-pub trait HasRelationMetadata<ModelWithRelations> {
-    fn relation_descriptors() -> &'static [RelationDescriptor<ModelWithRelations>];
-    fn get_relation_descriptor(
-        name: &str,
-    ) -> Option<&'static RelationDescriptor<ModelWithRelations>> {
+pub trait HasRelationMetadata<Selected> {
+    fn relation_descriptors() -> &'static [RelationDescriptor<Selected>];
+    fn get_relation_descriptor(name: &str) -> Option<&'static RelationDescriptor<Selected>> {
         Self::relation_descriptors()
             .iter()
             .find(|desc| desc.name == name)
+    }
+}
+
+/// Trait for defensive field fetching - allows entities to specify which fields
+/// should be automatically included for relation fetching
+pub trait DefensiveFieldFetcher {
+    /// Returns a list of field names that should be defensively fetched
+    /// for the given relation. These fields will be automatically included
+    /// in queries even if not explicitly selected.
+    fn defensive_fields_for_relation(relation_name: &str) -> Vec<&'static str>;
+
+    /// Returns all fields that should be defensively fetched for any relation
+    fn all_defensive_fields() -> Vec<&'static str>;
+
+    /// Checks if a field should be defensively fetched for a specific relation
+    fn should_defensively_fetch(field_name: &str, relation_name: &str) -> bool {
+        Self::defensive_fields_for_relation(relation_name).contains(&field_name)
     }
 }
 
@@ -422,7 +506,9 @@ where
 {
     type Entity = E;
     type Data = D;
-    fn collect_aliases(self) -> Vec<String> { self.aliases }
+    fn collect_aliases(self) -> Vec<String> {
+        self.aliases
+    }
 }
 
 /// Helper to construct a typed selection marker
@@ -431,7 +517,10 @@ where
     E: sea_orm::EntityTrait,
     D: EntitySelection + HasRelationMetadata<D> + Send + 'static,
 {
-    TypedSelection { aliases, _phantom: std::marker::PhantomData }
+    TypedSelection {
+        aliases,
+        _phantom: std::marker::PhantomData,
+    }
 }
 
 /// Helper to construct a typed selection marker without placing types in generic args at callsite
@@ -444,7 +533,10 @@ where
     E: sea_orm::EntityTrait,
     D: EntitySelection + HasRelationMetadata<D> + Send + 'static,
 {
-    TypedSelection { aliases, _phantom: std::marker::PhantomData }
+    TypedSelection {
+        aliases,
+        _phantom: std::marker::PhantomData,
+    }
 }
 
 // Macro helper to construct TypedSelection for a module path without exposing type paths in the callsite macro body
@@ -452,8 +544,25 @@ where
 
 /// Trait for dynamic entity fetching without hardcoding
 pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
-    /// Fetch entities by foreign key value
+    /// Fetch entities by foreign key value (legacy - returns Box<dyn Any + Send>)
     fn fetch_by_foreign_key<'a>(
+        &'a self,
+        conn: &'a C,
+        foreign_key_value: Option<i32>,
+        foreign_key_column: &'a str,
+        target_entity: &'a str,
+        relation_name: &'a str,
+        filter: &'a RelationFilter,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<Box<dyn Any + Send>, sea_orm::DbErr>>
+                + Send
+                + 'a,
+        >,
+    >;
+
+    /// Fetch entities by foreign key value with selection (returns Selected types directly)
+    fn fetch_by_foreign_key_with_selection<'a>(
         &'a self,
         conn: &'a C,
         foreign_key_value: Option<i32>,
@@ -557,7 +666,7 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
                 distinct: false,
             };
             fetcher
-                .fetch_by_foreign_key(
+                .fetch_by_foreign_key_with_selection(
                     conn,
                     foreign_key_value,
                     foreign_key_column,
@@ -664,7 +773,8 @@ pub trait BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
 where
     C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
     T: MergeInto<ActiveModel>,
 {
@@ -675,17 +785,27 @@ where
 
 impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
     BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
-    for crate::query_builders::HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    for crate::query_builders::HasManySetUpdateQueryBuilder<
+        'a,
+        C,
+        Entity,
+        ActiveModel,
+        ModelWithRelations,
+        T,
+    >
 where
     C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
     T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
     <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
 {
     type Output = ModelWithRelations;
-    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> { unreachable!() }
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {
+        unreachable!()
+    }
     fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
         match result {
             BatchResult::Update(m) => m,
@@ -701,7 +821,8 @@ impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
 where
     C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
     T: MergeInto<ActiveModel>,
     <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
@@ -724,7 +845,8 @@ impl<'a, C, Entity, ActiveModel, ModelWithRelations>
 where
     C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
 {
     type Output = ModelWithRelations;
@@ -745,7 +867,8 @@ impl<'a, C, Entity, ActiveModel, ModelWithRelations>
 where
     C: sea_orm::ConnectionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
 {
     type Output = ModelWithRelations;
@@ -798,10 +921,10 @@ macro_rules! impl_tuple_batch_container {
 pub trait SetParamInfo {
     /// Check if this is a has_many set operation
     fn is_has_many_set_operation(&self) -> bool;
-    
+
     /// Extract the relation name from a has_many set operation
     fn extract_relation_name(&self) -> Option<&'static str>;
-    
+
     /// Extract target IDs from a has_many set operation
     fn extract_target_ids(&self) -> Vec<sea_orm::Value>;
 
@@ -834,10 +957,16 @@ impl ConditionInfo for sea_orm::Condition {
         // Best-effort parsing of debug string until a typed API is available
         let condition_str = format!("{:?}", self);
 
-        fn try_extract_id_pattern(condition_str: &str, pattern: &str, pattern_len: usize) -> Option<i32> {
+        fn try_extract_id_pattern(
+            condition_str: &str,
+            pattern: &str,
+            pattern_len: usize,
+        ) -> Option<i32> {
             condition_str.find(pattern).and_then(|id_start| {
                 let after_pattern = &condition_str[id_start + pattern_len..];
-                let id_end = after_pattern.find(')').or_else(|| after_pattern.find(' '))?;
+                let id_end = after_pattern
+                    .find(')')
+                    .or_else(|| after_pattern.find(' '))?;
                 let id_str = &after_pattern[..id_end];
                 id_str.parse::<i32>().ok()
             })
