@@ -19,55 +19,108 @@ pub enum CausticsError {
     DeferredLookupFailed { target: String, detail: String },
     NotFoundForCondition { entity: String, condition: String },
     QueryValidation { message: String },
+    
+    // Client initialization errors
+    NewClientError { message: String, cause: Option<String> },
+    
+    // Specific operation errors
+    CreateError { entity: String, message: String },
+    UpdateError { entity: String, message: String },
+    DeleteError { entity: String, message: String },
+    FindError { entity: String, message: String },
+    BatchError { operation: String, message: String },
+    TransactionError { message: String },
+    
+    // Type system errors
+    TypeConversionError { from_type: String, to_type: String, value: String },
+    InvalidFieldType { field: String, expected: String, actual: String },
+    
+    // Configuration errors
+    MissingConfiguration { component: String, required: String },
+    InvalidConfiguration { component: String, message: String },
+    
+    // Database connection errors
+    ConnectionError { message: String },
+    DatabaseError { operation: String, message: String },
 }
 
 impl core::fmt::Display for CausticsError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            // Include/Relation errors
             CausticsError::RelationNotFound { relation } => {
-                write!(
-                    f,
-                    "CausticsError::RelationNotFound: relation='{}'",
-                    relation
-                )
+                write!(f, "CausticsError::RelationNotFound: relation='{}'", relation)
             }
             CausticsError::InvalidIncludePath { relation } => {
-                write!(
-                    f,
-                    "CausticsError::InvalidIncludePath: relation='{}'",
-                    relation
-                )
+                write!(f, "CausticsError::InvalidIncludePath: relation='{}'", relation)
             }
             CausticsError::RelationNotFetched { relation, reason } => {
-                write!(
-                    f,
-                    "CausticsError::RelationNotFetched: relation='{}' reason='{}'",
-                    relation, reason
-                )
+                write!(f, "CausticsError::RelationNotFetched: relation='{}' reason='{}'", relation, reason)
             }
             CausticsError::EntityFetcherMissing { entity } => {
-                write!(
-                    f,
-                    "CausticsError::EntityFetcherMissing: entity='{}'",
-                    entity
-                )
+                write!(f, "CausticsError::EntityFetcherMissing: entity='{}'", entity)
             }
             CausticsError::DeferredLookupFailed { target, detail } => {
-                write!(
-                    f,
-                    "CausticsError::DeferredLookupFailed: target='{}' detail='{}'",
-                    target, detail
-                )
+                write!(f, "CausticsError::DeferredLookupFailed: target='{}' detail='{}'", target, detail)
             }
             CausticsError::NotFoundForCondition { entity, condition } => {
-                write!(
-                    f,
-                    "CausticsError::NotFoundForCondition: entity='{}' condition='{}'",
-                    entity, condition
-                )
+                write!(f, "CausticsError::NotFoundForCondition: entity='{}' condition='{}'", entity, condition)
             }
             CausticsError::QueryValidation { message } => {
                 write!(f, "CausticsError::QueryValidation: {}", message)
+            }
+            
+            // Client initialization errors
+            CausticsError::NewClientError { message, cause } => {
+                if let Some(cause) = cause {
+                    write!(f, "CausticsError::NewClientError: {} (caused by: {})", message, cause)
+                } else {
+                    write!(f, "CausticsError::NewClientError: {}", message)
+                }
+            }
+            
+            // Specific operation errors
+            CausticsError::CreateError { entity, message } => {
+                write!(f, "CausticsError::CreateError: entity='{}' message='{}'", entity, message)
+            }
+            CausticsError::UpdateError { entity, message } => {
+                write!(f, "CausticsError::UpdateError: entity='{}' message='{}'", entity, message)
+            }
+            CausticsError::DeleteError { entity, message } => {
+                write!(f, "CausticsError::DeleteError: entity='{}' message='{}'", entity, message)
+            }
+            CausticsError::FindError { entity, message } => {
+                write!(f, "CausticsError::FindError: entity='{}' message='{}'", entity, message)
+            }
+            CausticsError::BatchError { operation, message } => {
+                write!(f, "CausticsError::BatchError: operation='{}' message='{}'", operation, message)
+            }
+            CausticsError::TransactionError { message } => {
+                write!(f, "CausticsError::TransactionError: {}", message)
+            }
+            
+            // Type system errors
+            CausticsError::TypeConversionError { from_type, to_type, value } => {
+                write!(f, "CausticsError::TypeConversionError: cannot convert '{}' from {} to {}", value, from_type, to_type)
+            }
+            CausticsError::InvalidFieldType { field, expected, actual } => {
+                write!(f, "CausticsError::InvalidFieldType: field='{}' expected='{}' actual='{}'", field, expected, actual)
+            }
+            
+            // Configuration errors
+            CausticsError::MissingConfiguration { component, required } => {
+                write!(f, "CausticsError::MissingConfiguration: component='{}' requires='{}'", component, required)
+            }
+            CausticsError::InvalidConfiguration { component, message } => {
+                write!(f, "CausticsError::InvalidConfiguration: component='{}' message='{}'", component, message)
+            }
+            
+            // Database connection errors
+            CausticsError::ConnectionError { message } => {
+                write!(f, "CausticsError::ConnectionError: {}", message)
+            }
+            CausticsError::DatabaseError { operation, message } => {
+                write!(f, "CausticsError::DatabaseError: operation='{}' message='{}'", operation, message)
             }
         }
     }
@@ -76,6 +129,209 @@ impl core::fmt::Display for CausticsError {
 impl From<CausticsError> for sea_orm::DbErr {
     fn from(err: CausticsError) -> Self {
         sea_orm::DbErr::Custom(err.to_string())
+    }
+}
+
+impl CausticsError {
+    /// Create a new client initialization error
+    pub fn new_client_error(message: impl Into<String>) -> Self {
+        Self::NewClientError {
+            message: message.into(),
+            cause: None,
+        }
+    }
+
+    /// Create a new client initialization error with a cause
+    pub fn new_client_error_with_cause(message: impl Into<String>, cause: impl Into<String>) -> Self {
+        Self::NewClientError {
+            message: message.into(),
+            cause: Some(cause.into()),
+        }
+    }
+
+    /// Create a relation not fetched error
+    pub fn relation_not_fetched(relation: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::RelationNotFetched {
+            relation: relation.into(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Create a create operation error
+    pub fn create_error(entity: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::CreateError {
+            entity: entity.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create an update operation error
+    pub fn update_error(entity: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::UpdateError {
+            entity: entity.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a delete operation error
+    pub fn delete_error(entity: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::DeleteError {
+            entity: entity.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a find operation error
+    pub fn find_error(entity: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::FindError {
+            entity: entity.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a batch operation error
+    pub fn batch_error(operation: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::BatchError {
+            operation: operation.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a transaction error
+    pub fn transaction_error(message: impl Into<String>) -> Self {
+        Self::TransactionError {
+            message: message.into(),
+        }
+    }
+
+    /// Create a type conversion error
+    pub fn type_conversion_error(from_type: impl Into<String>, to_type: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::TypeConversionError {
+            from_type: from_type.into(),
+            to_type: to_type.into(),
+            value: value.into(),
+        }
+    }
+
+    /// Create an invalid field type error
+    pub fn invalid_field_type(field: impl Into<String>, expected: impl Into<String>, actual: impl Into<String>) -> Self {
+        Self::InvalidFieldType {
+            field: field.into(),
+            expected: expected.into(),
+            actual: actual.into(),
+        }
+    }
+
+    /// Create a missing configuration error
+    pub fn missing_configuration(component: impl Into<String>, required: impl Into<String>) -> Self {
+        Self::MissingConfiguration {
+            component: component.into(),
+            required: required.into(),
+        }
+    }
+
+    /// Create an invalid configuration error
+    pub fn invalid_configuration(component: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::InvalidConfiguration {
+            component: component.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a connection error
+    pub fn connection_error(message: impl Into<String>) -> Self {
+        Self::ConnectionError {
+            message: message.into(),
+        }
+    }
+
+    /// Create a database error
+    pub fn database_error(operation: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::DatabaseError {
+            operation: operation.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Check if this is a recoverable error
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            // Connection errors might be recoverable
+            Self::ConnectionError { .. } => true,
+            // Database errors might be recoverable depending on the operation
+            Self::DatabaseError { .. } => true,
+            // Configuration errors are not recoverable
+            Self::MissingConfiguration { .. } | Self::InvalidConfiguration { .. } => false,
+            // Type errors are not recoverable
+            Self::TypeConversionError { .. } | Self::InvalidFieldType { .. } => false,
+            // Other errors depend on context
+            _ => false,
+        }
+    }
+
+    /// Get a user-friendly error message
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::RelationNotFound { relation } => {
+                format!("Relation '{}' not found. Please check your model definitions.", relation)
+            }
+            Self::RelationNotFetched { relation, reason } => {
+                format!("Relation '{}' could not be fetched: {}", relation, reason)
+            }
+            Self::EntityFetcherMissing { entity } => {
+                format!("No fetcher found for entity '{}'. Please ensure the entity is properly configured.", entity)
+            }
+            Self::NotFoundForCondition { entity, condition } => {
+                format!("No {} found matching the specified condition: {}", entity, condition)
+            }
+            Self::QueryValidation { message } => {
+                format!("Query validation failed: {}", message)
+            }
+            Self::NewClientError { message, cause } => {
+                if let Some(cause) = cause {
+                    format!("Failed to initialize Caustics client: {} (caused by: {})", message, cause)
+                } else {
+                    format!("Failed to initialize Caustics client: {}", message)
+                }
+            }
+            Self::CreateError { entity, message } => {
+                format!("Failed to create {}: {}", entity, message)
+            }
+            Self::UpdateError { entity, message } => {
+                format!("Failed to update {}: {}", entity, message)
+            }
+            Self::DeleteError { entity, message } => {
+                format!("Failed to delete {}: {}", entity, message)
+            }
+            Self::FindError { entity, message } => {
+                format!("Failed to find {}: {}", entity, message)
+            }
+            Self::BatchError { operation, message } => {
+                format!("Batch {} operation failed: {}", operation, message)
+            }
+            Self::TransactionError { message } => {
+                format!("Transaction failed: {}", message)
+            }
+            Self::TypeConversionError { from_type, to_type, value } => {
+                format!("Cannot convert '{}' from {} to {}", value, from_type, to_type)
+            }
+            Self::InvalidFieldType { field, expected, actual } => {
+                format!("Field '{}' has invalid type: expected {}, got {}", field, expected, actual)
+            }
+            Self::MissingConfiguration { component, required } => {
+                format!("Missing configuration for {}: {}", component, required)
+            }
+            Self::InvalidConfiguration { component, message } => {
+                format!("Invalid configuration for {}: {}", component, message)
+            }
+            Self::ConnectionError { message } => {
+                format!("Database connection error: {}", message)
+            }
+            Self::DatabaseError { operation, message } => {
+                format!("Database {} operation failed: {}", operation, message)
+            }
+            _ => self.to_string(),
+        }
     }
 }
 
@@ -1018,3 +1274,151 @@ impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
 impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
 
 impl_tuple_batch_container!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p);
+
+/// Enhanced error handling utilities
+pub mod error_handling {
+    use super::CausticsError;
+    use std::fmt;
+
+    /// Error context for better error reporting
+    #[derive(Debug, Clone)]
+    pub struct ErrorContext {
+        pub operation: String,
+        pub entity: Option<String>,
+        pub field: Option<String>,
+        pub relation: Option<String>,
+        pub additional_info: Option<String>,
+    }
+
+    impl ErrorContext {
+        pub fn new(operation: impl Into<String>) -> Self {
+            Self {
+                operation: operation.into(),
+                entity: None,
+                field: None,
+                relation: None,
+                additional_info: None,
+            }
+        }
+
+        pub fn with_entity(mut self, entity: impl Into<String>) -> Self {
+            self.entity = Some(entity.into());
+            self
+        }
+
+        pub fn with_field(mut self, field: impl Into<String>) -> Self {
+            self.field = Some(field.into());
+            self
+        }
+
+        pub fn with_relation(mut self, relation: impl Into<String>) -> Self {
+            self.relation = Some(relation.into());
+            self
+        }
+
+        pub fn with_info(mut self, info: impl Into<String>) -> Self {
+            self.additional_info = Some(info.into());
+            self
+        }
+    }
+
+    /// Enhanced error with context
+    #[derive(Debug, Clone)]
+    pub struct ContextualError {
+        pub error: CausticsError,
+        pub context: ErrorContext,
+    }
+
+    impl ContextualError {
+        pub fn new(error: CausticsError, context: ErrorContext) -> Self {
+            Self { error, context }
+        }
+
+        pub fn with_context(error: CausticsError, operation: impl Into<String>) -> Self {
+            Self {
+                error,
+                context: ErrorContext::new(operation),
+            }
+        }
+    }
+
+    impl fmt::Display for ContextualError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{} (operation: {}", self.error, self.context.operation)?;
+            
+            if let Some(entity) = &self.context.entity {
+                write!(f, ", entity: {}", entity)?;
+            }
+            if let Some(field) = &self.context.field {
+                write!(f, ", field: {}", field)?;
+            }
+            if let Some(relation) = &self.context.relation {
+                write!(f, ", relation: {}", relation)?;
+            }
+            if let Some(info) = &self.context.additional_info {
+                write!(f, ", info: {}", info)?;
+            }
+            
+            write!(f, ")")
+        }
+    }
+
+    impl From<ContextualError> for sea_orm::DbErr {
+        fn from(err: ContextualError) -> Self {
+            sea_orm::DbErr::Custom(err.to_string())
+        }
+    }
+
+    /// Trait for operations that can provide error context
+    pub trait ErrorContextProvider {
+        fn error_context(&self) -> ErrorContext;
+    }
+
+    /// Helper for creating contextual errors
+    pub fn contextual_error(
+        error: CausticsError,
+        operation: impl Into<String>,
+    ) -> ContextualError {
+        ContextualError::with_context(error, operation)
+    }
+
+    /// Helper for creating contextual errors with entity
+    pub fn contextual_error_with_entity(
+        error: CausticsError,
+        operation: impl Into<String>,
+        entity: impl Into<String>,
+    ) -> ContextualError {
+        let context = ErrorContext::new(operation).with_entity(entity);
+        ContextualError::new(error, context)
+    }
+}
+
+/// Error handling macros for common patterns
+#[macro_export]
+macro_rules! caustics_error {
+    ($error_type:ident, $($field:ident: $value:expr),*) => {
+        CausticsError::$error_type {
+            $($field: $value.into()),*
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! caustics_result {
+    ($expr:expr) => {
+        $expr.map_err(|e| CausticsError::from(e))
+    };
+}
+
+#[macro_export]
+macro_rules! caustics_contextual_error {
+    ($error:expr, $operation:expr) => {
+        error_handling::ContextualError::with_context($error, $operation)
+    };
+    ($error:expr, $operation:expr, $entity:expr) => {
+        error_handling::ContextualError::new(
+            $error,
+            error_handling::ErrorContext::new($operation).with_entity($entity)
+        )
+    };
+}

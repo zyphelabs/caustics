@@ -9,7 +9,9 @@ use syn::{DeriveInput, Error, File};
 
 mod common;
 mod entity;
+mod errors;
 mod primary_key;
+mod validation;
 mod where_param;
 
 #[proc_macro_attribute]
@@ -161,8 +163,10 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
             let mod_ident = &ast.ident;
             let full_mod_path: syn::Path =
                 syn::parse_str(&format!("crate::{}", mod_ident)).unwrap();
-            let generated =
-                entity::generate_entity(model_ast, relation_ast, namespace, &full_mod_path);
+            let generated = match entity::generate_entity(model_ast, relation_ast, namespace, &full_mod_path) {
+                Ok(tokens) => tokens,
+                Err(error_tokens) => return error_tokens.into(),
+            };
 
             // Parse the generated items into a File
             let generated_file = match syn::parse2::<File>(generated) {

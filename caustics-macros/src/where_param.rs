@@ -87,7 +87,7 @@ pub fn generate_where_param_logic(
             quote! {} // Don't generate equals for unique fields since unique_where_fn already has it
         };
 
-        // Field-level `not` alias (PCR-style): maps to NotEquals with same value type
+        // Field-level `not` alias: maps to NotEquals with same value type
         let field_not_alias = quote! {
             pub fn not<T: Into<#ty>>(value: T) -> WhereParam {
                 WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
@@ -427,10 +427,11 @@ fn generate_where_params_to_condition_function(
         let target = &relation.target;
 
         // Get the foreign key column identifier
-        let foreign_key_column_ident = if let Some(fk_col) = &relation.foreign_key_column {
-            format_ident!("{}", fk_col.to_pascal_case())
-        } else {
-            format_ident!("Id") // fallback
+        let foreign_key_column_ident = match &relation.foreign_key_column {
+            Some(fk_col) => format_ident!("{}", fk_col.to_pascal_case()),
+            None => {
+                panic!("No foreign key column specified for relation '{}'.\n\nPlease add 'to' attribute with target column.\n\nExample:\n    #[sea_orm(\n        has_many = \"super::post::Entity\",\n        from = \"Column::UserId\",\n        to = \"super::post::Column::AuthorId\"\n    )]\n    posts: Vec<Post>,", relation.name)
+            }
         };
 
         // Get the foreign key column name as string
@@ -441,7 +442,7 @@ fn generate_where_params_to_condition_function(
             // Use the relation's primary key field if available
             pk_field.to_string()
         } else {
-            // No fallback - this should be configured in the relation definition
+            // This should be configured in the relation definition
             panic!("No foreign key column or primary key field specified for relation '{}'. Please specify either foreign_key_column or primary_key_field in the relation definition.", relation.name)
         };
 
@@ -454,7 +455,9 @@ fn generate_where_params_to_condition_function(
         let current_table_name_str = relation
             .current_table_name
             .as_ref()
-            .unwrap_or(&"unknown".to_string())
+            .unwrap_or_else(|| {
+                panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
+            })
             .to_string();
 
         // Generate completely agnostic field mappings that work with any entity
@@ -544,7 +547,7 @@ fn generate_where_params_to_condition_function(
             use sea_query::Condition;
 
             // Type-safe field handling - direct FieldOp matching
-            // Fallback to no-op Condition for unsupported operations
+            // Return no-op Condition for unsupported operations
             match &filter.operation {
                 caustics::FieldOp::Equals(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
@@ -686,7 +689,6 @@ fn generate_where_params_to_condition_function(
                             &format!("(\"{}\".{} IS NULL OR json_type(\"{}\".{}, '$') = 'null')", table_name, filter.field, table_name, filter.field), Vec::<sea_orm::Value>::new())),
                     }
                 },
-                // JsonNull handled at callsite via composing filters; no-op placeholder removed
                 // Relation operations (should not be used in field mappings) -> no-op
                 caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => Condition::all(),
                 _ => Condition::all(),

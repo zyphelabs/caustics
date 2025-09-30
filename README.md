@@ -640,10 +640,10 @@ Caustics provides Prisma-like aggregate and group-by APIs with typed field selec
 let agg = client
     .user()
     .aggregate(vec![user::age::is_not_null()])
-    .select_count()
-    .select_avg_typed(user::AvgSelect::Age, "age_avg")
-    .select_min_typed(user::MinSelect::Age, "age_min")
-    .select_max_typed(user::MaxSelect::Age, "age_max")
+    .count()
+    .avg(user::AvgSelect::Age, "age_avg")
+    .min(user::MinSelect::Age, "age_min")
+    .max(user::MaxSelect::Age, "age_max")
     .exec()
     .await?;
 
@@ -654,8 +654,8 @@ let avg = agg.values.get("age_avg");
 let rows = client
     .user()
     .group_by(vec![user::GroupByFieldParam::Age], vec![])
-    .select_count("cnt")
-    .select_sum(user::SumSelect::Age, "age_sum")
+    .count("cnt")
+    .sum(user::SumSelect::Age, "age_sum")
     .having_sum_gte(user::SumSelect::Age, 20)
     .exec()
     .await?;

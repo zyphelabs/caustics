@@ -113,10 +113,10 @@
 
 ### 14. Comprehensive Error Handling
 - [x] Update returns `CausticsError::NotFoundForCondition` (entity, condition)
-- [ ] `RelationNotFetchedError` type
-- [ ] `NewClientError` type
-- [ ] Specific error types for different operations
-- [ ] Better error messages and context
+- [x] `RelationNotFetchedError` type
+- [x] `NewClientError` type
+- [x] Specific error types for different operations
+- [x] Better error messages and context
 
 ### 15. Advanced Query Building
 - [ ] `ManyArgs` with complex parameter structures
@@ -124,11 +124,6 @@
 - [ ] `OrderByWithRelationParam` for relation ordering
 - [ ] `OrderByRelationAggregateParam` for aggregate ordering
 
-### 16. Data Model Integration
-- [ ] Schema introspection capabilities
-- [ ] `DATAMODEL_STR` for schema awareness
-- [ ] `DATABASE_STR` for database type detection
-- [ ] Automatic schema validation
 
 ## Implementation Notes
 
@@ -143,13 +138,13 @@
 - [x] Add new filter types to `caustics/src/types.rs` (generic `FieldOp`, `RelationCondition`)
 - [x] Create JSON-specific filter types (operators via existing enums)
 - [x] Add atomic operation types (via macro-generated SetParam variants)
-- [ ] Enhance error type system
+- [x] Enhance error type system
 
 ### Query Builder Updates
 - [x] Operator support integrated in builders (macros + per-builder handling)
-- [ ] Add raw SQL query builders
-- [ ] Enhance batch operation support
-- [ ] Add relation-specific query builders
+- [x] Add raw SQL query builders
+- [x] Enhance batch operation support
+- [x] Add relation-specific query builders
 
 ### Testing Requirements
 - [x] Unit/integration test for case-insensitive string search (see school_test.rs)
@@ -190,18 +185,18 @@ Completed parity
 - [x] Field selection optimization wired to SQL (only requested columns fetched)
 - [x] Relation-level orderBy/take/skip/cursor/distinct inside include closures
 - [x] Distinct emulation via GROUP BY for specific fields (cross-backend)
-
-Remaining gaps
 - [x] Nested select/include trees (selecting scalars on included relations; nested includes)
 - [x] Relation-level orderBy/take/skip inside include args (e.g., include: { posts: { take: 5, orderBy: ... } })
 - [x] Native DISTINCT ON for Postgres (wired via SeaQuery distinct_on with typed columns)
-- [ ] Error surface parity (typed errors like RelationNotFetched, QueryValidation) and error messages
+- [x] Error surface parity (typed errors like RelationNotFetched, QueryValidation) and error messages
 - [x] Raw SQL APIs (`_queryRaw`, `_executeRaw`) and result typing (PCR parity)
 - [x] Full batch API parity (batch update/delete/upsert builders consolidated)
-- [ ] Middlewares/hooks and transaction API parity with PCR
+- [x] Middlewares/hooks and transaction API parity with PCR
  - [x] JSON null handling flags (DbNull/JsonNull/AnyNull) with `FieldOp::JsonNull`
-- [ ] Schema introspection exposure (DATAMODEL_STR/DATABASE_STR) and validation helpers
 - [x] Advanced ordering options (NullsOrder First/Last, relation aggregates in orderBy)
+
+Remaining gaps
+- [ ] Advanced query building features (ManyArgs, UniqueArgs, OrderByWithRelationParam, OrderByRelationAggregateParam)
 
 ## Toolchain
 

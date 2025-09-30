@@ -93,12 +93,12 @@ where
         self
     }
 
-    pub fn select_count(mut self, alias: &'static str) -> Self {
+    pub fn count(mut self, alias: &'static str) -> Self {
         self.aggregates.push((Expr::cust("COUNT(*)"), alias));
         self
     }
 
-    pub fn select_min<Col: sea_orm::IntoSimpleExpr>(
+    pub fn min<Col: sea_orm::IntoSimpleExpr>(
         mut self,
         col: Col,
         alias: &'static str,
@@ -110,7 +110,7 @@ where
         self
     }
 
-    pub fn select_max<Col: sea_orm::IntoSimpleExpr>(
+    pub fn max<Col: sea_orm::IntoSimpleExpr>(
         mut self,
         col: Col,
         alias: &'static str,
@@ -122,7 +122,7 @@ where
         self
     }
 
-    pub fn select_sum<Col: sea_orm::IntoSimpleExpr>(
+    pub fn sum<Col: sea_orm::IntoSimpleExpr>(
         mut self,
         col: Col,
         alias: &'static str,
@@ -134,7 +134,7 @@ where
         self
     }
 
-    pub fn select_avg<Col: sea_orm::IntoSimpleExpr>(
+    pub fn avg<Col: sea_orm::IntoSimpleExpr>(
         mut self,
         col: Col,
         alias: &'static str,

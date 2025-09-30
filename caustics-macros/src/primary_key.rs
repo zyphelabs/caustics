@@ -2,7 +2,7 @@
 //! and provide reliable, factored functions for primary key access.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{Field, Type};
 
 /// Information about a primary key field
@@ -30,8 +30,19 @@ impl PrimaryKeyInfo {
                 if let syn::Meta::List(meta) = &attr.meta {
                     if meta.path.is_ident("sea_orm") {
                         // Parse sea_orm attributes to find column name
-                        // This is a simplified version - you might need more sophisticated parsing
-                        None // For now, use field name
+                        // Look for column_name = "..." in the attribute tokens
+                        let tokens = meta.tokens.to_string();
+                        if let Some(start) = tokens.find("column_name = \"") {
+                            let start = start + "column_name = \"".len();
+                            if let Some(end) = tokens[start..].find('"') {
+                                let column_name = &tokens[start..start + end];
+                                Some(column_name.to_string())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -105,41 +116,8 @@ pub fn extract_primary_key_info(fields: &[&Field]) -> Option<PrimaryKeyInfo> {
         return Some(PrimaryKeyInfo::from_field(field));
     }
 
-    // If no explicit primary key, try to find a field named "id" (common convention)
-    let id_field = fields.iter().find(|field| {
-        if let Some(ident) = &field.ident {
-            ident.to_string() == "id"
-        } else {
-            false
-        }
-    });
-
-    if let Some(field) = id_field {
-        return Some(PrimaryKeyInfo::from_field(field));
-    }
-
-    // If still no primary key found, try to find a field that looks like a primary key
-    // (e.g., auto-increment, unique, etc.)
-    let auto_increment_field = fields.iter().find(|field| {
-        field.attrs.iter().any(|attr| {
-            if let syn::Meta::List(meta) = &attr.meta {
-                meta.path.is_ident("sea_orm") && meta.tokens.to_string().contains("auto_increment")
-            } else {
-                false
-            }
-        })
-    });
-
-    if let Some(field) = auto_increment_field {
-        return Some(PrimaryKeyInfo::from_field(field));
-    }
-
-    // Last resort: find the first field that could be a primary key
-    // (typically the first field in the struct)
-    if let Some(field) = fields.first() {
-        return Some(PrimaryKeyInfo::from_field(field));
-    }
-
+    // No primary key found - return None instead of fallback assumptions
+    // This forces explicit configuration
     None
 }
 
@@ -164,26 +142,8 @@ pub fn get_primary_key_field_ident(fields: &[&Field]) -> proc_macro2::Ident {
         .expect("No primary key field found in entity. Please ensure at least one field is marked as primary key or named 'id'.")
 }
 
-/// Get primary key field name with fallback to a default value
-pub fn get_primary_key_field_name_with_fallback(fields: &[&Field], fallback: &str) -> String {
-    extract_primary_key_info(fields)
-        .map(|info| info.field_name)
-        .unwrap_or_else(|| fallback.to_string())
-}
-
-/// Get primary key column name with fallback to a default value
-pub fn get_primary_key_column_name_with_fallback(fields: &[&Field], fallback: &str) -> String {
-    extract_primary_key_info(fields)
-        .map(|info| info.column_name)
-        .unwrap_or_else(|| fallback.to_string())
-}
-
-/// Get primary key field identifier with fallback to a default value
-pub fn get_primary_key_field_ident_with_fallback(fields: &[&Field], fallback: &str) -> proc_macro2::Ident {
-    extract_primary_key_info(fields)
-        .map(|info| info.field_ident)
-        .unwrap_or_else(|| format_ident!("{}", fallback))
-}
+// Removed fallback functions - use fail-fast approach instead
+// If you need fallback behavior, use the non-fallback functions and handle None explicitly
 
 /// Generate a value parser for a specific field
 pub fn generate_field_value_parser(field_name: &str, field_type: &Type) -> TokenStream {

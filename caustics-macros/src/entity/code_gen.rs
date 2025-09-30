@@ -3,74 +3,35 @@ use crate::primary_key::{
     extract_primary_key_info, get_primary_key_column_name, get_primary_key_field_ident,
     get_primary_key_field_name,
 };
+use crate::validation::{validate_foreign_key_column, validate_table_name};
 use crate::where_param::generate_where_param_logic;
+use super::{extract_relations, generate_relation_submodules, RelationKind};
 use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields};
-
-#[derive(Debug, Clone)]
-pub struct Field {
-    pub name: String,
-    pub ty: String,
-    pub is_optional: bool,
-    pub is_primary_key: bool,
-    pub is_created_at: bool,
-    pub is_updated_at: bool,
-    pub column_name: Option<String>,
-}
-
-impl ToTokens for Field {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let name = format_ident!("{}", self.name);
-        let ty = syn::parse_str::<syn::Type>(&self.ty).unwrap();
-        tokens.extend(quote! { #name: #ty });
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Relation {
-    pub name: String,
-    pub target: syn::Path,
-    pub kind: RelationKind,
-    pub foreign_key_field: Option<String>,
-    pub foreign_key_type: Option<syn::Type>,
-    pub target_unique_param: Option<syn::Path>,
-    pub is_nullable: bool,
-    pub foreign_key_column: Option<String>,
-    pub primary_key_field: Option<String>,
-    pub target_entity_name: Option<String>, // Entity name extracted from "to" attribute
-    pub current_table_name: Option<String>,
-    pub target_table_name: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RelationKind {
-    HasMany,
-    BelongsTo,
-}
 
 pub fn generate_entity(
     model_ast: DeriveInput,
     relation_ast: DeriveInput,
     namespace: String,
     full_mod_path: &syn::Path,
-) -> TokenStream {
+) -> Result<TokenStream, proc_macro2::TokenStream> {
     // Extract fields
     let fields = match &model_ast.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields_named) => fields_named.named.iter().collect::<Vec<_>>(),
             _ => {
-                return quote! { compile_error!("#[caustics] requires a named-field struct for the Model"); };
+                return Err(quote! { compile_error!("#[caustics] requires a named-field struct for the Model"); });
             }
         },
         _ => {
-            return quote! { compile_error!("#[caustics] must be applied to a struct"); };
+            return Err(quote! { compile_error!("#[caustics] must be applied to a struct"); });
         }
     };
 
     // Extract current entity's table name
-    let current_table_name = extract_table_name(&model_ast);
+    let current_table_name = validate_table_name(&model_ast)?;
 
     // Extract relations from relation_ast
     let relations = extract_relations(&relation_ast, &fields, &current_table_name);
@@ -85,18 +46,35 @@ pub fn generate_entity(
         let rel_name_snake = rel.name.to_snake_case();
         relation_names.push(quote! { #rel_name_snake });
         let target = &rel.target;
-        let foreign_key_column = rel.foreign_key_column.as_ref().map_or("id", |v| v);
+        let foreign_key_column = validate_foreign_key_column(
+            &rel.name,
+            &rel.foreign_key_column,
+            proc_macro2::Span::call_site(),
+        )?;
         let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
         let foreign_key_column_snake = foreign_key_column.to_snake_case();
         let relation_name_str = rel.name.to_snake_case();
 
-        // Extract primary key field name at macro generation time
-        let target_primary_key = rel.primary_key_field.as_ref()
-            .map(|pk| pk.clone())
-            .unwrap_or_else(|| {
-                // Use a more descriptive fallback that indicates this should be configured
-                panic!("No primary key field specified for relation '{}'. Please specify the primary_key_field in the relation definition.", rel.name)
-            });
+        // Extract primary key field from the relation definition
+        // For belongs_to relations: the 'to' column is the primary key of the target entity
+        // For has_many relations: we need to resolve from the current entity's primary key
+        let target_primary_key = if let Some(pk_field) = &rel.primary_key_field {
+            // If explicitly specified in relation, use it
+            pk_field.clone()
+        } else {
+            // Extract from the relation based on relation type
+            match rel.kind {
+                RelationKind::BelongsTo => {
+                    // For belongs_to, the 'to' column is the primary key of the target entity
+                    // Example: to = "super::user::Column::Id" -> primary key is "id"
+                    foreign_key_column.clone()
+                }
+                RelationKind::HasMany => {
+                    // For has_many, we need to use the current entity's primary key
+                    current_primary_key.clone()
+                }
+            }
+        };
         let target_primary_key_lit = syn::LitStr::new(&target_primary_key, proc_macro2::Span::call_site());
         let target_primary_key_str = target_primary_key.clone();
 
@@ -208,7 +186,7 @@ pub fn generate_entity(
                         })
                         .collect::<String>();
                     // Always include primary key for relation traversal
-                    fields.insert("id");
+                    fields.insert(#current_primary_key);
                     fields
                 };
 
@@ -222,7 +200,7 @@ pub fn generate_entity(
 
                 // Apply database-level field selection using raw SQL approach (like main queries)
                 let vec_selected = if selected_fields_exprs.is_empty() {
-                    // Fallback: fetch all fields if no valid expressions found
+                    // Fetch all fields if no valid expressions found
                     let models = q_exec.all(conn).await?;
                     models.into_iter()
                         .map(|model| #target::Selected::from_model(model, &[]))
@@ -279,14 +257,36 @@ pub fn generate_entity(
                 + &target_primary_key_str[1..];
             let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
 
-            // Extract primary key field from relation definition
-            let target_primary_key = rel.primary_key_field.as_ref()
-                .map(|pk| pk.clone())
-                .unwrap_or_else(|| {
-                    // Use a more descriptive fallback that indicates this should be configured
-                    panic!("No primary key field specified for relation '{}'. Please specify the primary_key_field in the relation definition.", rel.name)
-                });
-            let target_foreign_keys = Vec::<String>::new(); // TODO: Extract from relation if available
+            // Extract primary key field from the relation definition
+            // For belongs_to relations: the 'to' column is the primary key of the target entity
+            // For has_many relations: we need to resolve from the current entity's primary key
+            let target_primary_key = if let Some(pk_field) = &rel.primary_key_field {
+                // If explicitly specified in relation, use it
+                pk_field.clone()
+            } else {
+                // Extract from the relation based on relation type
+                match rel.kind {
+                    RelationKind::BelongsTo => {
+                        // For belongs_to, the 'to' column is the primary key of the target entity
+                        // Example: to = "super::user::Column::Id" -> primary key is "id"
+                        rel.foreign_key_column.as_ref()
+                            .map(|col| col.clone())
+                            .unwrap_or_else(|| {
+                                panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
+                            })
+                    }
+                    RelationKind::HasMany => {
+                        // For has_many, we need to use the current entity's primary key
+                        current_primary_key.clone()
+                    }
+                }
+            };
+            // Extract foreign key information from the current relation
+            let target_foreign_keys = if let Some(fk_field) = &rel.foreign_key_field {
+                vec![fk_field.clone()]
+            } else {
+                Vec::new()
+            };
 
             if is_nullable_fk {
                 quote! {
@@ -336,7 +336,7 @@ pub fn generate_entity(
                                 
                                 // Apply database-level field selection using raw SQL approach (like main queries)
                                 let opt_selected = if selected_fields_exprs.is_empty() {
-                                    // Fallback: fetch all fields if no valid expressions found
+                                    // Fetch all fields if no valid expressions found
                                     let model = query.one(conn).await?;
                                     model.map(|m| #target_entity::Selected::from_model(m, &[]))
                                 } else {
@@ -422,7 +422,7 @@ pub fn generate_entity(
 
                             // Apply database-level field selection using raw SQL approach (like main queries)
                             let opt_selected = if selected_fields_exprs.is_empty() {
-                                // Fallback: fetch all fields if no valid expressions found
+                                // Fetch all fields if no valid expressions found
                                 let model = query.one(conn).await?;
                                 model.map(|m| #target_entity::Selected::from_model(m, &[]))
                             } else {
@@ -467,18 +467,35 @@ pub fn generate_entity(
     for rel in &relations {
         let rel_name_snake = rel.name.to_snake_case();
         let target = &rel.target;
-        let foreign_key_column = rel.foreign_key_column.as_ref().map_or("id", |v| v);
+        let foreign_key_column = validate_foreign_key_column(
+            &rel.name,
+            &rel.foreign_key_column,
+            proc_macro2::Span::call_site(),
+        )?;
         let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
         let foreign_key_column_str = foreign_key_column.to_snake_case();
         let relation_name_str = rel.name.to_snake_case();
 
-        // Extract primary key field name at macro generation time
-        let target_primary_key = rel.primary_key_field.as_ref()
-            .map(|pk| pk.clone())
-            .unwrap_or_else(|| {
-                // Use a more descriptive fallback that indicates this should be configured
-                panic!("No primary key field specified for relation '{}'. Please specify the primary_key_field in the relation definition.", rel.name)
-            });
+        // Extract primary key field from the relation definition
+        // For belongs_to relations: the 'to' column is the primary key of the target entity
+        // For has_many relations: we need to resolve from the current entity's primary key
+        let target_primary_key = if let Some(pk_field) = &rel.primary_key_field {
+            // If explicitly specified in relation, use it
+            pk_field.clone()
+        } else {
+            // Extract from the relation based on relation type
+            match rel.kind {
+                RelationKind::BelongsTo => {
+                    // For belongs_to, the 'to' column is the primary key of the target entity
+                    // Example: to = "super::user::Column::Id" -> primary key is "id"
+                    foreign_key_column.clone()
+                }
+                RelationKind::HasMany => {
+                    // For has_many, we need to use the current entity's primary key
+                    current_primary_key.clone()
+                }
+            }
+        };
         let target_primary_key_str = target_primary_key.clone();
 
         // Copy the exact same logic as ModelWithRelations version but change the final mapping to Selected
@@ -597,21 +614,16 @@ pub fn generate_entity(
                         }
                     }).collect::<String>();
                     // Always include primary key for relation traversal
-                    fields.insert("id");
+                    fields.insert(#current_primary_key);
                     // Add foreign key field for this relation
                     fields.insert(#foreign_key_column_str);
                     // Add all foreign key fields for nested relation traversal
                     // (Metadata system handles this dynamically)
                     
                     // Add foreign key fields for nested relation traversal
-                    // LIMITATION: Cannot implement truly dynamic solution without hardcoding field names
                     // The target entity's relation metadata is not available when generating source entity's relation fetchers
-                    // This is a fundamental architectural limitation of the current macro system
                     
-                    // TODO: Implement proper solution that either:
-                    // 1. Uses two-pass code generation to collect all entity metadata first
-                    // 2. Enhances macro architecture to access target entity metadata
-                    // 3. Implements runtime field discovery mechanism
+                    // Fallback to fetching all fields when target entity metadata is not available
                     fields
                 };
 
@@ -625,7 +637,7 @@ pub fn generate_entity(
 
                 // Apply database-level field selection using raw SQL approach (like main queries)
                 let selected_models = if selected_fields_exprs.is_empty() {
-                    // Fallback: fetch all fields if no valid expressions found
+                    // Fetch all fields if no valid expressions found
                 let models = q_exec.all(conn).await?;
                     models.into_iter().map(|m| #target::Selected::from_model(m, &[])).collect()
                 } else {
@@ -711,7 +723,7 @@ pub fn generate_entity(
                                         }
                                     }).collect::<String>();
                                     // Add primary key field dynamically
-                                    fields.insert("id");
+                                    fields.insert(#target_primary_key);
                                     // Add foreign key field for this relation
                                     fields.insert(#foreign_key_column_str);
                                     // Add all foreign key fields for nested relation traversal
@@ -728,20 +740,6 @@ pub fn generate_entity(
                                         }
                                     }
                                     
-                                    // Add foreign key fields for nested relation traversal
-                                    // Since we can't easily access target entity's relation metadata at this point,
-                                    // we'll include common foreign key field names that are likely to be needed
-                                    // This is a pragmatic approach that covers the most common use cases
-                                    
-                                    // Add foreign key fields for nested relation traversal
-                                    // LIMITATION: Cannot implement truly dynamic solution without hardcoding field names
-                                    // The target entity's relation metadata is not available when generating source entity's relation fetchers
-                                    // This is a fundamental architectural limitation of the current macro system
-                                    
-                                    // TODO: Implement proper solution that either:
-                                    // 1. Uses two-pass code generation to collect all entity metadata first
-                                    // 2. Enhances macro architecture to access target entity metadata
-                                    // 3. Implements runtime field discovery mechanism
                                     fields
                                 };
 
@@ -756,7 +754,7 @@ pub fn generate_entity(
                                 
                                 // Apply database-level field selection using raw SQL approach (like main queries)
                                 let opt_selected = if selected_fields_exprs.is_empty() {
-                                    // Fallback: fetch all fields if no valid expressions found
+                                    // Fetch all fields if no valid expressions found
                                     let model = query.one(conn).await?;
                                     model.map(|m| #target::Selected::from_model(m, &[]))
                                 } else {
@@ -830,7 +828,7 @@ pub fn generate_entity(
                                         }
                                     }).collect::<String>();
                                     // Add primary key field dynamically
-                                    fields.insert("id");
+                                    fields.insert(#target_primary_key);
                                     // Add foreign key field for this relation
                                     fields.insert(#foreign_key_column_str);
                                     // Add all foreign key fields for nested relation traversal
@@ -847,21 +845,7 @@ pub fn generate_entity(
                                         }
                                     }
                                     
-                                    // Add foreign key fields for nested relation traversal
-                                    // Since we can't easily access target entity's relation metadata at this point,
-                                    // we'll include common foreign key field names that are likely to be needed
-                                    // This is a pragmatic approach that covers the most common use cases
-                                    
-                                    // Add foreign key fields for nested relation traversal
-                                    // LIMITATION: Cannot implement truly dynamic solution without hardcoding field names
-                                    // The target entity's relation metadata is not available when generating source entity's relation fetchers
-                                    // This is a fundamental architectural limitation of the current macro system
-                                    
-                                    // TODO: Implement proper solution that either:
-                                    // 1. Uses two-pass code generation to collect all entity metadata first
-                                    // 2. Enhances macro architecture to access target entity metadata
-                                    // 3. Implements runtime field discovery mechanism
-                                    fields
+                                   fields
                                 };
 
                                 // Convert required fields to SeaORM expressions (like main queries do)
@@ -873,22 +857,9 @@ pub fn generate_entity(
                                 }
 
                                 // Apply database-level field selection using the same approach as main queries
-                                // TODO: Temporarily disabled due to SeaORM model deserialization issues
-                                // let opt_selected = if selected_fields_exprs.is_empty() {
-                                //     // Fallback: fetch all fields if no valid expressions found
-                                //     query.into_model::<#target::Selected>().one(conn).await?
-                                // } else {
-                                //     // Use DerivePartialModel with select_only() + expr_as()
-                                //     let mut select_query = query.select_only();
-                                //     for (expr, alias) in &selected_fields_exprs {
-                                //         select_query.expr_as(expr.clone(), alias.as_str());
-                                //     }
-                                //     select_query.into_model::<#target::Selected>().one(conn).await?
-                                // };
-                                
                                 // Apply database-level field selection using raw SQL approach (like main queries)
                                 let opt_selected = if selected_fields_exprs.is_empty() {
-                                    // Fallback: fetch all fields if no valid expressions found
+                                    // Fetch all fields if no valid expressions found
                                     let model = query.one(conn).await?;
                                     model.map(|m| #target::Selected::from_model(m, &[]))
                                 } else {
@@ -1415,7 +1386,10 @@ pub fn generate_entity(
                         .current_table_name
                         .as_ref()
                         .cloned()
-                        .unwrap_or_else(|| "unknown".to_string());
+                        .unwrap_or_else(|| {
+                            // This should not happen if relations are properly configured
+                            panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
+                        });
                     let current_primary_key_column = get_primary_key_column_name(&fields);
                     let target_primary_key_column =
                         if let Some(pk_field) = &relation.primary_key_field {
@@ -1713,8 +1687,6 @@ pub fn generate_entity(
         })
         .collect();
 
-    // Placeholder for future post-insert arms (not used in Step 1)
-    let has_many_connect_postinsert_arms: Vec<proc_macro2::TokenStream> = Vec::new();
 
     // Combine all SetParam variants as a flat Vec
     let all_set_param_variants: Vec<_> = field_variants
@@ -2652,7 +2624,9 @@ pub fn generate_entity(
                     .current_table_name
                     .as_ref()
                     .map(|s| s.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
+                    .unwrap_or_else(|| {
+                        panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
+                    });
                 let fk_col_snake = relation
                     .foreign_key_column
                     .as_ref()
@@ -2690,7 +2664,9 @@ pub fn generate_entity(
                     .current_table_name
                     .as_ref()
                     .map(|s| s.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
+                    .unwrap_or_else(|| {
+                        panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
+                    });
                 let fk_col_snake = relation
                     .foreign_key_column
                     .as_ref()
@@ -2729,7 +2705,9 @@ pub fn generate_entity(
                     .current_table_name
                     .as_ref()
                     .map(|s| s.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
+                    .unwrap_or_else(|| {
+                        panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
+                    });
                 let fk_col_snake = relation
                     .foreign_key_column
                     .as_ref()
@@ -2762,7 +2740,14 @@ pub fn generate_entity(
             let target = &relation.target;
             match relation.kind {
                 RelationKind::HasMany => Some({
-                    let foreign_key_column = relation.foreign_key_column.as_ref().map_or("id", |v| v);
+                    let foreign_key_column = match validate_foreign_key_column(
+                        &relation.name,
+                        &relation.foreign_key_column,
+                        proc_macro2::Span::call_site(),
+                    ) {
+                        Ok(col) => col,
+                        Err(_) => return None, // Skip this relation if validation fails
+                    };
                     let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
                     let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
                     quote! {
@@ -2838,7 +2823,14 @@ pub fn generate_entity(
             let target = &relation.target;
             match relation.kind {
                 RelationKind::HasMany => Some({
-                    let foreign_key_column = relation.foreign_key_column.as_ref().map_or("id", |v| v);
+                    let foreign_key_column = match validate_foreign_key_column(
+                        &relation.name,
+                        &relation.foreign_key_column,
+                        proc_macro2::Span::call_site(),
+                    ) {
+                        Ok(col) => col,
+                        Err(_) => return None, // Skip this relation if validation fails
+                    };
                     let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
                     let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
                     quote! {
@@ -2950,7 +2942,7 @@ pub fn generate_entity(
                     let descriptor = <Self as caustics::HasRelationMetadata<Self>>::get_relation_descriptor(filter.relation)
                         .ok_or_else(|| caustics::CausticsError::InvalidIncludePath { relation: filter.relation.to_string() })?;
                     let foreign_key_value = (descriptor.get_foreign_key)(self);
-                    // If FK is missing on belongs_to/has_one, skip fetching gracefully (PCR parity)
+                    // If FK is missing on belongs_to/has_one, skip fetching gracefully
                     if foreign_key_value.is_none() && !descriptor.is_has_many {
                         return Ok(());
                     }
@@ -2981,7 +2973,6 @@ pub fn generate_entity(
                             .await?
                     };
 
-                    // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
                     // Populate relation counts when requested (has_many only), independent of pagination
                     if filter.include_count && descriptor.is_has_many {
@@ -3143,7 +3134,6 @@ pub fn generate_entity(
                 s
             }
 
-            // clear_unselected method removed - fields are only populated if they were selected
 
             fn set_relation(&mut self, relation_name: &str, value: Box<dyn std::any::Any + Send>) {
                 match relation_name {
@@ -3241,7 +3231,6 @@ pub fn generate_entity(
                             .await?
                     };
 
-                    // In-memory order/take/skip removed; pushed down to SQL in fetcher
 
                     // Populate relation counts when requested (has_many only), independent of pagination
                     if filter.include_count && descriptor.is_has_many {
@@ -3324,13 +3313,13 @@ pub fn generate_entity(
             RelationKind::HasMany => {
                 let id_field = current_primary_key_ident.clone();
                 // For HasMany relations, the foreign key column is in the target entity
-                // Use the extracted foreign_key_column if available, otherwise fallback to mapping
+                // Use the extracted foreign_key_column if available, otherwise use mapping
                 let fk_column = if let Some(fk_col) = &relation.foreign_key_column {
                     // Convert PascalCase to snake_case to match database column names
                     // This is completely dynamic and works with any foreign key column name
                     fk_col.to_snake_case()
                 } else {
-                    // Fallback: use the relation name + "_id" pattern
+                    // Use the relation name + "_id" pattern
                     // This is also dynamic and works with any relation name
                     format!("{}_id", relation.name.to_snake_case())
                 };
@@ -3389,11 +3378,12 @@ pub fn generate_entity(
             .target_table_name
             .as_ref()
             .unwrap_or(&fallback_table_name);
-        let unknown_table = "unknown".to_string();
         let current_table_name = relation
             .current_table_name
             .as_ref()
-            .unwrap_or(&unknown_table);
+            .unwrap_or_else(|| {
+                panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
+            });
 
         let target_table_name_lit =
             syn::LitStr::new(target_table_name, proc_macro2::Span::call_site());
@@ -4304,13 +4294,12 @@ pub fn generate_entity(
             #(#group_by_field_variants,)*
         }
 
-        // PCR-like scalar field enum alias
+        // Scalar field enum alias
         #[derive(Debug, Clone)]
         pub enum ScalarField {
             #(#group_by_field_variants,)*
         }
 
-        // Back-compat select module removed in favor of per-entity select! macro
 
         // Helper to map snake_case field name to ScalarField variant
         pub fn scalar_field_from_str(name: &str) -> Option<ScalarField> {
@@ -4347,7 +4336,6 @@ pub fn generate_entity(
 
         // Intentionally no per-entity Select! macro; use global caustics::Select!(entity, { .. })
 
-        // Legacy helper removed: scalar_fields_to_aliases
 
         // Extension traits to apply select on query builders returning Selected builders
         pub trait ManySelectExt<'a, C: sea_orm::ConnectionTrait> {
@@ -4398,7 +4386,6 @@ pub fn generate_entity(
             }
         }
 
-        // Legacy Vec<ScalarField> select APIs removed
 
         pub trait UniqueSelectExt<'a, C: sea_orm::ConnectionTrait> {
             fn select<S>(self, spec: S) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, S::Data>
@@ -4478,13 +4465,12 @@ pub fn generate_entity(
             }
         }
 
-        // Include parameters for relations (PCR-like include)
+        // Include parameters for relations
         #[derive(Debug, Clone)]
         pub enum IncludeParam {
             #(#include_enum_variants,)*
         }
 
-        // Legacy include extension methods removed in favor of `.with(...)`
 
         // Include on select builders
         pub trait SelectManyIncludeExt<'a, C: sea_orm::ConnectionTrait> {
@@ -4755,7 +4741,7 @@ pub fn generate_entity(
             pub use super::SelectManyRelationOrderExt;
         }
 
-        // PCR-style aggregate selector facade on AggregateQueryBuilder
+        // Aggregate selector facade on AggregateQueryBuilder
         pub trait AggregateSelectorExt<'a, C: sea_orm::ConnectionTrait> {
             fn _count(self) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
             fn _avg(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
@@ -4768,7 +4754,7 @@ pub fn generate_entity(
             for caustics::AggregateQueryBuilder<'a, C, Entity>
         {
             fn _count(mut self) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
-                self = self.select_count();
+                self = self.count();
                 self
             }
 
@@ -4776,7 +4762,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_avg_typed(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
+                            self = self.avg(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
                         },)*
                     }
                 }
@@ -4787,7 +4773,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_sum_typed(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
+                            self = self.sum(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
                         },)*
                     }
                 }
@@ -4798,7 +4784,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_min_typed(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
+                            self = self.min(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
                         },)*
                     }
                 }
@@ -4809,7 +4795,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_max_typed(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
+                            self = self.max(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
                         },)*
                     }
                 }
@@ -4817,7 +4803,7 @@ pub fn generate_entity(
             }
         }
 
-        // PCR-style aggregate selector facade on GroupByQueryBuilder
+        // Aggregate selector facade on GroupByQueryBuilder
         pub trait GroupBySelectorExt<'a, C: sea_orm::ConnectionTrait> {
             fn _count(self) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
             fn _avg(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
@@ -4830,7 +4816,7 @@ pub fn generate_entity(
             for caustics::GroupByQueryBuilder<'a, C, Entity>
         {
             fn _count(mut self) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                self = self.select_count("_count");
+                self = self.count("_count");
                 self
             }
 
@@ -4838,7 +4824,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_avg_typed(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
+                            self = self.avg(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
                         },)*
                     }
                 }
@@ -4849,7 +4835,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_sum_typed(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
+                            self = self.sum(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
                         },)*
                     }
                 }
@@ -4860,7 +4846,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_min_typed(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
+                            self = self.min(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
                         },)*
                     }
                 }
@@ -4871,7 +4857,7 @@ pub fn generate_entity(
                 for f in fields {
                     match f {
                         #(ScalarField::#group_by_field_variants => {
-                            self = self.select_max_typed(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
+                            self = self.max(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
                         },)*
                     }
                 }
@@ -4881,17 +4867,17 @@ pub fn generate_entity(
 
         // Extend GroupByQueryBuilder with typed aggregate selectors via a local trait
         pub trait GroupByAggExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select_sum_typed(self, field: SumSelect, alias: &'static str) -> Self;
-            fn select_avg_typed(self, field: AvgSelect, alias: &'static str) -> Self;
-            fn select_min_typed(self, field: MinSelect, alias: &'static str) -> Self;
-            fn select_max_typed(self, field: MaxSelect, alias: &'static str) -> Self;
+            fn sum(self, field: SumSelect, alias: &'static str) -> Self;
+            fn avg(self, field: AvgSelect, alias: &'static str) -> Self;
+            fn min(self, field: MinSelect, alias: &'static str) -> Self;
+            fn max(self, field: MaxSelect, alias: &'static str) -> Self;
         }
 
         impl<'a, C: sea_orm::ConnectionTrait> GroupByAggExt<'a, C> for caustics::GroupByQueryBuilder<'a, C, Entity> {
-            fn select_sum_typed(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias)); self }
-            fn select_avg_typed(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias)); self }
-            fn select_min_typed(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias)); self }
-            fn select_max_typed(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias)); self }
+            fn sum(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias)); self }
+            fn avg(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias)); self }
+            fn min(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias)); self }
+            fn max(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias)); self }
         }
 
         // Typed group-by order by aggregate outputs
@@ -4967,20 +4953,19 @@ pub fn generate_entity(
 
         // Add typed aggregate selection for non-group aggregate queries via a trait
         pub trait AggregateAggExt<'a, C: sea_orm::ConnectionTrait> {
-            fn select_sum_typed(self, field: SumSelect, alias: &'static str) -> Self;
-            fn select_avg_typed(self, field: AvgSelect, alias: &'static str) -> Self;
-            fn select_min_typed(self, field: MinSelect, alias: &'static str) -> Self;
-            fn select_max_typed(self, field: MaxSelect, alias: &'static str) -> Self;
+            fn sum(self, field: SumSelect, alias: &'static str) -> Self;
+            fn avg(self, field: AvgSelect, alias: &'static str) -> Self;
+            fn min(self, field: MinSelect, alias: &'static str) -> Self;
+            fn max(self, field: MaxSelect, alias: &'static str) -> Self;
         }
 
         impl<'a, C: sea_orm::ConnectionTrait> AggregateAggExt<'a, C> for caustics::AggregateQueryBuilder<'a, C, Entity> {
-            fn select_sum_typed(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias, "sum")); self }
-            fn select_avg_typed(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias, "avg")); self }
-            fn select_min_typed(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias, "min")); self }
-            fn select_max_typed(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias, "max")); self }
+            fn sum(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias, "sum")); self }
+            fn avg(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias, "avg")); self }
+            fn min(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias, "min")); self }
+            fn max(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias, "max")); self }
         }
 
-        // Removed inherent impl to avoid E0116 in downstream crates; use GroupByAggExt instead
 
         #[derive(Clone, Debug)]
         pub struct Create {
@@ -5020,7 +5005,7 @@ pub fn generate_entity(
         #model_with_relations_impl
         #relation_metadata_impl
 
-        // PCR-style typed distinct extension for ManyQueryBuilder at module scope
+        // Typed distinct extension for ManyQueryBuilder at module scope
         pub trait DistinctFieldsExt<'a, C: sea_orm::ConnectionTrait> {
             fn distinct(self, fields: Vec<ScalarField>) -> Self;
         }
@@ -5139,7 +5124,7 @@ pub fn generate_entity(
                 builder.distinct_on(exprs)
             }
 
-            // NOTE: PCR-style aggregation and distinct builder facades will be added incrementally
+            // NOTE: Aggregation and distinct builder facades will be added incrementally
 
 
 
@@ -5530,532 +5515,5 @@ pub fn generate_entity(
         }
     };
 
-    TokenStream::from(expanded)
-}
-
-fn extract_relations(
-    relation_ast: &DeriveInput,
-    model_fields: &[&syn::Field],
-    current_table_name: &str,
-) -> Vec<Relation> {
-    let mut relations = Vec::new();
-
-    if let syn::Data::Enum(data_enum) = &relation_ast.data {
-        for variant in &data_enum.variants {
-            let mut foreign_key_field = None;
-            let mut foreign_key_type = None;
-            let mut relation_name = None;
-            let mut relation_target = None;
-            let mut relation_kind = None;
-            let mut is_nullable = false;
-            let mut foreign_key_column = None;
-            let mut primary_key_field = None;
-            let mut target_entity_name = None;
-
-            for attr in &variant.attrs {
-                if let syn::Meta::List(meta) = &attr.meta {
-                    if meta.path.is_ident("sea_orm") {
-                        if let Ok(nested) = meta.parse_args_with(
-                            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-                        ) {
-                            for meta in nested {
-                                if let syn::Meta::NameValue(nv) = &meta {
-                                    if nv.path.is_ident("has_many") || nv.path.is_ident("belongs_to") {
-                                        if let syn::Expr::Lit(syn::ExprLit {
-                                            lit: syn::Lit::Str(lit),
-                                            ..
-                                        }) = &nv.value
-                                        {
-                                            // Parse the target as a path
-                                            let target_str = lit.value();
-                                            let target_path = syn::parse_str::<syn::Path>(&target_str)
-                                                .expect("Failed to parse relation target as path");
-
-                                            // Create a new clean path without the "Entity" suffix
-                                            let mut new_path = syn::Path {
-                                                leading_colon: target_path.leading_colon,
-                                                segments: syn::punctuated::Punctuated::new(),
-                                            };
-
-                                            // Copy all segments except the last one if it's "Entity"
-                                            for (i, segment) in target_path.segments.iter().enumerate() {
-                                                if i == target_path.segments.len() - 1 && segment.ident == "Entity" {
-                                                    // Skip the "Entity" segment
-                                                    continue;
-                                                }
-                                                new_path.segments.push(segment.clone());
-                                            }
-
-                                            relation_name = Some(variant.ident.to_string());
-                                            relation_target = Some(new_path);
-                                            relation_kind = Some(if nv.path.is_ident("has_many") {
-                                                RelationKind::HasMany
-                                            } else {
-                                                RelationKind::BelongsTo
-                                            });
-                                        }
-                                    } else if nv.path.is_ident("from") {
-                                        if let syn::Expr::Lit(syn::ExprLit {
-                                            lit: syn::Lit::Str(lit),
-                                            ..
-                                        }) = &nv.value
-                                        {
-                                            // Extract foreign key field name from "Column::FieldName"
-                                            let column_str = lit.value();
-                                            if let Some(field_name) = column_str.split("::").nth(1) {
-                                                // Convert PascalCase to snake_case for field name
-                                                let snake_case_name = field_name.to_string().to_snake_case();
-                                                foreign_key_field = Some(snake_case_name.clone());
-
-                                                // Find the corresponding field in the model to get its type
-                                                if let Some(field) = model_fields.iter().find(|f| {
-                                                    f.ident.as_ref().unwrap().to_string() == snake_case_name
-                                                }) {
-                                                    foreign_key_type = Some(field.ty.clone());
-                                                }
-                                            }
-                                        }
-                                    } else if nv.path.is_ident("to") {
-                                        if let syn::Expr::Lit(syn::ExprLit {
-                                            lit: syn::Lit::Str(lit),
-                                            ..
-                                        }) = &nv.value
-                                        {
-                                            // Extract foreign key column name from "Entity::Column::FieldName"
-                                            let column_str = lit.value();
-                                            if let Some(field_name) = column_str.split("::").last() {
-                                                // Convert PascalCase to snake_case to match database column names
-                                                let snake_case_name = field_name.to_string().to_snake_case();
-                                                foreign_key_column = Some(snake_case_name.clone());
-                                                
-                                                // Extract entity name from the "to" attribute path
-                                                // Format: "super::entity::Column::FieldName"
-                                                // We need to get the entity name (e.g., "Post" from "super::post::Column::Id")
-                                                let path_parts: Vec<&str> = column_str.split("::").collect();
-                                                if path_parts.len() >= 3 {
-                                                    // Get the entity name from the path (e.g., "post" from "super::post::Column::Id")
-                                                    let entity_name_lower = path_parts[path_parts.len() - 3].to_lowercase();
-                                                    // Convert to PascalCase to match the registry format
-                                                    let entity_name = entity_name_lower.chars().next().unwrap().to_uppercase().collect::<String>() + &entity_name_lower[1..];
-                                                    
-                // Store the entity name for runtime resolution
-                // The actual primary key resolution will happen in the generated code
-                // using get_entity_metadata() function
-                target_entity_name = Some(entity_name);
-                
-                // Set primary_key_field to "id" as a marker for runtime resolution
-                // The runtime code will use target_entity_name to look up the actual primary key
-                primary_key_field = Some("id".to_string());
-                                                }
-                                            }
-                                        }
-                                    } else if nv.path.is_ident("nullable") {
-                                        is_nullable = true;
-                                    } else if nv.path.is_ident("column") {
-                                        if let syn::Expr::Lit(syn::ExprLit {
-                                            lit: syn::Lit::Str(lit),
-                                            ..
-                                        }) = &nv.value
-                                        {
-                                            foreign_key_column = Some(lit.value());
-                                        }
-                                    } else if nv.path.is_ident("primary_key") {
-                                        if let syn::Expr::Lit(syn::ExprLit {
-                                            lit: syn::Lit::Str(lit),
-                                            ..
-                                        }) = &nv.value
-                                        {
-                                            primary_key_field = Some(lit.value());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Only add the relation if we have all the required information
-            if let (Some(name), Some(target), Some(kind)) =
-                (relation_name, relation_target, relation_kind)
-            {
-                // Construct the target unique param path
-                let target_unique_param = if foreign_key_field.is_some() {
-                    let mut unique_param_path = target.clone();
-                    unique_param_path.segments.push(syn::PathSegment {
-                        ident: syn::Ident::new("UniqueWhereParam", proc_macro2::Span::call_site()),
-                        arguments: syn::PathArguments::None,
-                    });
-                    Some(unique_param_path)
-                } else {
-                    None
-                };
-
-                // Check if the foreign key field is nullable by examining its type
-                if let Some(fk_field_name) = &foreign_key_field {
-                    if let Some(field) = model_fields
-                        .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
-                    {
-                        if is_option(&field.ty) {
-                            is_nullable = true;
-                        }
-                    }
-                }
-
-                // Extract target table name from target entity path
-                let target_table_name = if let Some(last_segment) = target.segments.last() {
-                    // Use the relation name (which is typically plural) instead of the entity name
-                    // This is more likely to match the actual table name
-                    name.to_snake_case()
-                } else {
-                    "unknown".to_string()
-                };
-
-                relations.push(Relation {
-                    name,
-                    target,
-                    kind,
-                    foreign_key_field,
-                    foreign_key_type,
-                    target_unique_param,
-                    is_nullable,
-                    foreign_key_column,
-                    primary_key_field,
-                    target_entity_name,
-                    current_table_name: Some(current_table_name.to_string()),
-                    target_table_name: Some(target_table_name),
-                });
-            }
-        }
-    }
-
-    relations
-}
-
-fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) -> TokenStream {
-    let mut submodules = Vec::new();
-
-    for relation in relations {
-        let relation_name = &relation.name;
-        let relation_name_ident = format_ident!("{}", relation_name.to_lowercase());
-        let relation_name_lower = relation_name.to_lowercase();
-        let relation_name_lower_ident = format_ident!("{}", relation_name_lower);
-        let relation_name_str = relation_name.to_snake_case();
-        let relation_name_lit =
-            syn::LitStr::new(&relation_name_str, proc_macro2::Span::call_site());
-        let target = &relation.target;
-        let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
-        let disconnect_variant = format_ident!("Disconnect{}", relation.name.to_pascal_case());
-        let create_variant = format_ident!("Create{}", relation.name.to_pascal_case());
-        let create_many_variant = format_ident!("CreateMany{}", relation.name.to_pascal_case());
-        let set_variant = format_ident!("Set{}", relation.name.to_pascal_case());
-
-        // Generate conditional functions
-        let set_fn = if matches!(relation.kind, RelationKind::HasMany) {
-            quote! {
-                pub fn set(where_params: Vec<super::#target::UniqueWhereParam>) -> super::SetParam {
-                    super::SetParam::#set_variant(where_params)
-                }
-            }
-        } else {
-            quote! {}
-        };
-
-        // Generate create helpers only for has_many
-        let create_fns = if matches!(relation.kind, RelationKind::HasMany) {
-            quote! {
-                pub fn create(items: Vec<super::#target::Create>) -> super::SetParam {
-                    super::SetParam::#create_variant(items)
-                }
-                pub fn create_many(items: Vec<super::#target::Create>) -> super::SetParam {
-                    super::SetParam::#create_many_variant(items)
-                }
-            }
-        } else {
-            quote! {}
-        };
-
-        // Generate disconnect only for optional belongs_to (nullable FK on current entity)
-        let disconnect_fn = if matches!(relation.kind, RelationKind::BelongsTo)
-            && relation.foreign_key_field.is_some()
-        {
-            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-            let is_optional = if let Some(field) = fields
-                .iter()
-                .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
-            {
-                is_option(&field.ty)
-            } else {
-                false
-            };
-            if is_optional {
-                quote! {
-                    pub fn disconnect() -> super::SetParam {
-                        super::SetParam::#disconnect_variant
-                    }
-                }
-            } else {
-                quote! {}
-            }
-        } else {
-            quote! {}
-        };
-
-        // Get foreign key column information from relation metadata
-        let foreign_key_column_ident = if let Some(fk_col) = &relation.foreign_key_column {
-            format_ident!("{}", fk_col.to_pascal_case())
-        } else {
-            format_ident!("Id") // fallback
-        };
-
-        let order_by_relation_fn = if matches!(relation.kind, RelationKind::HasMany) {
-            let variant_ident = format_ident!("{}Count", relation_name.to_pascal_case());
-            quote! {
-                pub fn order_by(order: caustics::SortOrder) -> super::RelationOrderByParam {
-                    super::RelationOrderByParam::#variant_ident(order)
-                }
-            }
-        } else {
-            quote! {}
-        };
-
-        let submodule = quote! {
-            pub mod #relation_name_ident {
-                use super::*;
-
-                // Typed conversion function for relation filters (no string parsing)
-                fn convert_where_param_to_filter_generic(filter: super::#target::WhereParam) -> caustics::Filter {
-                    // Delegate to the target module's typed converter
-                    super::#target::where_params_to_filters(vec![filter])
-                        .into_iter()
-                        .next()
-                        .unwrap_or(caustics::Filter { field: String::new(), operation: caustics::FieldOp::IsNull })
-                }
-
-                // Basic relation functions
-                pub fn fetch() -> super::RelationFilter {
-                    super::RelationFilter {
-                        relation: #relation_name_lit,
-                        filters: vec![],
-                        nested_select_aliases: None,
-                        nested_includes: vec![],
-                        take: None,
-                        skip: None,
-                        order_by: vec![],
-                        cursor_id: None,
-                        include_count: false,
-                        distinct: false,
-                    }
-                }
-
-                // with_args/with_config removed in favor of include(|rel| ...)
-
-                // Helper to convert typed WhereParams into generic Filters
-                pub fn filters_from_where(params: Vec<super::#target::WhereParam>) -> Vec<super::Filter> {
-                    super::#target::where_params_to_filters(params)
-                }
-
-                // PCR-like closure: include(|rel| rel.filter(...).order_by(...).take(...).skip(...).with(...).select(...).count())
-                pub fn include<F>(f: F) -> super::RelationFilter
-                where
-                    F: FnOnce(RelBuilder) -> RelBuilder,
-                {
-                    let core = caustics::IncludeBuilderCore::new();
-                    let b = f(RelBuilder { core });
-                    let mut g = b.core.build(#relation_name_lit);
-                    
-                    // If there are field selections AND nested includes, automatically include foreign key fields
-                    if let Some(ref mut select_aliases) = g.nested_select_aliases {
-                        if !g.nested_includes.is_empty() && !select_aliases.is_empty() {
-                            // Get entity metadata to find foreign key fields for nested relations
-                            let target_entity_name = stringify!(#target);
-                            // Extract just the last part of the path (e.g., "super::course" -> "course")
-                            let target_module_name = target_entity_name.split("::").last().unwrap_or(target_entity_name).trim();
-                            // Convert snake_case to PascalCase
-                            let entity_name = target_module_name.split('_').map(|s| {
-                                let mut chars = s.chars();
-                                match chars.next() {
-                                    None => String::new(),
-                                    Some(first) => first.to_uppercase().chain(chars).collect(),
-                                }
-                            }).collect::<String>();
-                            
-                            // TODO: Use metadata system when available
-                            // For now, skip automatic foreign key inclusion
-                        }
-                    }
-                    
-                    super::RelationFilter {
-                        relation: g.relation,
-                        filters: g.filters,
-                        nested_select_aliases: g.nested_select_aliases,
-                        nested_includes: g.nested_includes,
-                        take: g.take,
-                        skip: g.skip,
-                        order_by: g.order_by,
-                        cursor_id: g.cursor_id,
-                        include_count: g.include_count,
-                        distinct: g.distinct,
-                    }
-                }
-
-                pub struct RelBuilder { core: caustics::IncludeBuilderCore }
-                impl RelBuilder {
-                    // For relation includes, keep field-based order API
-                    pub fn order_by(mut self, params: Vec<super::#target::OrderByParam>) -> Self {
-                        let mut pairs = Vec::new();
-                        for p in params.into_iter() {
-                            let (col, ord): (<super::#target::Entity as EntityTrait>::Column, sea_orm::Order) = p.into();
-                            let name = format!("{:?}", col).to_string().to_snake_case();
-                            pairs.push((name, match ord { sea_orm::Order::Asc => caustics::SortOrder::Asc, _ => caustics::SortOrder::Desc }));
-                        }
-                        self.core.push_order_pairs(pairs);
-                        self
-                    }
-                    pub fn filter(mut self, filters: Vec<super::#target::WhereParam>) -> Self {
-                        let converted = super::#target::where_params_to_filters(filters);
-                        self.core.push_filters(converted);
-                        self
-                    }
-
-                    pub fn take(mut self, n: i64) -> Self { self.core.set_take(n); self }
-                    pub fn skip(mut self, n: i64) -> Self { self.core.set_skip(n); self }
-                    pub fn cursor(mut self, id: i32) -> Self { self.core.set_cursor_id(id); self }
-                    pub fn with(mut self, include: super::#target::RelationFilter) -> Self {
-                        self.core.with_nested(include.into());
-                        self
-                    }
-                    pub fn select(mut self, spec: impl caustics::SelectionSpec<Entity = super::#target::Entity, Data = super::#target::Selected>) -> Self {
-                        let aliases = spec.collect_aliases();
-                        self.core.set_select_aliases(aliases);
-                        self
-                    }
-                    pub fn count(mut self) -> Self { self.core.enable_count(); self }
-                    pub fn distinct(mut self) -> Self { self.core.enable_distinct(); self }
-                }
-
-                // (Typed where/order/take/skip helpers are intentionally omitted to avoid cross-module privacy issues.)
-                // (Nested reads args builder intentionally omitted for now.)
-
-                pub fn fetch_with_includes(includes: Vec<super::#target::RelationFilter>) -> super::RelationFilter {
-                    super::RelationFilter {
-                        relation: #relation_name_lit,
-                        filters: vec![],
-                        nested_select_aliases: None,
-                        nested_includes: includes.into_iter().map(Into::into).collect(),
-                        take: None,
-                        skip: None,
-                        order_by: vec![],
-                        cursor_id: None,
-                        include_count: false,
-                        distinct: false,
-                    }
-                }
-
-                // Legacy select helpers removed in favor of include(|rel| rel.select(...))
-
-                pub fn with(include: super::#target::RelationFilter) -> super::RelationFilter {
-                    fetch_with_includes(vec![include])
-                }
-
-                // with_many was redundant; use multiple `.with(...)` calls or nested include(|rel| ...)
-
-                // Legacy pagination helpers removed in favor of include(|rel| rel.take(...).skip(...))
-
-                // Legacy order helper removed in favor of include(|rel| rel.order_by(...))
-
-                // Legacy cursor/count helpers removed in favor of include(|rel| rel.count()) and rel.cursor(...)
-
-                // Relation-aggregate orderBy sugar entry: relation::order_by(child_field::count(order))
-                #order_by_relation_fn
-
-                pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
-                    super::SetParam::#connect_variant(where_param)
-                }
-
-                #set_fn
-                #create_fns
-                #disconnect_fn
-
-                // Advanced relation operations for filtering
-                pub fn some(filters: Vec<super::#target::WhereParam>) -> super::WhereParam {
-                    // Convert WhereParam filters to Filter format for relation conditions
-                    let mut relation_filters = Vec::new();
-                    for filter in filters {
-                        // Convert the WhereParam to a Filter by extracting field name and value
-                        let field_info = convert_where_param_to_filter_generic(filter);
-                        relation_filters.push(caustics::Filter {
-                            field: field_info.field,
-                            operation: field_info.operation,
-                        });
-                    }
-
-                    super::WhereParam::RelationCondition(caustics::RelationCondition::some(#relation_name_lit, relation_filters))
-                }
-
-                pub fn every(filters: Vec<super::#target::WhereParam>) -> super::WhereParam {
-                    // Convert WhereParam filters to Filter format for relation conditions
-                    let mut relation_filters = Vec::new();
-                    for filter in filters {
-                        // Convert the WhereParam to a Filter by extracting field name and value
-                        let field_info = convert_where_param_to_filter_generic(filter);
-                        relation_filters.push(caustics::Filter {
-                            field: field_info.field,
-                            operation: field_info.operation,
-                        });
-                    }
-                    super::WhereParam::RelationCondition(caustics::RelationCondition::every(#relation_name_lit, relation_filters))
-                }
-
-                pub fn none(filters: Vec<super::#target::WhereParam>) -> super::WhereParam {
-                    // Convert WhereParam filters to Filter format for relation conditions
-                    let mut relation_filters = Vec::new();
-                    for filter in filters {
-                        // Convert the WhereParam to a Filter by extracting field name and value
-                        let field_info = convert_where_param_to_filter_generic(filter);
-                        relation_filters.push(caustics::Filter {
-                            field: field_info.field,
-                            operation: field_info.operation,
-                        });
-                    }
-                    super::WhereParam::RelationCondition(caustics::RelationCondition::none(#relation_name_lit, relation_filters))
-                }
-            }
-        };
-        submodules.push(submodule);
-    }
-
-    quote! {
-        #(#submodules)*
-    }
-}
-
-/// Extract table name from entity attributes
-fn extract_table_name(model_ast: &DeriveInput) -> String {
-    for attr in &model_ast.attrs {
-        if let syn::Meta::List(meta) = &attr.meta {
-            if meta.path.is_ident("sea_orm") {
-                if let Ok(nested) = meta.parse_args_with(
-                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-                ) {
-                    for meta in nested {
-                        if let syn::Meta::NameValue(nv) = &meta {
-                            if nv.path.is_ident("table_name") {
-                                if let syn::Expr::Lit(syn::ExprLit {
-                                    lit: syn::Lit::Str(lit),
-                                    ..
-                                }) = &nv.value
-                                {
-                                    return lit.value();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Default to snake_case of the struct name
-    model_ast.ident.to_string().to_snake_case()
+    Ok(TokenStream::from(expanded))
 }

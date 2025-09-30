@@ -33,25 +33,8 @@ where
     C: ConnectionTrait,
     Entity: EntityTrait,
 {
-    pub fn select_count(mut self) -> Self {
+    pub fn count(mut self) -> Self {
         self.selections.count = true;
-        self
-    }
-    // Legacy, non-typed toggles preserved under *_any to avoid API conflicts with typed variants
-    pub fn select_min_any(mut self) -> Self {
-        self.selections.min = true;
-        self
-    }
-    pub fn select_max_any(mut self) -> Self {
-        self.selections.max = true;
-        self
-    }
-    pub fn select_sum_any(mut self) -> Self {
-        self.selections.sum = true;
-        self
-    }
-    pub fn select_avg_any(mut self) -> Self {
-        self.selections.avg = true;
         self
     }
 

@@ -3255,10 +3255,10 @@ mod query_builder_tests {
         let agg = client
             .user()
             .aggregate(vec![])
-            .select_count()
-            .select_avg_typed(user::AvgSelect::Age, "age_avg")
-            .select_min_typed(user::MinSelect::Age, "age_min")
-            .select_max_typed(user::MaxSelect::Age, "age_max")
+            .count()
+            .avg(user::AvgSelect::Age, "age_avg")
+            .min(user::MinSelect::Age, "age_min")
+            .max(user::MaxSelect::Age, "age_max")
             .exec()
             .await
             .unwrap();
@@ -3278,8 +3278,8 @@ mod query_builder_tests {
                 None,
                 None,
             )
-            .select_count("cnt")
-            .select_sum(user::SumSelect::Age, "age_sum")
+            .count("cnt")
+            .sum(user::SumSelect::Age, "age_sum")
             .having_sum_gte(user::SumSelect::Age, 20)
             .exec()
             .await
@@ -3328,10 +3328,10 @@ mod query_builder_tests {
         let agg_typed = client
             .user()
             .aggregate(vec![])
-            .select_count()
-            .select_avg_typed(user::AvgSelect::Age, "age_avg")
-            .select_min_typed(user::MinSelect::Age, "age_min")
-            .select_max_typed(user::MaxSelect::Age, "age_max")
+            .count()
+            .avg(user::AvgSelect::Age, "age_avg")
+            .min(user::MinSelect::Age, "age_min")
+            .max(user::MaxSelect::Age, "age_max")
             .exec()
             .await
             .unwrap();
@@ -3351,8 +3351,8 @@ mod query_builder_tests {
                 None,
                 None,
             )
-            .select_count("cnt")
-            .select_sum(user::SumSelect::Age, "age_sum")
+            .count("cnt")
+            .sum(user::SumSelect::Age, "age_sum")
             .exec()
             .await
             .unwrap();
