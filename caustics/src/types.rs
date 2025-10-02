@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types)]
 
+use crate::CausticsKey;
 use sea_orm::sea_query;
 use sea_orm::{DatabaseConnection, DatabaseTransaction};
 use std::any::Any;
@@ -12,36 +13,92 @@ pub type CausticsResult<T> = std::result::Result<T, sea_orm::DbErr>;
 #[derive(Debug, Clone)]
 pub enum CausticsError {
     // Include/Relation errors
-    RelationNotFound { relation: String },
-    InvalidIncludePath { relation: String },
-    RelationNotFetched { relation: String, reason: String },
-    EntityFetcherMissing { entity: String },
-    DeferredLookupFailed { target: String, detail: String },
-    NotFoundForCondition { entity: String, condition: String },
-    QueryValidation { message: String },
-    
+    RelationNotFound {
+        relation: String,
+    },
+    InvalidIncludePath {
+        relation: String,
+    },
+    RelationNotFetched {
+        relation: String,
+        reason: String,
+    },
+    EntityFetcherMissing {
+        entity: String,
+    },
+    DeferredLookupFailed {
+        target: String,
+        detail: String,
+    },
+    NotFoundForCondition {
+        entity: String,
+        condition: String,
+    },
+    QueryValidation {
+        message: String,
+    },
+
     // Client initialization errors
-    NewClientError { message: String, cause: Option<String> },
-    
+    NewClientError {
+        message: String,
+        cause: Option<String>,
+    },
+
     // Specific operation errors
-    CreateError { entity: String, message: String },
-    UpdateError { entity: String, message: String },
-    DeleteError { entity: String, message: String },
-    FindError { entity: String, message: String },
-    BatchError { operation: String, message: String },
-    TransactionError { message: String },
-    
+    CreateError {
+        entity: String,
+        message: String,
+    },
+    UpdateError {
+        entity: String,
+        message: String,
+    },
+    DeleteError {
+        entity: String,
+        message: String,
+    },
+    FindError {
+        entity: String,
+        message: String,
+    },
+    BatchError {
+        operation: String,
+        message: String,
+    },
+    TransactionError {
+        message: String,
+    },
+
     // Type system errors
-    TypeConversionError { from_type: String, to_type: String, value: String },
-    InvalidFieldType { field: String, expected: String, actual: String },
-    
+    TypeConversionError {
+        from_type: String,
+        to_type: String,
+        value: String,
+    },
+    InvalidFieldType {
+        field: String,
+        expected: String,
+        actual: String,
+    },
+
     // Configuration errors
-    MissingConfiguration { component: String, required: String },
-    InvalidConfiguration { component: String, message: String },
-    
+    MissingConfiguration {
+        component: String,
+        required: String,
+    },
+    InvalidConfiguration {
+        component: String,
+        message: String,
+    },
+
     // Database connection errors
-    ConnectionError { message: String },
-    DatabaseError { operation: String, message: String },
+    ConnectionError {
+        message: String,
+    },
+    DatabaseError {
+        operation: String,
+        message: String,
+    },
 }
 
 impl core::fmt::Display for CausticsError {
@@ -49,78 +106,157 @@ impl core::fmt::Display for CausticsError {
         match self {
             // Include/Relation errors
             CausticsError::RelationNotFound { relation } => {
-                write!(f, "CausticsError::RelationNotFound: relation='{}'", relation)
+                write!(
+                    f,
+                    "CausticsError::RelationNotFound: relation='{}'",
+                    relation
+                )
             }
             CausticsError::InvalidIncludePath { relation } => {
-                write!(f, "CausticsError::InvalidIncludePath: relation='{}'", relation)
+                write!(
+                    f,
+                    "CausticsError::InvalidIncludePath: relation='{}'",
+                    relation
+                )
             }
             CausticsError::RelationNotFetched { relation, reason } => {
-                write!(f, "CausticsError::RelationNotFetched: relation='{}' reason='{}'", relation, reason)
+                write!(
+                    f,
+                    "CausticsError::RelationNotFetched: relation='{}' reason='{}'",
+                    relation, reason
+                )
             }
             CausticsError::EntityFetcherMissing { entity } => {
-                write!(f, "CausticsError::EntityFetcherMissing: entity='{}'", entity)
+                write!(
+                    f,
+                    "CausticsError::EntityFetcherMissing: entity='{}'",
+                    entity
+                )
             }
             CausticsError::DeferredLookupFailed { target, detail } => {
-                write!(f, "CausticsError::DeferredLookupFailed: target='{}' detail='{}'", target, detail)
+                write!(
+                    f,
+                    "CausticsError::DeferredLookupFailed: target='{}' detail='{}'",
+                    target, detail
+                )
             }
             CausticsError::NotFoundForCondition { entity, condition } => {
-                write!(f, "CausticsError::NotFoundForCondition: entity='{}' condition='{}'", entity, condition)
+                write!(
+                    f,
+                    "CausticsError::NotFoundForCondition: entity='{}' condition='{}'",
+                    entity, condition
+                )
             }
             CausticsError::QueryValidation { message } => {
                 write!(f, "CausticsError::QueryValidation: {}", message)
             }
-            
+
             // Client initialization errors
             CausticsError::NewClientError { message, cause } => {
                 if let Some(cause) = cause {
-                    write!(f, "CausticsError::NewClientError: {} (caused by: {})", message, cause)
+                    write!(
+                        f,
+                        "CausticsError::NewClientError: {} (caused by: {})",
+                        message, cause
+                    )
                 } else {
                     write!(f, "CausticsError::NewClientError: {}", message)
                 }
             }
-            
+
             // Specific operation errors
             CausticsError::CreateError { entity, message } => {
-                write!(f, "CausticsError::CreateError: entity='{}' message='{}'", entity, message)
+                write!(
+                    f,
+                    "CausticsError::CreateError: entity='{}' message='{}'",
+                    entity, message
+                )
             }
             CausticsError::UpdateError { entity, message } => {
-                write!(f, "CausticsError::UpdateError: entity='{}' message='{}'", entity, message)
+                write!(
+                    f,
+                    "CausticsError::UpdateError: entity='{}' message='{}'",
+                    entity, message
+                )
             }
             CausticsError::DeleteError { entity, message } => {
-                write!(f, "CausticsError::DeleteError: entity='{}' message='{}'", entity, message)
+                write!(
+                    f,
+                    "CausticsError::DeleteError: entity='{}' message='{}'",
+                    entity, message
+                )
             }
             CausticsError::FindError { entity, message } => {
-                write!(f, "CausticsError::FindError: entity='{}' message='{}'", entity, message)
+                write!(
+                    f,
+                    "CausticsError::FindError: entity='{}' message='{}'",
+                    entity, message
+                )
             }
             CausticsError::BatchError { operation, message } => {
-                write!(f, "CausticsError::BatchError: operation='{}' message='{}'", operation, message)
+                write!(
+                    f,
+                    "CausticsError::BatchError: operation='{}' message='{}'",
+                    operation, message
+                )
             }
             CausticsError::TransactionError { message } => {
                 write!(f, "CausticsError::TransactionError: {}", message)
             }
-            
+
             // Type system errors
-            CausticsError::TypeConversionError { from_type, to_type, value } => {
-                write!(f, "CausticsError::TypeConversionError: cannot convert '{}' from {} to {}", value, from_type, to_type)
+            CausticsError::TypeConversionError {
+                from_type,
+                to_type,
+                value,
+            } => {
+                write!(
+                    f,
+                    "CausticsError::TypeConversionError: cannot convert '{}' from {} to {}",
+                    value, from_type, to_type
+                )
             }
-            CausticsError::InvalidFieldType { field, expected, actual } => {
-                write!(f, "CausticsError::InvalidFieldType: field='{}' expected='{}' actual='{}'", field, expected, actual)
+            CausticsError::InvalidFieldType {
+                field,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "CausticsError::InvalidFieldType: field='{}' expected='{}' actual='{}'",
+                    field, expected, actual
+                )
             }
-            
+
             // Configuration errors
-            CausticsError::MissingConfiguration { component, required } => {
-                write!(f, "CausticsError::MissingConfiguration: component='{}' requires='{}'", component, required)
+            CausticsError::MissingConfiguration {
+                component,
+                required,
+            } => {
+                write!(
+                    f,
+                    "CausticsError::MissingConfiguration: component='{}' requires='{}'",
+                    component, required
+                )
             }
             CausticsError::InvalidConfiguration { component, message } => {
-                write!(f, "CausticsError::InvalidConfiguration: component='{}' message='{}'", component, message)
+                write!(
+                    f,
+                    "CausticsError::InvalidConfiguration: component='{}' message='{}'",
+                    component, message
+                )
             }
-            
+
             // Database connection errors
             CausticsError::ConnectionError { message } => {
                 write!(f, "CausticsError::ConnectionError: {}", message)
             }
             CausticsError::DatabaseError { operation, message } => {
-                write!(f, "CausticsError::DatabaseError: operation='{}' message='{}'", operation, message)
+                write!(
+                    f,
+                    "CausticsError::DatabaseError: operation='{}' message='{}'",
+                    operation, message
+                )
             }
         }
     }
@@ -142,7 +278,10 @@ impl CausticsError {
     }
 
     /// Create a new client initialization error with a cause
-    pub fn new_client_error_with_cause(message: impl Into<String>, cause: impl Into<String>) -> Self {
+    pub fn new_client_error_with_cause(
+        message: impl Into<String>,
+        cause: impl Into<String>,
+    ) -> Self {
         Self::NewClientError {
             message: message.into(),
             cause: Some(cause.into()),
@@ -205,7 +344,11 @@ impl CausticsError {
     }
 
     /// Create a type conversion error
-    pub fn type_conversion_error(from_type: impl Into<String>, to_type: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn type_conversion_error(
+        from_type: impl Into<String>,
+        to_type: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
         Self::TypeConversionError {
             from_type: from_type.into(),
             to_type: to_type.into(),
@@ -214,7 +357,11 @@ impl CausticsError {
     }
 
     /// Create an invalid field type error
-    pub fn invalid_field_type(field: impl Into<String>, expected: impl Into<String>, actual: impl Into<String>) -> Self {
+    pub fn invalid_field_type(
+        field: impl Into<String>,
+        expected: impl Into<String>,
+        actual: impl Into<String>,
+    ) -> Self {
         Self::InvalidFieldType {
             field: field.into(),
             expected: expected.into(),
@@ -223,7 +370,10 @@ impl CausticsError {
     }
 
     /// Create a missing configuration error
-    pub fn missing_configuration(component: impl Into<String>, required: impl Into<String>) -> Self {
+    pub fn missing_configuration(
+        component: impl Into<String>,
+        required: impl Into<String>,
+    ) -> Self {
         Self::MissingConfiguration {
             component: component.into(),
             required: required.into(),
@@ -273,7 +423,10 @@ impl CausticsError {
     pub fn user_message(&self) -> String {
         match self {
             Self::RelationNotFound { relation } => {
-                format!("Relation '{}' not found. Please check your model definitions.", relation)
+                format!(
+                    "Relation '{}' not found. Please check your model definitions.",
+                    relation
+                )
             }
             Self::RelationNotFetched { relation, reason } => {
                 format!("Relation '{}' could not be fetched: {}", relation, reason)
@@ -282,14 +435,20 @@ impl CausticsError {
                 format!("No fetcher found for entity '{}'. Please ensure the entity is properly configured.", entity)
             }
             Self::NotFoundForCondition { entity, condition } => {
-                format!("No {} found matching the specified condition: {}", entity, condition)
+                format!(
+                    "No {} found matching the specified condition: {}",
+                    entity, condition
+                )
             }
             Self::QueryValidation { message } => {
                 format!("Query validation failed: {}", message)
             }
             Self::NewClientError { message, cause } => {
                 if let Some(cause) = cause {
-                    format!("Failed to initialize Caustics client: {} (caused by: {})", message, cause)
+                    format!(
+                        "Failed to initialize Caustics client: {} (caused by: {})",
+                        message, cause
+                    )
                 } else {
                     format!("Failed to initialize Caustics client: {}", message)
                 }
@@ -312,13 +471,30 @@ impl CausticsError {
             Self::TransactionError { message } => {
                 format!("Transaction failed: {}", message)
             }
-            Self::TypeConversionError { from_type, to_type, value } => {
-                format!("Cannot convert '{}' from {} to {}", value, from_type, to_type)
+            Self::TypeConversionError {
+                from_type,
+                to_type,
+                value,
+            } => {
+                format!(
+                    "Cannot convert '{}' from {} to {}",
+                    value, from_type, to_type
+                )
             }
-            Self::InvalidFieldType { field, expected, actual } => {
-                format!("Field '{}' has invalid type: expected {}, got {}", field, expected, actual)
+            Self::InvalidFieldType {
+                field,
+                expected,
+                actual,
+            } => {
+                format!(
+                    "Field '{}' has invalid type: expected {}, got {}",
+                    field, expected, actual
+                )
             }
-            Self::MissingConfiguration { component, required } => {
+            Self::MissingConfiguration {
+                component,
+                required,
+            } => {
                 format!("Missing configuration for {}: {}", component, required)
             }
             Self::InvalidConfiguration { component, message } => {
@@ -341,7 +517,7 @@ pub struct PostInsertOp<'a> {
     pub run_on_conn: Box<
         dyn for<'b> Fn(
                 &'b DatabaseConnection,
-                i32,
+                CausticsKey,
             ) -> std::pin::Pin<
                 Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>,
             > + Send
@@ -351,7 +527,7 @@ pub struct PostInsertOp<'a> {
     pub run_on_txn: Box<
         dyn for<'b> Fn(
                 &'b DatabaseTransaction,
-                i32,
+                CausticsKey,
             ) -> std::pin::Pin<
                 Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>,
             > + Send
@@ -461,7 +637,7 @@ pub struct RelationFilter {
     pub take: Option<i64>,
     pub skip: Option<i64>,
     pub order_by: Vec<(String, SortOrder)>,
-    pub cursor_id: Option<i32>,
+    pub cursor_id: Option<CausticsKey>,
     pub include_count: bool,
     pub distinct: bool,
 }
@@ -476,7 +652,7 @@ pub struct IncludeArgs {
     pub take: Option<i64>,
     pub skip: Option<i64>,
     pub order_by: Vec<(String, SortOrder)>,
-    pub cursor_id: Option<i32>,
+    pub cursor_id: Option<CausticsKey>,
     pub include_count: bool,
 }
 
@@ -513,7 +689,7 @@ pub struct IncludeBuilderCore {
     pub take: Option<i64>,
     pub skip: Option<i64>,
     pub order_by: Vec<(String, SortOrder)>,
-    pub cursor_id: Option<i32>,
+    pub cursor_id: Option<CausticsKey>,
     pub include_count: bool,
     pub distinct: bool,
 }
@@ -540,7 +716,7 @@ impl IncludeBuilderCore {
     pub fn set_skip(&mut self, n: i64) {
         self.skip = Some(n);
     }
-    pub fn set_cursor_id(&mut self, id: i32) {
+    pub fn set_cursor_id(&mut self, id: CausticsKey) {
         self.cursor_id = Some(id);
     }
     pub fn enable_count(&mut self) {
@@ -653,7 +829,7 @@ pub struct RelationDescriptor<Selected> {
     // Function to set the relation field on the model
     pub set_field: fn(&mut Selected, Box<dyn Any + Send>),
     // Function to get the foreign key value from the model
-    pub get_foreign_key: fn(&Selected) -> Option<i32>,
+    pub get_foreign_key: fn(&Selected) -> Option<CausticsKey>,
     // The target entity name for the relation
     pub target_entity: &'static str,
     // The foreign key column name
@@ -682,8 +858,8 @@ pub trait EntitySelection: Sized {
     fn fill_from_row(row: &sea_orm::QueryResult, fields: &[&str]) -> Self;
     /// Set relation field value by relation name
     fn set_relation(&mut self, relation_name: &str, value: Box<dyn Any + Send>);
-    /// Extract i32 scalar by rust field name if present (legacy helper)
-    fn get_i32(&self, field_name: &str) -> Option<i32>;
+    /// Extract CausticsKey by rust field name if present
+    fn get_key(&self, field_name: &str) -> Option<CausticsKey>;
     /// Extract field value as a database Value by rust field name, if present
     fn get_value_as_db_value(&self, _field_name: &str) -> Option<sea_orm::Value> {
         None
@@ -815,7 +991,7 @@ pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
     fn fetch_by_foreign_key<'a>(
         &'a self,
         conn: &'a C,
-        foreign_key_value: Option<i32>,
+        foreign_key_value: Option<CausticsKey>,
         foreign_key_column: &'a str,
         target_entity: &'a str,
         relation_name: &'a str,
@@ -833,7 +1009,7 @@ pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
     fn fetch_by_foreign_key_with_selection<'a>(
         &'a self,
         conn: &'a C,
-        foreign_key_value: Option<i32>,
+        foreign_key_value: Option<CausticsKey>,
         foreign_key_column: &'a str,
         target_entity: &'a str,
         relation_name: &'a str,
@@ -853,6 +1029,31 @@ pub trait EntityRegistry<C: sea_orm::ConnectionTrait> {
     fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>>;
 }
 
+/// Trait for entity type information and key conversion
+pub trait EntityTypeRegistry {
+    /// Get the primary key type for a given entity
+    fn get_primary_key_type(&self, entity_name: &str) -> Option<std::any::TypeId>;
+
+    /// Get the foreign key type for a given entity and field
+    fn get_foreign_key_type(&self, entity_name: &str, field_name: &str)
+        -> Option<std::any::TypeId>;
+
+    /// Convert a key for a specific entity's primary key (returns Any for dynamic dispatch)
+    fn convert_key_for_primary_key(
+        &self,
+        entity: &str,
+        key: CausticsKey,
+    ) -> Box<dyn std::any::Any + Send + Sync>;
+
+    /// Convert a key for a specific entity's foreign key field (returns Any for dynamic dispatch)
+    fn convert_key_for_foreign_key(
+        &self,
+        entity: &str,
+        field: &str,
+        key: CausticsKey,
+    ) -> Box<dyn std::any::Any + Send + Sync>;
+}
+
 /// Trait for field selection in aggregate functions
 /// Allows both enum-based and select!-based field selection
 pub trait FieldSelection<Entity: sea_orm::EntityTrait> {
@@ -860,8 +1061,10 @@ pub trait FieldSelection<Entity: sea_orm::EntityTrait> {
 }
 
 /// Implement FieldSelection for SelectionSpec types (select! output)
-impl<Entity: sea_orm::EntityTrait, S> FieldSelection<Entity> for S 
-where S: SelectionSpec<Entity = Entity> {
+impl<Entity: sea_orm::EntityTrait, S> FieldSelection<Entity> for S
+where
+    S: SelectionSpec<Entity = Entity>,
+{
     fn to_simple_expr(self) -> sea_orm::sea_query::SimpleExpr {
         self.to_single_column_expr()
     }
@@ -929,7 +1132,7 @@ impl<C: sea_orm::ConnectionTrait> EntityResolver<C> {
     pub async fn resolve_entity(
         &self,
         conn: &C,
-        foreign_key_value: Option<i32>,
+        foreign_key_value: Option<CausticsKey>,
         foreign_key_column: &str,
         target_entity: &str,
         relation_name: &str,
@@ -1086,7 +1289,9 @@ where
 {
     type Output = ModelWithRelations;
     fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {
-        unreachable!()
+        // This method should not be called for ModelWithRelations
+        // This is a design limitation - ModelWithRelations should not be used in batch operations
+        panic!("ModelWithRelations cannot be used in batch operations - use individual entity operations instead")
     }
     fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
         match result {
@@ -1217,55 +1422,16 @@ pub trait SetParamInfo {
     fn exec_has_many_create_on_conn<'a>(
         &'a self,
         conn: &'a DatabaseConnection,
-        parent_id: i32,
+        parent_id: CausticsKey,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>;
 
     /// Execute nested create items in a transaction for a given parent id
     fn exec_has_many_create_on_txn<'a>(
         &'a self,
         txn: &'a DatabaseTransaction,
-        parent_id: i32,
+        parent_id: CausticsKey,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>>;
 }
-
-/// Trait for condition types to enable proper ID extraction without string parsing
-pub trait ConditionInfo {
-    /// Extract the entity ID from a condition
-    fn extract_entity_id(&self) -> Option<sea_orm::Value>;
-}
-
-impl ConditionInfo for sea_orm::Condition {
-    fn extract_entity_id(&self) -> Option<sea_orm::Value> {
-        // Best-effort parsing of debug string until a typed API is available
-        let condition_str = format!("{:?}", self);
-
-        fn try_extract_id_pattern(
-            condition_str: &str,
-            pattern: &str,
-            pattern_len: usize,
-        ) -> Option<i32> {
-            condition_str.find(pattern).and_then(|id_start| {
-                let after_pattern = &condition_str[id_start + pattern_len..];
-                let id_end = after_pattern
-                    .find(')')
-                    .or_else(|| after_pattern.find(' '))?;
-                let id_str = &after_pattern[..id_end];
-                id_str.parse::<i32>().ok()
-            })
-        }
-
-        let extracted_id = try_extract_id_pattern(&condition_str, "Id = ", 5)
-            .or_else(|| try_extract_id_pattern(&condition_str, "Value(Int(Some(", 15))
-            .or_else(|| try_extract_id_pattern(&condition_str, "IdEquals(", 9))
-            .or_else(|| try_extract_id_pattern(&condition_str, "Equal, Value(Int(Some(", 22))
-            .or_else(|| try_extract_id_pattern(&condition_str, "Value(Int(Some(", 15))
-            .or_else(|| try_extract_id_pattern(&condition_str, " = ", 3));
-
-        extracted_id.map(|id| sea_orm::Value::Int(Some(id)))
-    }
-}
-
-// (Old per-operation tuple macros were removed; unified macro below is used instead.)
 
 // Generate tuple impls up to arity 16
 
@@ -1371,7 +1537,7 @@ pub mod error_handling {
     impl fmt::Display for ContextualError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "{} (operation: {}", self.error, self.context.operation)?;
-            
+
             if let Some(entity) = &self.context.entity {
                 write!(f, ", entity: {}", entity)?;
             }
@@ -1384,7 +1550,7 @@ pub mod error_handling {
             if let Some(info) = &self.context.additional_info {
                 write!(f, ", info: {}", info)?;
             }
-            
+
             write!(f, ")")
         }
     }
@@ -1401,10 +1567,7 @@ pub mod error_handling {
     }
 
     /// Helper for creating contextual errors
-    pub fn contextual_error(
-        error: CausticsError,
-        operation: impl Into<String>,
-    ) -> ContextualError {
+    pub fn contextual_error(error: CausticsError, operation: impl Into<String>) -> ContextualError {
         ContextualError::with_context(error, operation)
     }
 
@@ -1444,7 +1607,7 @@ macro_rules! caustics_contextual_error {
     ($error:expr, $operation:expr, $entity:expr) => {
         error_handling::ContextualError::new(
             $error,
-            error_handling::ErrorContext::new($operation).with_entity($entity)
+            error_handling::ErrorContext::new($operation).with_entity($entity),
         )
     };
 }

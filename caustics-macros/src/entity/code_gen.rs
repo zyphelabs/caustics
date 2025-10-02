@@ -1,11 +1,12 @@
+use super::{extract_relations, generate_relation_submodules, RelationKind};
 use crate::common::is_option;
+use crate::name_resolution::EntityNameContext;
 use crate::primary_key::{
     extract_primary_key_info, get_primary_key_column_name, get_primary_key_field_ident,
     get_primary_key_field_name,
 };
 use crate::validation::{validate_foreign_key_column, validate_table_name};
 use crate::where_param::generate_where_param_logic;
-use super::{extract_relations, generate_relation_submodules, RelationKind};
 use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -29,7 +30,9 @@ pub fn generate_entity(
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields_named) => fields_named.named.iter().collect::<Vec<_>>(),
             _ => {
-                return Err(quote! { compile_error!("#[caustics] requires a named-field struct for the Model"); });
+                return Err(
+                    quote! { compile_error!("#[caustics] requires a named-field struct for the Model"); },
+                );
             }
         },
         _ => {
@@ -39,6 +42,15 @@ pub fn generate_entity(
 
     // Extract current entity's table name
     let current_table_name = validate_table_name(&model_ast)?;
+
+    // Create centralized entity name context using extracted metadata
+    // This avoids fragile string manipulation by using the actual extracted information
+    // The entity name should be derived from the module name, not the struct name
+    let module_name = full_mod_path.segments.last()
+        .expect("Invalid module path - this should not happen in valid code")
+        .ident.to_string();
+    let entity_name = module_name.to_pascal_case();
+    let entity_context = EntityNameContext::from_metadata(&entity_name, &current_table_name);
 
     // Extract relations from relation_ast
     let relations = extract_relations(&relation_ast, &fields, &current_table_name);
@@ -82,13 +94,36 @@ pub fn generate_entity(
                 }
             }
         };
-        let target_primary_key_lit = syn::LitStr::new(&target_primary_key, proc_macro2::Span::call_site());
+        let target_primary_key_lit =
+            syn::LitStr::new(&target_primary_key, proc_macro2::Span::call_site());
         let target_primary_key_str = target_primary_key.clone();
+
+        // Extract target entity name from the relation
+        let target_entity_name = if let Some(entity_name) = &rel.target_entity_name {
+            entity_name.clone()
+        } else {
+            // Fallback: extract from target path
+            rel.target
+                .segments
+                .last()
+                .expect("Failed to parse relation - this should not happen in valid code")
+                .ident
+                .to_string()
+                .to_lowercase()
+        };
 
         let fetcher_body = if matches!(rel.kind, RelationKind::HasMany) {
             quote! {
-            let mut query = #target::Entity::find()
-                .filter(#target::Column::#foreign_key_column_ident.eq(foreign_key_value.unwrap_or_default()));
+            let mut query = #target::Entity::find();
+            if let Some(fk_value) = foreign_key_value {
+                if let Ok(value) = crate::__caustics_convert_key_for_sea_orm(#target_entity_name, #foreign_key_column_snake, fk_value) {
+                    // Use raw SQL expression to bypass SeaORM's typed API
+                    query = query.filter(sea_query::Expr::cust_with_values(
+                        &format!("{} = ?", #target::Column::#foreign_key_column_ident.to_string()),
+                        [value]
+                    ));
+                }
+            }
 
             // Apply child-level filters from RelationFilter
             if !filter.filters.is_empty() {
@@ -99,19 +134,11 @@ pub fn generate_entity(
                         let col_expr = col.into_simple_expr();
                         match &f.operation {
                             caustics::FieldOp::Equals(v) => {
-                                let val = if let Ok(parsed) = v.parse::<i32>() {
-                                    sea_orm::Value::Int(Some(parsed))
-                                } else {
-                                    sea_orm::Value::String(Some(Box::new(v.clone())))
-                                };
+                                let val = caustics::parse_string_to_sea_orm_value(v);
                                 cond = cond.add(Expr::expr(col_expr.clone()).eq(val));
                             }
                             caustics::FieldOp::NotEquals(v) => {
-                                let val = if let Ok(parsed) = v.parse::<i32>() {
-                                    sea_orm::Value::Int(Some(parsed))
-                                } else {
-                                    sea_orm::Value::String(Some(Box::new(v.clone())))
-                                };
+                                let val = caustics::parse_string_to_sea_orm_value(v);
                                 cond = cond.add(Expr::expr(col_expr.clone()).ne(val));
                             }
                             caustics::FieldOp::Contains(s) => {
@@ -140,8 +167,8 @@ pub fn generate_entity(
             }
 
             // Apply cursor (primary key-based cursor)
-            if let Some(cur) = filter.cursor_id {
-                query = query.filter(#target::Column::Id.gt(cur));
+            if let Some(ref cur) = filter.cursor_id {
+                query = query.filter(#target::Column::Id.gt(cur.to_db_value()));
             }
 
             // Apply order_by on any recognized column
@@ -160,18 +187,18 @@ pub fn generate_entity(
             if filter.distinct {
                 q_exec = q_exec.distinct();
             }
-            
+
             // Check if field selection is being used
             let has_field_selection = filter.nested_select_aliases.as_ref()
                 .map(|aliases| !aliases.is_empty())
                 .unwrap_or(false);
-            
+
             if has_field_selection {
                 // For field selection, compute required fields and fetch only those from database
                 let selected_fields = filter.nested_select_aliases.as_ref()
                     .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
                     .unwrap_or_default();
-                
+
                 // Compute required fields: selected fields + defensive fields (primary key, foreign keys, unique fields)
                 let required_fields = {
                     let mut fields = std::collections::HashSet::<&'static str>::new();
@@ -179,7 +206,7 @@ pub fn generate_entity(
                     for field in &selected_fields {
                         fields.insert(field);
                     }
-                    
+
                     // Get target entity metadata to include defensive fields
                     let target_entity_name = stringify!(#target);
                     // Convert module name to entity name (snake_case to PascalCase)
@@ -233,7 +260,7 @@ pub fn generate_entity(
                         })
                         .collect::<Vec<_>>()
                 };
-                
+
                 Ok(Box::new(Some(vec_selected)) as Box<dyn std::any::Any + Send>)
             } else {
                 // No field selection - return ModelWithRelations objects with all fields
@@ -258,7 +285,7 @@ pub fn generate_entity(
             let primary_key_pascal = target_primary_key_str
                 .chars()
                 .next()
-                .unwrap()
+                .expect("Failed to parse relation - this should not happen in valid code")
                 .to_uppercase()
                 .collect::<String>()
                 + &target_primary_key_str[1..];
@@ -297,20 +324,20 @@ pub fn generate_entity(
             if is_nullable_fk {
                 quote! {
                     if let Some(fk_value) = foreign_key_value {
-                            let condition = #target_unique_param::#primary_key_variant(fk_value);
+                let condition = #target_unique_param::#primary_key_variant(fk_value);
                             let mut query = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into());
-                            
+
                             // Check if field selection is being used
                             let has_field_selection = filter.nested_select_aliases.as_ref()
                                 .map(|aliases| !aliases.is_empty())
                                 .unwrap_or(false);
-                            
+
                             if has_field_selection {
                                 // For field selection, compute required fields and fetch only those from database
                                 let selected_fields = filter.nested_select_aliases.as_ref()
                                     .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
                                     .unwrap_or_default();
-                                
+
                                 // Compute required fields: selected fields + defensive fields (primary key, foreign keys, unique fields)
                                 let required_fields = {
                                     let mut fields = std::collections::HashSet::<&'static str>::new();
@@ -318,17 +345,17 @@ pub fn generate_entity(
                                     for field in &selected_fields {
                                         fields.insert(field);
                                     }
-                                    
+
                                     // Add target entity's foreign key fields for nested relation traversal
                                     for fk_field in [#(#target_foreign_keys),*] {
                                         fields.insert(fk_field);
                                     }
-                                    
+
                                     // Always include primary key for relation traversal
                                     fields.insert(#target_primary_key);
                                     fields
                                 };
-                                
+
                                 // Apply database-level field selection using raw SQL approach (like main queries)
                                 let selected_fields_exprs: Vec<_> = required_fields.iter()
                                     .filter_map(|field| {
@@ -339,38 +366,41 @@ pub fn generate_entity(
                                         }
                                     })
                                     .collect::<Vec<_>>();
-                                
+
                                 // Apply database-level field selection using raw SQL approach (like main queries)
                                 let opt_selected = if selected_fields_exprs.is_empty() {
                                     // Fetch all fields if no valid expressions found
-                                    let model = query.one(conn).await?;
-                                    model.map(|m| #target_entity::Selected::from_model(m, &[]))
+                                    let models = query.all(conn).await?;
+                                    let selected_vec: Vec<#target_entity::Selected> = models.into_iter().map(|m| #target_entity::Selected::from_model(m, &[])).collect();
+                                    Some(selected_vec)
                                 } else {
                                     // Use raw SQL approach with select_only() + expr_as() (like main queries)
                                     let mut select_query = query.select_only();
                                     for (expr, alias) in &selected_fields_exprs {
                                         select_query.expr_as(expr.clone(), alias.as_str());
                                     }
-                                    
+
                                     // Build and execute raw SQL query (like main queries do)
                                     use sea_orm::QueryTrait;
                                     let stmt = select_query.build(conn.get_database_backend());
-                                    let row_opt = conn.query_one(stmt).await?;
-                                    
+                                    let rows = conn.query_all(stmt).await?;
+
                                     // Use fill_from_row method (like main queries do)
                                     use caustics::EntitySelection;
-                                    row_opt.map(|row| {
+                                    let selected_vec: Vec<#target_entity::Selected> = rows.into_iter().map(|row| {
                                         let field_names: Vec<&str> = required_fields.iter().map(|s| s.as_ref()).collect();
                                         #target_entity::Selected::fill_from_row(&row, &field_names)
-                                    })
+                                    }).collect();
+                                    Some(selected_vec)
                                 };
-                                
+
                                 // Return Selected object directly (no conversion needed)
                                 return Ok(Box::new(opt_selected) as Box<dyn std::any::Any + Send>);
                             } else {
                                 // No field selection - return Selected objects with all fields
-                                let opt_model = query.one(conn).await?;
-                                let with_rel = opt_model.map(|model| #target_entity::Selected::from_model(model, &[]));
+                                let models = query.all(conn).await?;
+                                let selected_vec: Vec<#target_entity::Selected> = models.into_iter().map(|model| #target_entity::Selected::from_model(model, &[])).collect();
+                                let with_rel = Some(selected_vec);
                                 return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
                             }
                         } else {
@@ -382,19 +412,19 @@ pub fn generate_entity(
                 if let Some(fk_value) = foreign_key_value {
                         let condition = #target_unique_param::#primary_key_variant(fk_value);
                         let mut query = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into());
-                        
+
                         // Check if field selection is being used
                         let has_field_selection = filter.nested_select_aliases.as_ref()
                             .map(|aliases| !aliases.is_empty())
                             .unwrap_or(false);
-                        
-                        
+
+
                         if has_field_selection {
                             // For field selection, compute required fields and fetch only those from database
                             let selected_fields = filter.nested_select_aliases.as_ref()
                                 .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
                                 .unwrap_or_default();
-                            
+
                             // Compute required fields: selected fields + defensive fields (primary key, foreign keys, unique fields)
                             // For BelongsTo relations, always include the foreign key field
                             let required_fields = {
@@ -403,18 +433,18 @@ pub fn generate_entity(
                                 for field in &selected_fields {
                                     fields.insert(field);
                                 }
-                                
+
                                 // Always include primary key for relation traversal
                                 fields.insert(#target_primary_key);
-                                
+
                                 // For BelongsTo relations, always include the foreign key field
                                 fields.insert(#foreign_key_column);
-                                
+
                                 // Add foreign key fields for nested relation traversal using metadata
                                 for fk_field in [#(#target_foreign_keys),*] {
                                     fields.insert(fk_field);
                                 }
-                                
+
                                 fields
                             };
 
@@ -437,12 +467,12 @@ pub fn generate_entity(
                                 for (expr, alias) in &selected_fields_exprs {
                                     select_query.expr_as(expr.clone(), alias.as_str());
                                 }
-                                
+
                                 // Build and execute raw SQL query (like main queries do)
                                 use sea_orm::QueryTrait;
                                 let stmt = select_query.build(conn.get_database_backend());
                                 let row_opt = conn.query_one(stmt).await?;
-                                
+
                                 // Use fill_from_row method (like main queries do)
                                 use caustics::EntitySelection;
                                 row_opt.map(|row| {
@@ -504,14 +534,38 @@ pub fn generate_entity(
         };
         let target_primary_key_str = target_primary_key.clone();
 
+        // Extract target entity name from the relation
+        let target_entity_name = if let Some(entity_name) = &rel.target_entity_name {
+            entity_name.clone()
+        } else {
+            // Fallback: extract from target path
+            rel.target
+                .segments
+                .last()
+                .expect("Failed to parse relation - this should not happen in valid code")
+                .ident
+                .to_string()
+                .to_lowercase()
+        };
+
         // Copy the exact same logic as ModelWithRelations version but change the final mapping to Selected
         let fetcher_body = if matches!(rel.kind, RelationKind::HasMany) {
             // Get the primary key field name from the relation definition or use dynamic detection
             let primary_key_field_name = target_primary_key_str.to_snake_case();
-            
+
             quote! {
-            let mut query = #target::Entity::find()
-                .filter(#target::Column::#foreign_key_column_ident.eq(foreign_key_value.unwrap_or_default()));
+            let mut query = #target::Entity::find();
+            if let Some(fk_value) = foreign_key_value {
+                if let Ok(value) = crate::__caustics_convert_key_for_sea_orm(#target::Entity::default().table_name(), #primary_key_field_name, fk_value) {
+                    // Use raw SQL expression to bypass SeaORM's typed API
+                    query = query.filter(sea_query::Expr::cust_with_values(
+                        &format!("{} = ?", #target::Column::#foreign_key_column_ident.to_string()),
+                        [value]
+                    ));
+                }
+            }
+            use sea_orm::QueryTrait;
+            let query_sql = query.build(conn.get_database_backend());
 
             // Check if field selection is being used
             let has_field_selection = filter.nested_select_aliases.as_ref()
@@ -527,19 +581,11 @@ pub fn generate_entity(
                         let col_expr = col.into_simple_expr();
                         match &f.operation {
                             caustics::FieldOp::Equals(v) => {
-                                let val = if let Ok(parsed) = v.parse::<i32>() {
-                                    sea_orm::Value::Int(Some(parsed))
-                                } else {
-                                    sea_orm::Value::String(Some(Box::new(v.clone())))
-                                };
+                                let val = caustics::parse_string_to_sea_orm_value(v);
                                 cond = cond.add(Expr::expr(col_expr.clone()).eq(val));
                             }
                             caustics::FieldOp::NotEquals(v) => {
-                                let val = if let Ok(parsed) = v.parse::<i32>() {
-                                    sea_orm::Value::Int(Some(parsed))
-                                } else {
-                                    sea_orm::Value::String(Some(Box::new(v.clone())))
-                                };
+                                let val = caustics::parse_string_to_sea_orm_value(v);
                                 cond = cond.add(Expr::expr(col_expr.clone()).ne(val));
                             }
                             caustics::FieldOp::Contains(s) => {
@@ -568,8 +614,8 @@ pub fn generate_entity(
                             }
 
                             // Apply cursor (primary key-based cursor)
-                            if let Some(cur) = filter.cursor_id {
-                                query = query.filter(#target::Column::Id.gt(cur));
+                            if let Some(ref cur) = filter.cursor_id {
+                                query = query.filter(#target::Column::Id.gt(cur.to_db_value()));
                             }
 
                             // Apply ordering
@@ -597,13 +643,13 @@ pub fn generate_entity(
             if filter.distinct {
                 q_exec = q_exec.distinct();
             }
-            
+
             if has_field_selection {
                 // For field selection, compute required fields and fetch only those from database
                 let selected_fields = filter.nested_select_aliases.as_ref()
                     .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
                     .unwrap_or_default();
-                
+
                 // Compute required fields: selected fields + defensive fields (computed at build time)
                 let required_fields = {
                     let mut fields = std::collections::HashSet::<&str>::new();
@@ -625,10 +671,10 @@ pub fn generate_entity(
                     fields.insert(#foreign_key_column_str);
                     // Add all foreign key fields for nested relation traversal
                     // (Metadata system handles this dynamically)
-                    
+
                     // Add foreign key fields for nested relation traversal
                     // The target entity's relation metadata is not available when generating source entity's relation fetchers
-                    
+
                     // Fallback to fetching all fields when target entity metadata is not available
                     fields
                 };
@@ -652,12 +698,12 @@ pub fn generate_entity(
                     for (expr, alias) in &selected_fields_exprs {
                         select_query.expr_as(expr.clone(), alias.as_str());
                     }
-                    
+
                     // Build and execute raw SQL query (like main queries do)
                     use sea_orm::QueryTrait;
                     let stmt = select_query.build(conn.get_database_backend());
                     let rows = conn.query_all(stmt).await?;
-                    
+
                     // Use fill_from_row method (like main queries do)
                     use caustics::EntitySelection;
                     let field_names: Vec<&str> = required_fields.iter().map(|s| s.as_ref()).collect();
@@ -671,7 +717,8 @@ pub fn generate_entity(
                 Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>)
             } else {
                 // No field selection - return Selected objects with all fields
-                let vec_with_rel = q_exec.all(conn).await?
+                let models = q_exec.all(conn).await?;
+                let vec_with_rel = models
                             .into_iter()
                     .map(|model| #target::Selected::from_model(model, &[]))
                     .collect::<Vec<_>>();
@@ -684,35 +731,32 @@ pub fn generate_entity(
             let target_unique_param = quote! { #target::UniqueWhereParam };
             let primary_key_variant = format_ident!("IdEquals");
 
-            let is_nullable_fk = rel
-                .foreign_key_field
-                .as_ref()
-                .is_some_and(|fk_field_name| {
-                    fields
-                        .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
-                        .is_some_and(|field| is_option(&field.ty))
-                });
+            let is_nullable_fk = rel.foreign_key_field.as_ref().is_some_and(|fk_field_name| {
+                fields
+                    .iter()
+                    .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
+                    .is_some_and(|field| is_option(&field.ty))
+            });
 
             if is_nullable_fk {
                 // Metadata system handles defensive fields dynamically
-                
+
                 quote! {
                     if let Some(fk_value) = foreign_key_value {
                             let condition = #target_unique_param::#primary_key_variant(fk_value);
                             let mut query = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into());
-                            
+
                             // Check if field selection is being used
                             let has_field_selection = filter.nested_select_aliases.as_ref()
                                 .map(|aliases| !aliases.is_empty())
                                 .unwrap_or(false);
-                            
+
                             if has_field_selection {
                                 // For field selection, compute required fields and fetch only those from database
                                 let selected_fields = filter.nested_select_aliases.as_ref()
                                     .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
                                     .unwrap_or_default();
-                                
+
                                 // Compute required fields: selected fields + defensive fields (computed at build time)
                                 let required_fields = {
                                     let mut fields = std::collections::HashSet::<&str>::new();
@@ -734,7 +778,7 @@ pub fn generate_entity(
                                     fields.insert(#foreign_key_column_str);
                                     // Add all foreign key fields for nested relation traversal
                                     // (Metadata system handles this dynamically)
-                                    
+
                                     // Add dynamic foreign key field detection for nested relations
                                     // Examine target entity's available columns and include any that end with "_id"
                                     use sea_orm::Iterable;
@@ -745,7 +789,7 @@ pub fn generate_entity(
                                             fields.insert(Box::leak(column_name.into_boxed_str()));
                                         }
                                     }
-                                    
+
                                     fields
                                 };
 
@@ -757,7 +801,7 @@ pub fn generate_entity(
                                     }
                                 }
 
-                                
+
                                 // Apply database-level field selection using raw SQL approach (like main queries)
                                 let opt_selected = if selected_fields_exprs.is_empty() {
                                     // Fetch all fields if no valid expressions found
@@ -769,12 +813,12 @@ pub fn generate_entity(
                                     for (expr, alias) in &selected_fields_exprs {
                                         select_query.expr_as(expr.clone(), alias.as_str());
                                     }
-                                    
+
                                     // Build and execute raw SQL query (like main queries do)
                                     use sea_orm::QueryTrait;
                                     let stmt = select_query.build(conn.get_database_backend());
                                     let row_opt = conn.query_one(stmt).await?;
-                                    
+
                                 // Use fill_from_row method (like main queries do)
                                 use caustics::EntitySelection;
                                 row_opt.map(|row| {
@@ -797,109 +841,109 @@ pub fn generate_entity(
                 }
             } else {
                 // Metadata system handles defensive fields dynamically
-                
+
                 quote! {
-                    if let Some(fk_value) = foreign_key_value {
-                        let condition = #target_unique_param::#primary_key_variant(fk_value);
-                        let mut query = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into());
-                        
-            // Apply database-level field selection optimization
-            // For relation fetchers, we need all fields to properly construct the target entity
-            // The actual field selection optimization happens at the Selected struct level
-                        
-                        // Check if field selection is being used
-                        let has_field_selection = filter.nested_select_aliases.as_ref()
-                            .map(|aliases| !aliases.is_empty())
-                            .unwrap_or(false);
-                        
-                        if has_field_selection {
-                                // For field selection, compute required fields and fetch only those from database
-                            let selected_fields = filter.nested_select_aliases.as_ref()
-                                .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-                                .unwrap_or_default();
-                            
-                                // Compute required fields: selected fields + defensive fields (computed at build time)
-                                let required_fields = {
-                                    let mut fields = std::collections::HashSet::<&str>::new();
-                                    // Add selected fields
-                                    fields.extend(selected_fields.iter().map(|s| *s));
-                                    // Add defensive fields for relation traversal
-                                    // Get target entity metadata to find primary key field
-                                    let target_entity_name = stringify!(#target);
-                                    let entity_name = target_entity_name.split('_').map(|s| {
-                                        let mut chars = s.chars();
-                                        match chars.next() {
-                                            None => String::new(),
-                                            Some(first) => first.to_uppercase().chain(chars).collect(),
+                        if let Some(fk_value) = foreign_key_value {
+                            let condition = #target_unique_param::#primary_key_variant(fk_value);
+                            let mut query = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into());
+
+                // Apply database-level field selection optimization
+                // For relation fetchers, we need all fields to properly construct the target entity
+                // The actual field selection optimization happens at the Selected struct level
+
+                            // Check if field selection is being used
+                            let has_field_selection = filter.nested_select_aliases.as_ref()
+                                .map(|aliases| !aliases.is_empty())
+                                .unwrap_or(false);
+
+                            if has_field_selection {
+                                    // For field selection, compute required fields and fetch only those from database
+                                let selected_fields = filter.nested_select_aliases.as_ref()
+                                    .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                                    .unwrap_or_default();
+
+                                    // Compute required fields: selected fields + defensive fields (computed at build time)
+                                    let required_fields = {
+                                        let mut fields = std::collections::HashSet::<&str>::new();
+                                        // Add selected fields
+                                        fields.extend(selected_fields.iter().map(|s| *s));
+                                        // Add defensive fields for relation traversal
+                                        // Get target entity metadata to find primary key field
+                                        let target_entity_name = stringify!(#target);
+                                        let entity_name = target_entity_name.split('_').map(|s| {
+                                            let mut chars = s.chars();
+                                            match chars.next() {
+                                                None => String::new(),
+                                                Some(first) => first.to_uppercase().chain(chars).collect(),
+                                            }
+                                        }).collect::<String>();
+                                        // Add primary key field dynamically
+                                        fields.insert(#target_primary_key);
+                                        // Add foreign key field for this relation
+                                        fields.insert(#foreign_key_column_str);
+                                        // Add all foreign key fields for nested relation traversal
+                                        // (Metadata system handles this dynamically)
+
+                                        // Add dynamic foreign key field detection for nested relations
+                                        // Examine target entity's available columns and include any that end with "_id"
+                                        use sea_orm::Iterable;
+                                        let target_columns = #target::Column::iter();
+                                        for column in target_columns {
+                                            let column_name = format!("{:?}", column).to_lowercase();
+                                            if column_name.ends_with("_id") {
+                                                fields.insert(Box::leak(column_name.into_boxed_str()));
+                                            }
                                         }
-                                    }).collect::<String>();
-                                    // Add primary key field dynamically
-                                    fields.insert(#target_primary_key);
-                                    // Add foreign key field for this relation
-                                    fields.insert(#foreign_key_column_str);
-                                    // Add all foreign key fields for nested relation traversal
-                                    // (Metadata system handles this dynamically)
-                                    
-                                    // Add dynamic foreign key field detection for nested relations
-                                    // Examine target entity's available columns and include any that end with "_id"
-                                    use sea_orm::Iterable;
-                                    let target_columns = #target::Column::iter();
-                                    for column in target_columns {
-                                        let column_name = format!("{:?}", column).to_lowercase();
-                                        if column_name.ends_with("_id") {
-                                            fields.insert(Box::leak(column_name.into_boxed_str()));
+
+                                       fields
+                                    };
+
+                                    // Convert required fields to SeaORM expressions (like main queries do)
+                                    let mut selected_fields_exprs = Vec::new();
+                                    for field in &required_fields {
+                                        if let Some(expr) = #target::Selected::column_for_alias(field) {
+                                            selected_fields_exprs.push((expr, field.to_string()));
                                         }
                                     }
-                                    
-                                   fields
-                                };
 
-                                // Convert required fields to SeaORM expressions (like main queries do)
-                                let mut selected_fields_exprs = Vec::new();
-                                for field in &required_fields {
-                                    if let Some(expr) = #target::Selected::column_for_alias(field) {
-                                        selected_fields_exprs.push((expr, field.to_string()));
-                                    }
-                                }
+                                    // Apply database-level field selection using the same approach as main queries
+                                    // Apply database-level field selection using raw SQL approach (like main queries)
+                                    let opt_selected = if selected_fields_exprs.is_empty() {
+                                        // Fetch all fields if no valid expressions found
+                                        let model = query.one(conn).await?;
+                                        model.map(|m| #target::Selected::from_model(m, &[]))
+                                    } else {
+                                        // Use raw SQL approach with select_only() + expr_as() (like main queries)
+                                        let mut select_query = query.select_only();
+                                        for (expr, alias) in &selected_fields_exprs {
+                                            select_query.expr_as(expr.clone(), alias.as_str());
+                                        }
 
-                                // Apply database-level field selection using the same approach as main queries
-                                // Apply database-level field selection using raw SQL approach (like main queries)
-                                let opt_selected = if selected_fields_exprs.is_empty() {
-                                    // Fetch all fields if no valid expressions found
-                                    let model = query.one(conn).await?;
-                                    model.map(|m| #target::Selected::from_model(m, &[]))
-                                } else {
-                                    // Use raw SQL approach with select_only() + expr_as() (like main queries)
-                                    let mut select_query = query.select_only();
-                                    for (expr, alias) in &selected_fields_exprs {
-                                        select_query.expr_as(expr.clone(), alias.as_str());
-                                    }
-                                    
-                                    // Build and execute raw SQL query (like main queries do)
-                                    use sea_orm::QueryTrait;
-                                    let stmt = select_query.build(conn.get_database_backend());
-                                    let row_opt = conn.query_one(stmt).await?;
-                                    
-                                // Use fill_from_row method (like main queries do)
-                                use caustics::EntitySelection;
-                                row_opt.map(|row| {
-                                    let field_names: Vec<&str> = required_fields.iter().map(|s| s.as_ref()).collect();
-                                    #target::Selected::fill_from_row(&row, &field_names)
-                                })
-                                };
+                                        // Build and execute raw SQL query (like main queries do)
+                                        use sea_orm::QueryTrait;
+                                        let stmt = select_query.build(conn.get_database_backend());
+                                        let row_opt = conn.query_one(stmt).await?;
 
-                                // Return Selected object directly (no conversion needed)
-                                return Ok(Box::new(opt_selected) as Box<dyn std::any::Any + Send>);
-                        } else {
-                            // No field selection - return Selected objects with all fields
-                            let opt_model = query.one(conn).await?;
-                            let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
-                            return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
+                                    // Use fill_from_row method (like main queries do)
+                                    use caustics::EntitySelection;
+                                    row_opt.map(|row| {
+                                        let field_names: Vec<&str> = required_fields.iter().map(|s| s.as_ref()).collect();
+                                        #target::Selected::fill_from_row(&row, &field_names)
+                                    })
+                                    };
+
+                                    // Return Selected object directly (no conversion needed)
+                                    return Ok(Box::new(opt_selected) as Box<dyn std::any::Any + Send>);
+                            } else {
+                                // No field selection - return Selected objects with all fields
+                                let opt_model = query.one(conn).await?;
+                                let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                                return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
+                            }
+                            } else {
+                        Ok(Box::new(None::<#target::Selected>) as Box<dyn std::any::Any + Send>)
                         }
-                        } else {
-                    Ok(Box::new(None::<#target::Selected>) as Box<dyn std::any::Any + Send>)
                     }
-                }
             }
         };
         relation_fetcher_bodies_selected.push(fetcher_body);
@@ -916,7 +960,6 @@ pub fn generate_entity(
             && rel.foreign_key_column.is_some()
             && rel.is_nullable
     });
-
 
     // Filter out primary key fields for set operations
     let primary_key_fields: Vec<_> = fields
@@ -959,7 +1002,6 @@ pub fn generate_entity(
         })
         .collect();
 
-
     // Identify foreign key fields from relations
     let foreign_key_fields: Vec<_> = relations
         .iter()
@@ -970,7 +1012,9 @@ pub fn generate_entity(
     let required_fields: Vec<_> = fields
         .iter()
         .filter(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
             !primary_key_fields.contains(field)
                 && !is_option(&field.ty)
                 && !foreign_key_fields.contains(&field_name)
@@ -982,7 +1026,7 @@ pub fn generate_entity(
         .iter()
         .map(|field| {
             let ty = &field.ty;
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             quote! { pub #name: #ty }
         })
         .collect::<Vec<_>>();
@@ -992,7 +1036,7 @@ pub fn generate_entity(
         .iter()
         .map(|field| {
             let ty = &field.ty;
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             quote! { #name: #ty }
         })
         .collect::<Vec<_>>();
@@ -1001,7 +1045,7 @@ pub fn generate_entity(
     let required_inits = required_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             quote! { #name }
         })
         .collect::<Vec<_>>();
@@ -1010,10 +1054,33 @@ pub fn generate_entity(
     let required_assigns = required_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             quote! { model.#name = sea_orm::ActiveValue::Set(self.#name); }
         })
         .collect::<Vec<_>>();
+
+    // Check if primary key is UUID type and generate UUID generation code
+    let uuid_pk_check = if let Some(pk_field) = primary_key_fields.first() {
+        if let syn::Type::Path(type_path) = &pk_field.ty {
+            if let Some(segment) = type_path.path.segments.last() {
+                if segment.ident == "Uuid" {
+                    quote! {
+                        if model.#current_primary_key_ident == sea_orm::ActiveValue::NotSet {
+                            model.#current_primary_key_ident = sea_orm::ActiveValue::Set(uuid::Uuid::new_v4());
+                        }
+                    }
+                } else {
+                    quote! {}
+                }
+            } else {
+                quote! {}
+            }
+        } else {
+            quote! {}
+        }
+    } else {
+        quote! {}
+    };
 
     // Generate foreign key relation fields for Create struct
     let foreign_key_relation_fields = relations
@@ -1025,10 +1092,10 @@ pub fn generate_entity(
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be in the Create struct
-                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
                     if let Some(field) = fields
                         .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                     {
                         !is_option(&field.ty)
                     } else {
@@ -1055,10 +1122,10 @@ pub fn generate_entity(
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be function arguments
-                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
                     if let Some(field) = fields
                         .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                     {
                         !is_option(&field.ty)
                     } else {
@@ -1085,10 +1152,10 @@ pub fn generate_entity(
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be initializers
-                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
                     if let Some(field) = fields
                         .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                     {
                         !is_option(&field.ty)
                     } else {
@@ -1106,8 +1173,10 @@ pub fn generate_entity(
     let unique_field_names: Vec<_> = unique_fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
-            syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
+            syn::LitStr::new(&field_name, field.ident.as_ref().expect("Field has no identifier").span())
         })
         .collect();
 
@@ -1115,16 +1184,18 @@ pub fn generate_entity(
     let unique_field_idents: Vec<_> = unique_fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
             // Convert to PascalCase for SeaORM Column enum
             let pascal_case = field_name
                 .chars()
                 .next()
-                .unwrap()
+                .expect("Failed to parse relation - this should not happen in valid code")
                 .to_uppercase()
                 .collect::<String>()
                 + &field_name[1..];
-            syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+            syn::Ident::new(&pascal_case, field.ident.as_ref().expect("Field has no identifier").span())
         })
         .collect();
 
@@ -1137,8 +1208,8 @@ pub fn generate_entity(
             relation.foreign_key_field.is_some() && {
                 // Check if the foreign key field is not nullable (not Option<T>)
                 // Only required relations should be in foreign key assignments
-                let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                if let Some(field) = fields.iter().find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name) {
+                let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
+                if let Some(field) = fields.iter().find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name) {
                     !is_option(&field.ty)
                 } else {
                     false
@@ -1146,10 +1217,14 @@ pub fn generate_entity(
             }
         })
         .map(|relation| {
-            let fk_field = relation.foreign_key_field.as_ref().unwrap();
+            let fk_field = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
             let fk_field_ident = format_ident!("{}", fk_field);
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             let target_module = &relation.target;
+
+            // Add variables for registry-based conversion
+            let entity_name = entity_context.registry_name();
+            let foreign_key_field_name = fk_field;
 
             // Get the primary key field name from the relation definition or use dynamic detection
             let primary_key_field_name_raw = if let Some(pk) = &relation.primary_key_field {
@@ -1159,7 +1234,7 @@ pub fn generate_entity(
                 get_primary_key_field_name(&fields)
             };
             let primary_key_field_name = primary_key_field_name_raw.to_snake_case();
-            let primary_key_pascal = primary_key_field_name_raw.chars().next().unwrap().to_uppercase().collect::<String>()
+            let primary_key_pascal = primary_key_field_name_raw.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>()
                 + &primary_key_field_name_raw[1..];
             let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
             let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
@@ -1167,8 +1242,10 @@ pub fn generate_entity(
             quote! {
                 // Handle foreign key value from UniqueWhereParam
                 match self.#relation_name {
-                    #target_module::UniqueWhereParam::#primary_key_variant(id) => {
-                        model.#fk_field_ident = sea_orm::ActiveValue::Set(id.clone());
+                    #target_module::UniqueWhereParam::#primary_key_variant(key) => {
+                        // Extract the value from CausticsKey for database field assignment
+                        let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, key);
+                        model.#fk_field_ident = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
                     }
                     other => {
                         // For complex foreign key resolution, we need to add to deferred lookups
@@ -1179,7 +1256,9 @@ pub fn generate_entity(
                                 let Some(model) = model.downcast_mut::<ActiveModel>() else {
                                     panic!("SetParam relation assign: ActiveModel type mismatch");
                                 };
-                                model.#fk_field_ident = sea_orm::ActiveValue::Set(value);
+                                // Extract the value from CausticsKey for database field assignment
+                                let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, value);
+                                model.#fk_field_ident = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
                             },
                             |conn: & sea_orm::DatabaseConnection, param| {
                                 let Some(param) = param.downcast_ref::<#target_module::UniqueWhereParam>() else {
@@ -1192,7 +1271,7 @@ pub fn generate_entity(
                                         .filter::<sea_query::Condition>(condition)
                                         .one(conn)
                                         .await?;
-                                    result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
                                             entity: stringify!(#target_module).to_string(),
                                             condition: format!("{:?}", param),
@@ -1211,7 +1290,7 @@ pub fn generate_entity(
                                         .filter::<sea_query::Condition>(condition)
                                         .one(txn)
                                         .await?;
-                                    result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
                                             entity: stringify!(#target_module).to_string(),
                                             condition: format!("{:?}", param),
@@ -1231,7 +1310,7 @@ pub fn generate_entity(
         .iter()
         .filter(|field| !primary_key_fields.contains(field))
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             let ty = &field.ty;
             quote! {
@@ -1245,7 +1324,7 @@ pub fn generate_entity(
         .iter()
         .filter(|field| !primary_key_fields.contains(field))
         .filter_map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             let ty = &field.ty;
             // Check if this is a numeric field
@@ -1306,10 +1385,10 @@ pub fn generate_entity(
                 && relation.foreign_key_field.is_some()
                 && {
                     // Only optional relations can be disconnected (set to None)
-                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
                     if let Some(field) = fields
                         .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                     {
                         is_option(&field.ty)
                     } else {
@@ -1381,11 +1460,9 @@ pub fn generate_entity(
                     let is_fk_nullable_lit =
                         syn::LitBool::new(false, proc_macro2::Span::call_site());
                     // Table/column literals for handler
-                    let target_table_name = relation
-                        .target_table_name
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| relation.name.to_snake_case());
+                    let relation_name_snake = relation.name.to_snake_case();
+                    // Use the resolved target table name from build-time metadata
+                    let target_table_name_expr = quote! { #relation_name_snake };
                     let current_table_name = relation
                         .current_table_name
                         .as_ref()
@@ -1403,8 +1480,7 @@ pub fn generate_entity(
                         };
                     let fk_column_lit =
                         syn::LitStr::new(&fk_field_name, proc_macro2::Span::call_site());
-                    let target_table_lit =
-                        syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                    let target_table_lit = target_table_name_expr;
                     let current_pk_col_lit = syn::LitStr::new(
                         &current_primary_key_column,
                         proc_macro2::Span::call_site(),
@@ -1456,13 +1532,14 @@ pub fn generate_entity(
                     let run_conn: Box<
                         dyn for<'b> Fn(
                                 &'b sea_orm::DatabaseConnection,
-                                i32,
+                                caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
                             + Send
-                    > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: i32| {
+                    > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: caustics::CausticsKey| {
                         let items_arc2 = std::sync::Arc::clone(&items_arc_for_conn);
                         Box::pin(async move {
                             let items_local = (*items_arc2).clone();
+                            // Use parent_id directly with to_db_value()
                             for c in items_local.into_iter() {
                                 let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
                                 for lookup in child_lookups.into_iter() {
@@ -1470,11 +1547,11 @@ pub fn generate_entity(
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
                                 // Set the foreign key to the parent id before insert
-                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                                 let inserted_child = child_am.insert(conn).await?;
                                 let child_id = #target_module::__extract_id(&inserted_child);
                                 for op in child_post_ops {
-                                    (op.run_on_conn)(conn, child_id).await?;
+                                    (op.run_on_conn)(conn, child_id.clone()).await?;
                                 }
                             }
                             Ok(())
@@ -1483,13 +1560,14 @@ pub fn generate_entity(
                     let run_txn: Box<
                         dyn for<'b> Fn(
                                 &'b sea_orm::DatabaseTransaction,
-                                i32,
+                                caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
                             + Send
-                    > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: i32| {
+                    > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: caustics::CausticsKey| {
                         let items_arc3 = std::sync::Arc::clone(&items_arc_for_txn);
                         Box::pin(async move {
                             let items_local = (*items_arc3).clone();
+                            // Use parent_id directly with to_db_value()
                             for c in items_local.into_iter() {
                                 let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
                                 for lookup in child_lookups.into_iter() {
@@ -1497,11 +1575,11 @@ pub fn generate_entity(
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
                                 // Set the foreign key to the parent id before insert
-                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                                 let inserted_child = child_am.insert(txn).await?;
                                 let child_id = #target_module::__extract_id(&inserted_child);
                                 for op in child_post_ops {
-                                    (op.run_on_txn)(txn, child_id).await?;
+                                    (op.run_on_txn)(txn, child_id.clone()).await?;
                                 }
                             }
                             Ok(())
@@ -1525,13 +1603,14 @@ pub fn generate_entity(
                     let run_conn: Box<
                         dyn for<'b> Fn(
                                 &'b sea_orm::DatabaseConnection,
-                                i32,
+                                caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
                             + Send
-                    > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: i32| {
+                    > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: caustics::CausticsKey| {
                         let items_arc2 = std::sync::Arc::clone(&items_arc_for_conn);
                         Box::pin(async move {
                             let items_local = (*items_arc2).clone();
+                            // Use parent_id directly with to_db_value()
                             for c in items_local.into_iter() {
                                 let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
                                 for lookup in child_lookups.into_iter() {
@@ -1539,11 +1618,11 @@ pub fn generate_entity(
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
                                 // Set the foreign key to the parent id before insert
-                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                                 let inserted_child = child_am.insert(conn).await?;
                                 let child_id = #target_module::__extract_id(&inserted_child);
                                 for op in child_post_ops {
-                                    (op.run_on_conn)(conn, child_id).await?;
+                                    (op.run_on_conn)(conn, child_id.clone()).await?;
                                 }
                             }
                             Ok(())
@@ -1552,13 +1631,14 @@ pub fn generate_entity(
                     let run_txn: Box<
                         dyn for<'b> Fn(
                                 &'b sea_orm::DatabaseTransaction,
-                                i32,
+                                caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
                             + Send
-                    > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: i32| {
+                    > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: caustics::CausticsKey| {
                         let items_arc3 = std::sync::Arc::clone(&items_arc_for_txn);
                         Box::pin(async move {
                             let items_local = (*items_arc3).clone();
+                            // Use parent_id directly with to_db_value()
                             for c in items_local.into_iter() {
                                 let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
                                 for lookup in child_lookups.into_iter() {
@@ -1566,11 +1646,11 @@ pub fn generate_entity(
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
                                 // Set the foreign key to the parent id before insert
-                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                                child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                                 let inserted_child = child_am.insert(txn).await?;
                                 let child_id = #target_module::__extract_id(&inserted_child);
                                 for op in child_post_ops {
-                                    (op.run_on_txn)(txn, child_id).await?;
+                                    (op.run_on_txn)(txn, child_id.clone()).await?;
                                 }
                             }
                             Ok(())
@@ -1604,16 +1684,17 @@ pub fn generate_entity(
             quote! {
                 SetParam::#create_variant(items) => {
                     let items_local = items.clone();
+                    // Use parent_id directly with to_db_value()
                     for c in items_local.into_iter() {
                         let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
                         for lookup in child_lookups.into_iter() {
                             let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
-                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                         let inserted_child = child_am.insert(conn).await?;
                         let child_id = #target_module::__extract_id(&inserted_child);
-                        for op in child_post_ops { (op.run_on_conn)(conn, child_id).await?; }
+                        for op in child_post_ops { (op.run_on_conn)(conn, child_id.clone()).await?; }
                     }
                     Ok(())
                 }
@@ -1627,16 +1708,17 @@ pub fn generate_entity(
             quote! {
                 SetParam::#create_many_variant(items) => {
                     let items_local = items.clone();
+                    // Use parent_id directly with to_db_value()
                     for c in items_local.into_iter() {
                         let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
                         for lookup in child_lookups.into_iter() {
                             let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
-                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                         let inserted_child = child_am.insert(conn).await?;
                         let child_id = #target_module::__extract_id(&inserted_child);
-                        for op in child_post_ops { (op.run_on_conn)(conn, child_id).await?; }
+                        for op in child_post_ops { (op.run_on_conn)(conn, child_id.clone()).await?; }
                     }
                     Ok(())
                 }
@@ -1657,10 +1739,11 @@ pub fn generate_entity(
                             let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
-                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        // Use parent_id directly with to_db_value()
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                         let inserted_child = child_am.insert(txn).await?;
                         let child_id = #target_module::__extract_id(&inserted_child);
-                        for op in child_post_ops { (op.run_on_txn)(txn, child_id).await?; }
+                        for op in child_post_ops { (op.run_on_txn)(txn, child_id.clone()).await?; }
                     }
                     Ok(())
                 }
@@ -1680,17 +1763,17 @@ pub fn generate_entity(
                             let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
-                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, sea_orm::Value::Int(Some(parent_id)));
+                        // Use parent_id directly with to_db_value()
+                        child_am.set(<#target_module::Entity as sea_orm::EntityTrait>::Column::#fk_col_ident_pascal, parent_id.to_db_value());
                         let inserted_child = child_am.insert(txn).await?;
                         let child_id = #target_module::__extract_id(&inserted_child);
-                        for op in child_post_ops { (op.run_on_txn)(txn, child_id).await?; }
+                        for op in child_post_ops { (op.run_on_txn)(txn, child_id.clone()).await?; }
                     }
                     Ok(())
                 }
             }
         })
         .collect();
-
 
     // Combine all SetParam variants as a flat Vec
     let all_set_param_variants: Vec<_> = field_variants
@@ -1704,19 +1787,42 @@ pub fn generate_entity(
         .collect();
 
     // Generate field variants and field operator modules for WhereParam enum (all fields, with string ops for string fields)
-    let (where_field_variants, where_match_arms, field_ops) =
-        generate_where_param_logic(&fields, &unique_fields, full_mod_path, &relations);
+    let primary_key_fields_slice: Vec<&syn::Field> =
+        primary_key_fields.iter().map(|f| **f).collect();
+    let (where_field_variants, where_match_arms, field_ops) = generate_where_param_logic(
+        &fields,
+        &unique_fields,
+        &primary_key_fields_slice,
+        full_mod_path,
+        &relations,
+        entity_context.registry_name(),
+    );
 
     // Generate match arms for UniqueWhereParam
     let unique_where_match_arms = unique_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             let equals_variant = format_ident!("{}Equals", pascal_name);
-            quote! {
-                UniqueWhereParam::#equals_variant(value) => {
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+
+            // For primary keys, use CausticsKey and convert using registry
+            // For other unique fields, use the field value directly
+            if primary_key_fields.contains(&field) {
+                let field_name_snake = name.to_string().to_snake_case();
+                let entity_name_str = &entity_name;
+                quote! {
+                    UniqueWhereParam::#equals_variant(key) => {
+                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
+                            .expect("Failed to convert CausticsKey to field type");
+                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                    }
+                }
+            } else {
+                quote! {
+                    UniqueWhereParam::#equals_variant(value) => {
+                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                    }
                 }
             }
         })
@@ -1727,14 +1833,30 @@ pub fn generate_entity(
     let unique_cursor_match_arms = unique_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             let equals_variant = format_ident!("{}Equals", pascal_name);
-            quote! {
-                UniqueWhereParam::#equals_variant(value) => {
-                    let expr = <Entity as EntityTrait>::Column::#pascal_name.into_simple_expr();
-                    self.with_cursor(expr, sea_orm::Value::from(value))
-                },
+
+            // For primary keys, use CausticsKey and convert using registry
+            // For other unique fields, use the field value directly
+            if primary_key_fields.contains(&field) {
+                let field_name_snake = name.to_string().to_snake_case();
+                let entity_name_str = &entity_name;
+                quote! {
+                    UniqueWhereParam::#equals_variant(key) => {
+                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
+                            .expect("Failed to convert CausticsKey to field type");
+                        let expr = <Entity as EntityTrait>::Column::#pascal_name.into_simple_expr();
+                        self.with_cursor(expr, sea_orm::Value::from(value))
+                    },
+                }
+            } else {
+                quote! {
+                    UniqueWhereParam::#equals_variant(value) => {
+                        let expr = <Entity as EntityTrait>::Column::#pascal_name.into_simple_expr();
+                        self.with_cursor(expr, value.into())
+                    },
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -1743,7 +1865,7 @@ pub fn generate_entity(
     let unique_where_equals_variants = unique_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             format_ident!("{}Equals", pascal_name)
         })
@@ -1752,9 +1874,43 @@ pub fn generate_entity(
     let unique_where_equals_columns = unique_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             pascal_name
+        })
+        .collect::<Vec<_>>();
+
+    // Generate match arms for From<UniqueWhereParam> for (sea_query::SimpleExpr, sea_orm::Value)
+    // Handle primary keys and other unique fields differently
+    let unique_where_to_expr_value_arms = unique_fields
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().expect("Field has no identifier");
+            let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
+            let variant = format_ident!("{}Equals", pascal_name);
+            let column = pascal_name.clone();
+
+            if primary_key_fields.contains(&field) {
+                // For primary keys, value is CausticsKey, convert using registry
+                let field_name_snake = name.to_string().to_snake_case();
+                let entity_name_str = &entity_name;
+                quote! {
+                    UniqueWhereParam::#variant(key) => {
+                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
+                            .expect("Failed to convert CausticsKey to field type");
+                        let expr = <Entity as EntityTrait>::Column::#column.into_simple_expr();
+                        (expr, sea_orm::Value::from(value))
+                    }
+                }
+            } else {
+                // For other unique fields, value is the field's actual type, use From<T>
+                quote! {
+                    UniqueWhereParam::#variant(value) => {
+                        let expr = <Entity as EntityTrait>::Column::#column.into_simple_expr();
+                        (expr, sea_orm::Value::from(value))
+                    }
+                }
+            }
         })
         .collect::<Vec<_>>();
 
@@ -1762,7 +1918,7 @@ pub fn generate_entity(
     let order_by_field_variants = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             quote! {
                 #pascal_name(caustics::SortOrder)
@@ -1776,7 +1932,7 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().unwrap().to_string().to_pascal_case()
+                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
             );
             quote! {
                 OrderByParam::#pascal_name(order) => {
@@ -1796,7 +1952,7 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().unwrap().to_string().to_pascal_case()
+                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
             );
             quote! { #pascal_name }
         })
@@ -1806,7 +1962,7 @@ pub fn generate_entity(
     let snake_field_fn_idents = fields
         .iter()
         .map(|field| {
-            let snake = format_ident!("{}", field.ident.as_ref().unwrap().to_string());
+            let snake = format_ident!("{}", field.ident.as_ref().expect("Field has no identifier").to_string());
             snake
         })
         .collect::<Vec<_>>();
@@ -1820,7 +1976,7 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().unwrap().to_string().to_pascal_case()
+                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
             );
             quote! {
                 GroupByOrderByParam::#pascal_name(order) => {
@@ -1840,7 +1996,7 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().unwrap().to_string().to_pascal_case()
+                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
             );
             quote! { #pascal_name }
         })
@@ -1884,7 +2040,10 @@ pub fn generate_entity(
                             caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
                             caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
                             caustics::FieldOp::JsonNull(flag) => caustics::FieldOp::JsonNull(flag),
-                            caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => unreachable!(),
+                            caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => {
+                                // These operations are not supported in this context
+                                continue;
+                            },
                         };
                         caustics::Filter { field, operation }
                     }
@@ -1916,7 +2075,10 @@ pub fn generate_entity(
                             caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
                             caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
                             caustics::FieldOp::JsonNull(flag) => caustics::FieldOp::JsonNull(flag),
-                            caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => unreachable!(),
+                            caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => {
+                                // These operations are not supported in this context
+                                continue;
+                            },
                         };
                         caustics::Filter { field, operation }
                     }
@@ -1929,12 +2091,20 @@ pub fn generate_entity(
     let unique_where_variants = unique_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
+            let ty = &field.ty;
             let pascal_name = name.to_string().to_pascal_case();
             let equals_variant = format_ident!("{}Equals", pascal_name);
-            let ty = &field.ty;
-            quote! {
-                #equals_variant(#ty)
+
+            // Only use CausticsKey for primary key fields, otherwise use the field's actual type
+            if primary_key_fields.contains(&field) {
+                quote! {
+                    #equals_variant(caustics::CausticsKey)
+                }
+            } else {
+                quote! {
+                    #equals_variant(#ty)
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -1957,17 +2127,37 @@ pub fn generate_entity(
     let unique_where_serialize_arms = unique_fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = name.to_string().to_pascal_case();
             let equals_variant = format_ident!("{}Equals", pascal_name);
             let field_name = name.to_string();
-            quote! {
-                UniqueWhereParam::#equals_variant(value) => (
-                    #field_name,
-                    ::prisma_client_rust::SerializedWhereValue::Value(
-                        ::prisma_client_rust::PrismaValue::Int(value),
+
+            // For primary keys, use CausticsKey and convert to Int
+            // For other unique fields, use the field value directly
+            if primary_key_fields.contains(&field) {
+                let field_name_snake = name.to_string().to_snake_case();
+                let entity_name_str = &entity_name;
+                quote! {
+                    UniqueWhereParam::#equals_variant(key) => {
+                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
+                            .expect("Failed to convert CausticsKey to field type");
+                        (
+                            #field_name,
+                            ::prisma_client_rust::SerializedWhereValue::Value(
+                                sea_orm::Value::from(value).into(),
+                            ),
+                        )
+                    },
+                }
+            } else {
+                quote! {
+                    UniqueWhereParam::#equals_variant(value) => (
+                        #field_name,
+                        ::prisma_client_rust::SerializedWhereValue::Value(
+                            ::prisma_client_rust::PrismaValue::String(value.to_string()),
+                        ),
                     ),
-                ),
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -2012,7 +2202,7 @@ pub fn generate_entity(
                                 }
                             }
                         } else {
-                            panic!("Type mismatch in nested has_many downcast: expected Option<Vec<{}>> or Option<Vec<{}>>", 
+                            panic!("Type mismatch in nested has_many downcast: expected Option<Vec<{}>> or Option<Vec<{}>>",
                                 stringify!(#target::ModelWithRelations), stringify!(#target::Selected));
                         }
                     }
@@ -2022,7 +2212,7 @@ pub fn generate_entity(
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
                         if let Some(field) = fields
                             .iter()
-                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                         {
                             is_option(&field.ty)
                         } else { false }
@@ -2044,7 +2234,7 @@ pub fn generate_entity(
                                     }
                                 }
                             } else {
-                                panic!("Type mismatch in nested optional belongs_to downcast: expected Option<{}> or Option<{}>", 
+                                panic!("Type mismatch in nested optional belongs_to downcast: expected Option<{}> or Option<{}>",
                                     stringify!(#target::ModelWithRelations), stringify!(#target::Selected));
                             }
                         }
@@ -2073,8 +2263,8 @@ pub fn generate_entity(
                                     #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                 }
                             } else {
-                                panic!("Type mismatch in nested belongs_to downcast: expected {} or {} or Option<{}> or Option<{}>", 
-                                    stringify!(#target::ModelWithRelations), stringify!(#target::Selected), 
+                                panic!("Type mismatch in nested belongs_to downcast: expected {} or {} or Option<{}> or Option<{}>",
+                                    stringify!(#target::ModelWithRelations), stringify!(#target::Selected),
                                     stringify!(#target::ModelWithRelations), stringify!(#target::Selected));
                             }
                         }
@@ -2111,7 +2301,7 @@ pub fn generate_entity(
                                 }
                             }
                         } else {
-                            panic!("Type mismatch in nested has_many downcast: expected Option<Vec<{}>> or Option<Vec<{}>>", 
+                            panic!("Type mismatch in nested has_many downcast: expected Option<Vec<{}>> or Option<Vec<{}>>",
                                 stringify!(#target::Selected), stringify!(#target::ModelWithRelations));
                         }
                     }
@@ -2121,7 +2311,7 @@ pub fn generate_entity(
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
                         if let Some(field) = fields
                             .iter()
-                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                         {
                             is_option(&field.ty)
                         } else { false }
@@ -2143,7 +2333,7 @@ pub fn generate_entity(
                                     }
                                 }
                             } else {
-                                panic!("Type mismatch in nested optional belongs_to downcast: expected Option<{}> or Option<{}>", 
+                                panic!("Type mismatch in nested optional belongs_to downcast: expected Option<{}> or Option<{}>",
                                     stringify!(#target::Selected), stringify!(#target::ModelWithRelations));
                             }
                         }
@@ -2172,8 +2362,8 @@ pub fn generate_entity(
                                     #target::ModelWithRelations::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                 }
                             } else {
-                                panic!("Type mismatch in nested belongs_to downcast: expected {} or {} or Option<{}> or Option<{}>", 
-                                    stringify!(#target::Selected), stringify!(#target::ModelWithRelations), 
+                                panic!("Type mismatch in nested belongs_to downcast: expected {} or {} or Option<{}> or Option<{}>",
+                                    stringify!(#target::Selected), stringify!(#target::ModelWithRelations),
                                     stringify!(#target::Selected), stringify!(#target::ModelWithRelations));
                             }
                         }
@@ -2230,7 +2420,7 @@ pub fn generate_entity(
     let model_with_relations_fields = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let ty = &field.ty;
             quote! { pub #name: #ty }
         })
@@ -2240,7 +2430,7 @@ pub fn generate_entity(
     let field_names = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             quote! { #name }
         })
         .collect::<Vec<_>>();
@@ -2249,7 +2439,7 @@ pub fn generate_entity(
     let field_params = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let ty = &field.ty;
             quote! { #name: #ty }
         })
@@ -2270,7 +2460,7 @@ pub fn generate_entity(
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
                         if let Some(field) = fields
                             .iter()
-                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                         {
                             is_option(&field.ty)
                         } else {
@@ -2308,7 +2498,7 @@ pub fn generate_entity(
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
                         if let Some(field) = fields
                             .iter()
-                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                         {
                             is_option(&field.ty)
                         } else {
@@ -2361,7 +2551,7 @@ pub fn generate_entity(
             pub take: Option<i64>,
             pub skip: Option<i64>,
             pub order_by: Vec<(String, caustics::SortOrder)>,
-            pub cursor_id: Option<i32>,
+            pub cursor_id: Option<caustics::CausticsKey>,
             pub include_count: bool,
             pub distinct: bool,
         }
@@ -2398,7 +2588,7 @@ pub fn generate_entity(
     let selected_scalar_fields = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let original_ty = &field.ty;
             let inner_ty = crate::common::extract_inner_type_from_option(&field.ty);
 
@@ -2443,23 +2633,23 @@ pub fn generate_entity(
     let selected_fill_stmts = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let inner_ty = crate::common::extract_inner_type_from_option(&field.ty);
             let alias = syn::LitStr::new(&name.to_string(), proc_macro2::Span::call_site());
             let is_nullable = crate::common::is_option(&field.ty);
 
             if is_nullable {
                 // For nullable fields: Option<Option<InnerType>> - first Option for "fetched?", second for "null?"
-                quote! { 
+                quote! {
                     if fields.contains(&stringify!(#name)) || stringify!(#name) == stringify!(#current_primary_key_ident) {
-                        s.#name = Some(row.try_get::<#inner_ty>("", #alias).ok()); 
+                        s.#name = Some(row.try_get::<#inner_ty>("", #alias).ok());
                     }
                 }
             } else {
                 // For non-nullable fields: Option<InnerType> - Option for "fetched?"
-                quote! { 
+                quote! {
                     if fields.contains(&stringify!(#name)) || stringify!(#name) == stringify!(#current_primary_key_ident) {
-                        s.#name = row.try_get::<#inner_ty>("", #alias).ok(); 
+                        s.#name = row.try_get::<#inner_ty>("", #alias).ok();
                     }
                 }
             }
@@ -2481,7 +2671,7 @@ pub fn generate_entity(
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
                         if let Some(field) = fields
                             .iter()
-                            .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                         {
                             is_option(&field.ty)
                         } else {
@@ -2503,27 +2693,31 @@ pub fn generate_entity(
 
     // clear_unselected method no longer needed - fields are only populated if they were selected
 
-    // Match arms for get_i32 only for integer-like fields
-    let get_i32_match_arms = fields
+    // Match arms for get_key for all primary key and foreign key fields
+    let get_key_match_arms = fields
         .iter()
         .filter(|field| {
-            matches!(
-                crate::where_param::detect_field_type(&field.ty),
-                crate::where_param::FieldType::Integer
-                    | crate::where_param::FieldType::OptionInteger
-            )
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
+            // Include primary key fields and foreign key fields
+            primary_key_fields.contains(field) || foreign_key_fields.contains(&field_name)
         })
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let alias = syn::LitStr::new(&name.to_string(), proc_macro2::Span::call_site());
             let is_nullable = crate::common::is_option(&field.ty);
 
             if is_nullable {
-                // For nullable fields: Option<Option<i32>> -> Option<i32> (flatten the first Option)
-                quote! { #alias => self.#name.flatten() }
+                // For nullable fields: Option<T> -> Option<CausticsKey>
+                quote! {
+                    #alias => self.#name.as_ref().and_then(|v| caustics::CausticsKey::from_db_value(&v.clone().into()))
+                }
             } else {
-                // For non-nullable fields: Option<i32> -> Option<i32> (no change needed)
-                quote! { #alias => self.#name }
+                // For non-nullable fields: T -> Option<CausticsKey>
+                quote! {
+                    #alias => caustics::CausticsKey::from_db_value(&self.#name.clone().into())
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -2532,14 +2726,18 @@ pub fn generate_entity(
     let selected_all_field_names: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
-            syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
+            syn::LitStr::new(&field_name, field.ident.as_ref().expect("Field has no identifier").span())
         })
         .collect();
     let selected_all_field_idents: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
             let pascal_case = field_name
                 .split('_')
                 .map(|part| {
@@ -2550,7 +2748,7 @@ pub fn generate_entity(
                     }
                 })
                 .collect::<String>();
-            syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+            syn::Ident::new(&pascal_case, field.ident.as_ref().expect("Field has no identifier").span())
         })
         .collect();
 
@@ -2620,9 +2818,9 @@ pub fn generate_entity(
         .filter_map(|relation| {
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
-                let target_table_name = relation
-                    .target_table_name.clone()
-                    .unwrap_or_else(|| relation.name.to_snake_case());
+                // Use the resolved target table name from build-time metadata
+                let relation_name_snake = relation.name.to_snake_case();
+                let target_table_name_expr = quote! { #relation_name_snake };
                 let current_table_name = relation
                     .current_table_name.clone()
                     .unwrap_or_else(|| {
@@ -2633,7 +2831,7 @@ pub fn generate_entity(
                     .as_ref()
                     .map(|s| s.to_snake_case())
                     .unwrap_or_else(|| current_pk_column_name.clone());
-                let target_table_lit = syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                let target_table_lit = target_table_name_expr;
                 let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
                 let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
                 let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
@@ -2656,9 +2854,9 @@ pub fn generate_entity(
         .filter_map(|relation| {
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
-                let target_table_name = relation
-                    .target_table_name.clone()
-                    .unwrap_or_else(|| relation.name.to_snake_case());
+                // Use the resolved target table name from build-time metadata
+                let relation_name_snake = relation.name.to_snake_case();
+                let target_table_name_expr = quote! { #relation_name_snake };
                 let current_table_name = relation
                     .current_table_name.clone()
                     .unwrap_or_else(|| {
@@ -2669,7 +2867,7 @@ pub fn generate_entity(
                     .as_ref()
                     .map(|s| s.to_snake_case())
                     .unwrap_or_else(|| current_pk_column_name.clone());
-                let target_table_lit = syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                let target_table_lit = target_table_name_expr;
                 let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
                 let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
                 let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
@@ -2693,9 +2891,9 @@ pub fn generate_entity(
         .filter_map(|relation| {
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
-                let target_table_name = relation
-                    .target_table_name.clone()
-                    .unwrap_or_else(|| relation.name.to_snake_case());
+                // Use the resolved target table name from build-time metadata
+                let relation_name_snake = relation.name.to_snake_case();
+                let target_table_name_expr = quote! { #relation_name_snake };
                 let current_table_name = relation
                     .current_table_name.clone()
                     .unwrap_or_else(|| {
@@ -2706,7 +2904,7 @@ pub fn generate_entity(
                     .as_ref()
                     .map(|s| s.to_snake_case())
                     .unwrap_or_else(|| current_pk_column_name.clone());
-                let target_table_lit = syn::LitStr::new(&target_table_name, proc_macro2::Span::call_site());
+                let target_table_lit = target_table_name_expr;
                 let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
                 let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
                 let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
@@ -2955,14 +3153,14 @@ pub fn generate_entity(
                     } else {
                         // Regular relation fetching
                         fetcher
-                    .fetch_by_foreign_key_with_selection(
-                        conn,
-                        foreign_key_value,
-                        descriptor.foreign_key_column,
-                        &fetcher_entity_name,
-                        filter.relation,
-                        filter,
-                    )
+                            .fetch_by_foreign_key_with_selection(
+                                conn,
+                                foreign_key_value.clone(),
+                                descriptor.foreign_key_column,
+                                &fetcher_entity_name,
+                                filter.relation,
+                                filter,
+                            )
                             .await?
                     };
 
@@ -2970,7 +3168,7 @@ pub fn generate_entity(
                     // Populate relation counts when requested (has_many only), independent of pagination
                     if filter.include_count && descriptor.is_has_many {
                         // Use the same foreign key extractor used for fetching and wrap into DB Value
-                        let foreign_key_value_any: Option<sea_orm::Value> = (descriptor.get_foreign_key)(self).map(|v| sea_orm::Value::Int(Some(v)));
+                        let foreign_key_value_any: Option<sea_orm::Value> = (descriptor.get_foreign_key)(self).map(|v| v.to_db_value());
                         match filter.relation {
                             #(#relation_count_match_arms_selected,)*
                             _ => {}
@@ -3052,7 +3250,7 @@ pub fn generate_entity(
                 // Convert model to Selected by copying only the selected fields
                 // This ensures only requested fields are populated in the Selected struct
                 let mut selected = Selected::new();
-                
+
                 // Use a safe approach that only accesses fields that were actually fetched
                 // When field selection is used, only access selected fields
                 // When no field selection, access all fields safely
@@ -3067,7 +3265,7 @@ pub fn generate_entity(
                     let foreign_key_fields = &[#(
                         #foreign_key_fields,
                     )*];
-                    
+
                     // Create a set of fields that should be accessible (fetched from database)
                     let accessible_fields = {
                         let mut fields = std::collections::HashSet::new();
@@ -3083,7 +3281,7 @@ pub fn generate_entity(
                         }
                         fields
                     };
-                    
+
                     // Only populate fields that were actually fetched from the database
                     #(
                         if accessible_fields.contains(&stringify!(#field_names)) {
@@ -3091,7 +3289,7 @@ pub fn generate_entity(
                         }
                     )*
                 }
-                
+
                 selected
             }
 
@@ -3100,21 +3298,21 @@ pub fn generate_entity(
                 // Convert Selected to ModelWithRelations by copying all available fields
                 // This creates a complete ModelWithRelations with all fields populated
                 let mut model_with_relations = ModelWithRelations::default();
-                
+
                 // Copy scalar fields
                 #(
                     if let Some(value) = self.#field_names {
                         model_with_relations.#field_names = value;
                     }
                 )*
-                
+
                 // Copy relation fields, converting Selected types to ModelWithRelations types
                 // For now, relations are not converted - they remain as None in ModelWithRelations
                 // This is safe since ModelWithRelations uses Option types for all relations
-                
+
                 // Copy count fields
                 model_with_relations._count = self._count;
-                
+
                 model_with_relations
             }
         }
@@ -3135,9 +3333,9 @@ pub fn generate_entity(
                 }
             }
 
-            fn get_i32(&self, field_name: &str) -> Option<i32> {
+            fn get_key(&self, field_name: &str) -> Option<caustics::CausticsKey> {
                 match field_name {
-                    #(#get_i32_match_arms,)*
+                    #(#get_key_match_arms,)*
                     _ => None
                 }
             }
@@ -3180,18 +3378,19 @@ pub fn generate_entity(
                     let foreign_key_value = (descriptor.get_foreign_key)(self);
                     let fetcher_entity_name = {
                         let type_name = std::any::type_name::<Self>();
-                        type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase()
+                        let entity_name = type_name.rsplit("::").nth(1).unwrap_or("").to_lowercase();
+                        entity_name
                     };
                     let fetcher = registry.get_fetcher(&fetcher_entity_name)
                         .ok_or_else(|| caustics::CausticsError::EntityFetcherMissing { entity: fetcher_entity_name.clone() })?;
-                    
+
                     // If nested relations are present, we need to ensure foreign key fields are included
                     // in the selection so that nested relations can be loaded
                     let mut modified_filter = filter.clone();
                     if filter.nested_select_aliases.is_some() {
                         // Add foreign key fields to the selection for nested relation loading
                         let mut aliases = filter.nested_select_aliases.as_ref().unwrap().clone();
-                        
+
                         // Add all foreign key fields for the target entity (for nested relation traversal)
                         // Get the target entity's foreign key fields from the metadata registry
                         let target_entity_name = descriptor.target_entity;
@@ -3202,10 +3401,10 @@ pub fn generate_entity(
                                 }
                             }
                         }
-                        
+
                         modified_filter.nested_select_aliases = Some(aliases);
                     }
-                    
+
                     // Skip regular relation fetching if this is a count-only operation
                     let mut fetched_result = if filter.include_count && filter.nested_includes.is_empty() {
                         // Count-only operation: create empty result to skip set_field
@@ -3215,7 +3414,7 @@ pub fn generate_entity(
                         fetcher
                     .fetch_by_foreign_key_with_selection(
                         conn,
-                        foreign_key_value,
+                        foreign_key_value.clone(),
                         descriptor.foreign_key_column,
                         &fetcher_entity_name,
                         filter.relation,
@@ -3269,7 +3468,7 @@ pub fn generate_entity(
         let name_str = relation.name.to_snake_case();
         let name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
         let target = &relation.target;
-        
+
         // Check if this is an optional relation by looking at the foreign key field
         let is_optional = match relation.kind {
             RelationKind::HasMany => false,
@@ -3277,7 +3476,7 @@ pub fn generate_entity(
                 if let Some(fk_field_name) = &relation.foreign_key_field {
                     if let Some(field) = fields
                         .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                     {
                         is_option(&field.ty)
                     } else {
@@ -3288,7 +3487,7 @@ pub fn generate_entity(
                 }
             }
         };
-        
+
         let rel_type = match relation.kind {
             RelationKind::HasMany => quote! { Option<Vec<#target::ModelWithRelations>> },
             RelationKind::BelongsTo => {
@@ -3319,7 +3518,10 @@ pub fn generate_entity(
                 (
                     quote! { model.#id_field },
                     fk_column,
-                    quote! { |model| Some(model.#id_field) },
+                    quote! { |model| {
+                        let id_value = model.#id_field;
+                        caustics::CausticsKey::from_db_value(&id_value.into())
+                    } },
                 )
             }
             RelationKind::BelongsTo => {
@@ -3338,9 +3540,15 @@ pub fn generate_entity(
                     false
                 };
                 let get_fk = if is_optional {
-                    quote! { |model| model.#foreign_key_field }
+                    quote! { |model| {
+                        let fk_value = model.#foreign_key_field.as_ref();
+                        fk_value.and_then(|v| caustics::CausticsKey::from_db_value(&v.clone().into()))
+                    } }
                 } else {
-                    quote! { |model| Some(model.#foreign_key_field) }
+                    quote! { |model| {
+                        let fk_value = model.#foreign_key_field;
+                        caustics::CausticsKey::from_db_value(&fk_value.into())
+                    } }
                 };
                 (
                     quote! { model.#foreign_key_field },
@@ -3367,10 +3575,8 @@ pub fn generate_entity(
 
         // Get additional metadata from relation
         let fallback_table_name = relation.name.to_snake_case();
-        let target_table_name = relation
-            .target_table_name
-            .as_ref()
-            .unwrap_or(&fallback_table_name);
+        // Use the resolved target table name from build-time metadata
+        let target_table_name_expr = quote! { #fallback_table_name };
         let current_table_name = relation
             .current_table_name
             .as_ref()
@@ -3378,8 +3584,8 @@ pub fn generate_entity(
                 panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
             });
 
-        let target_table_name_lit =
-            syn::LitStr::new(target_table_name, proc_macro2::Span::call_site());
+        // Use the resolved target table name from build-time metadata
+        let target_table_name_expr = quote! { #fallback_table_name };
         let current_table_name_lit =
             syn::LitStr::new(current_table_name, proc_macro2::Span::call_site());
         // Extract primary key column names dynamically using centralized utilities
@@ -3412,13 +3618,13 @@ pub fn generate_entity(
             RelationKind::HasMany => syn::LitBool::new(true, proc_macro2::Span::call_site()),
             RelationKind::BelongsTo => syn::LitBool::new(false, proc_macro2::Span::call_site()),
         };
-        
+
         // Generate the correct set_field implementation based on relation type
         let set_field_impl = match relation.kind {
             RelationKind::HasMany => {
                 quote! {
                     let actual_type = std::any::type_name_of_val(&*value);
-                    
+
                     // Try to downcast as Vec<Selected> first, then fall back to Vec<ModelWithRelations>
                     let converted_value = if let Some(selected_vec) = value.downcast_ref::<Option<Vec<#target::Selected>>>() {
                         // We got Selected objects - convert to ModelWithRelations
@@ -3431,7 +3637,7 @@ pub fn generate_entity(
                         // We got ModelWithRelations objects directly
                         model_vec.clone()
                     } else {
-                        panic!("Type mismatch in set_field: expected Option<Vec<{}>> or Option<Vec<{}>>, got {}", 
+                        panic!("Type mismatch in set_field: expected Option<Vec<{}>> or Option<Vec<{}>>, got {}",
                             stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
                     };
                     model.#rel_field = converted_value;
@@ -3441,7 +3647,7 @@ pub fn generate_entity(
                 if is_optional {
                     quote! {
                         let actual_type = std::any::type_name_of_val(&*value);
-                        
+
                         // Try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
                         let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
                             // We got Selected object - convert to ModelWithRelations
@@ -3454,7 +3660,7 @@ pub fn generate_entity(
                             // We got ModelWithRelations object directly
                             Some(model_opt.clone())
                         } else {
-                            panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}", 
+                            panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}",
                                 stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
                         };
                         model.#rel_field = converted_value;
@@ -3462,7 +3668,7 @@ pub fn generate_entity(
                 } else {
                     quote! {
                         let actual_type = std::any::type_name_of_val(&*value);
-                        
+
                         // Try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
                         let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
                             // We got Selected object - convert to ModelWithRelations
@@ -3475,7 +3681,7 @@ pub fn generate_entity(
                             // We got ModelWithRelations object directly
                             model_opt.clone()
                         } else {
-                            panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}", 
+                            panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}",
                                 stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
                         };
                         model.#rel_field = converted_value;
@@ -3483,13 +3689,13 @@ pub fn generate_entity(
                 }
             }
         };
-        
+
         let target_entity_name_lit = if let Some(entity_name) = &relation.target_entity_name {
             quote! { Some(#entity_name) }
         } else {
             quote! { None }
         };
-        
+
         quote! {
             caustics::RelationDescriptor::<ModelWithRelations> {
                 name: #name,
@@ -3500,7 +3706,7 @@ pub fn generate_entity(
                 target_entity: #target_entity,
                 foreign_key_column: #foreign_key_column,
                 foreign_key_field_name: #fk_field_name_lit,
-                target_table_name: #target_table_name_lit,
+                target_table_name: #target_table_name_expr,
                 current_primary_key_column: #current_primary_key_column_lit,
                 current_primary_key_field_name: #current_primary_key_field_name_lit,
                 target_primary_key_column: #target_primary_key_column_lit,
@@ -3517,13 +3723,13 @@ pub fn generate_entity(
         let name_str = relation.name.to_snake_case();
         let name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
         let target = &relation.target;
-        
+
         // Check if this is an optional relation
         let is_optional = match relation.kind {
             RelationKind::HasMany => false,
             RelationKind::BelongsTo => relation.is_nullable,
         };
-        
+
         let rel_type = match relation.kind {
             RelationKind::HasMany => quote! { Option<Vec<#target::Selected>> },
             RelationKind::BelongsTo => quote! { Option<#target::Selected> },
@@ -3544,11 +3750,8 @@ pub fn generate_entity(
             RelationKind::BelongsTo => syn::LitStr::new(relation.foreign_key_field.as_ref().unwrap(), proc_macro2::Span::call_site()),
         };
         let target_table_default = relation.name.to_snake_case();
-        let target_table_name_ref = relation
-            .target_table_name
-            .as_ref()
-            .unwrap_or(&target_table_default);
-        let target_table_name_lit = syn::LitStr::new(target_table_name_ref, proc_macro2::Span::call_site());
+        // Use the resolved target table name from build-time metadata
+        let target_table_name_expr = quote! { #target_table_default };
         let current_primary_key_field_name_lit = syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site());
         let current_primary_key_column_lit = syn::LitStr::new(&current_primary_key_column_name, proc_macro2::Span::call_site());
         let target_primary_key_column_lit = syn::LitStr::new(&relation
@@ -3560,7 +3763,7 @@ pub fn generate_entity(
         };
         let is_foreign_key_nullable_lit =
             syn::LitBool::new(relation.is_nullable, proc_macro2::Span::call_site());
-        
+
         // Generate the correct set_field implementation based on relation type
         let set_field_impl = match relation.kind {
             RelationKind::HasMany => {
@@ -3589,13 +3792,13 @@ pub fn generate_entity(
                 }
             }
         };
-        
+
         let target_entity_name_lit = if let Some(entity_name) = &relation.target_entity_name {
             quote! { Some(#entity_name) }
         } else {
             quote! { None }
         };
-        
+
         quote! {
             caustics::RelationDescriptor::<Selected> {
                 name: #name,
@@ -3605,12 +3808,12 @@ pub fn generate_entity(
                 get_foreign_key: |model: &Selected| {
                     // For has_many, use current id; for belongs_to, use FK field on Selected
                     let field_name = match #is_has_many_lit { true => #current_primary_key_field_name_lit, false => #fk_field_name_lit };
-                    <Selected as caustics::EntitySelection>::get_i32(model, field_name)
+                    <Selected as caustics::EntitySelection>::get_key(model, field_name)
                 },
                 target_entity: #target_entity,
                 foreign_key_column: #foreign_key_column,
                 foreign_key_field_name: #fk_field_name_lit,
-                target_table_name: #target_table_name_lit,
+                target_table_name: #target_table_name_expr,
                 current_primary_key_column: #current_primary_key_column_lit,
                 current_primary_key_field_name: #current_primary_key_field_name_lit,
                 target_primary_key_column: #target_primary_key_column_lit,
@@ -3659,6 +3862,10 @@ pub fn generate_entity(
             let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
             let target_entity_name = relation.target.segments.last().unwrap().ident.to_string().to_lowercase();
 
+            // Add variables for registry-based conversion
+            let entity_name = entity_context.registry_name();
+            let foreign_key_field_name = fk_field_name;
+
             // Get the primary key field name from the relation definition or use dynamic detection
             let primary_key_field_name_raw = if let Some(pk) = &relation.primary_key_field {
                 pk.clone()
@@ -3667,7 +3874,7 @@ pub fn generate_entity(
                 get_primary_key_field_name(&fields)
             };
             let primary_key_field_name = primary_key_field_name_raw.to_snake_case();
-            let primary_key_pascal = primary_key_field_name_raw.chars().next().unwrap().to_uppercase().collect::<String>()
+            let primary_key_pascal = primary_key_field_name_raw.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>()
                 + &primary_key_field_name_raw[1..];
             let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
             let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
@@ -3683,8 +3890,10 @@ pub fn generate_entity(
                 quote! {
                     SetParam::#relation_name(where_param) => {
                         match where_param {
-                            #target_module::UniqueWhereParam::#primary_key_variant(id) => {
-                                model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(id.clone()));
+                            #target_module::UniqueWhereParam::#primary_key_variant(key) => {
+                                // Extract the value from CausticsKey for database field assignment
+                                let fk_value = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name, key);
+                                model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
                             }
                             other => {
                                 // Store deferred lookup instead of executing (optional FK -> wrap in Some)
@@ -3692,7 +3901,9 @@ pub fn generate_entity(
                                     Box::new(other.clone()),
                                     |model, value| {
                                         let model = model.downcast_mut::<ActiveModel>().unwrap();
-                                        model.#foreign_key_field = sea_orm::ActiveValue::Set(Some(value));
+                                        // Extract the value from CausticsKey for database field assignment
+                                        let fk_value = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name, value);
+                                        model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
                                     },
                                     |conn: & sea_orm::DatabaseConnection, param| {
                                         let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
@@ -3702,7 +3913,7 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
-                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
                                                 caustics::CausticsError::NotFoundForCondition {
                                                     entity: stringify!(#target_module).to_string(),
                                                     condition: format!("{:?}", param),
@@ -3718,7 +3929,7 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(txn)
                                                 .await?;
-                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
                                                 caustics::CausticsError::NotFoundForCondition {
                                                     entity: stringify!(#target_module).to_string(),
                                                     condition: format!("{:?}", param),
@@ -3735,8 +3946,10 @@ pub fn generate_entity(
                 quote! {
                     SetParam::#relation_name(where_param) => {
                         match where_param {
-                            #target_module::UniqueWhereParam::#primary_key_variant(id) => {
-                                model.#foreign_key_field = sea_orm::ActiveValue::Set(id.clone());
+                            #target_module::UniqueWhereParam::#primary_key_variant(key) => {
+                                // Extract the value from CausticsKey for database field assignment
+                                let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, key);
+                                model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
                             }
                             other => {
                                 // Store deferred lookup instead of executing
@@ -3744,7 +3957,9 @@ pub fn generate_entity(
                             Box::new(other.clone()),
                             |model, value| {
                                 let model = model.downcast_mut::<ActiveModel>().unwrap();
-                                model.#foreign_key_field = sea_orm::ActiveValue::Set(value);
+                                // Extract the value from CausticsKey for database field assignment
+                                let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, value);
+                                model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
                             },
                                      |conn: & sea_orm::DatabaseConnection, param| {
                                         let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
@@ -3754,7 +3969,7 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
-                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
                                                     "No {} found for condition: {:?}",
                                                     stringify!(#target_module),
@@ -3771,7 +3986,7 @@ pub fn generate_entity(
                                                  .filter::<sea_query::Condition>(condition)
                                                  .one(txn)
                                                 .await?;
-                                            result.map(|entity| entity.#primary_key_field_ident).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
                                                     "No {} found for condition: {:?}",
                                                     stringify!(#target_module),
@@ -3798,10 +4013,10 @@ pub fn generate_entity(
                 && relation.foreign_key_field.is_some()
                 && {
                     // Only optional relations can be disconnected (set to None)
-                    let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
                     if let Some(field) = fields
                         .iter()
-                        .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
+                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
                     {
                         is_option(&field.ty)
                     } else {
@@ -3826,7 +4041,7 @@ pub fn generate_entity(
         .iter()
         .filter(|field| !primary_key_fields.contains(field))
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             quote! {
                 SetParam::#pascal_name(value) => {
@@ -3841,11 +4056,13 @@ pub fn generate_entity(
         .iter()
         .filter(|field| !primary_key_fields.contains(field))
         .filter(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
             !foreign_key_fields.contains(&field_name)
         })
         .filter_map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
             let ty = &field.ty;
 
@@ -4044,12 +4261,32 @@ pub fn generate_entity(
                     for unique_param in unique_params {
                         // Convert UniqueWhereParam to string and extract ID
                         let param_str = format!("{:?}", unique_param);
+                        // Handle CausticsKey format: IdEquals(Int(1)) or IdEquals(String("abc"))
                         if let Some(id_start) = param_str.find("Equals(") {
                             let after_equals = &param_str[id_start + 7..];
-                            if let Some(id_end) = after_equals.find(')') {
-                                let id_str = &after_equals[..id_end];
-                                if let Ok(id) = id_str.parse::<i32>() {
-                                    target_ids.push(sea_orm::Value::Int(Some(id)));
+                            // Find the matching closing parenthesis, accounting for nested parentheses
+                            let mut paren_count = 0;
+                            let mut id_end = None;
+                            for (i, ch) in after_equals.char_indices() {
+                                match ch {
+                                    '(' => paren_count += 1,
+                                    ')' => {
+                                        if paren_count == 0 {
+                                            id_end = Some(i);
+                                            break;
+                                        }
+                                        paren_count -= 1;
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            if let Some(id_end) = id_end {
+                                let key_str = &after_equals[..id_end];
+
+                                // Parse using CausticsKey for robust type handling
+                                if let Ok(caustics_key) = key_str.parse::<caustics::CausticsKey>() {
+                                    target_ids.push(caustics_key.to_db_value());
                                 }
                             }
                         }
@@ -4073,15 +4310,19 @@ pub fn generate_entity(
     let all_field_names: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
-            syn::LitStr::new(&field_name, field.ident.as_ref().unwrap().span())
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
+            syn::LitStr::new(&field_name, field.ident.as_ref().expect("Field has no identifier").span())
         })
         .collect();
     // Generate all field identifiers for column access (PascalCase for SeaORM)
     let all_field_idents: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref().unwrap().to_string();
+            let field_name = field.ident.as_ref()
+                .expect("Field has no identifier - this should not happen in valid code")
+                .to_string();
             // Convert snake_case to PascalCase
             let pascal_case = field_name
                 .split('_')
@@ -4093,7 +4334,7 @@ pub fn generate_entity(
                     }
                 })
                 .collect::<String>();
-            syn::Ident::new(&pascal_case, field.ident.as_ref().unwrap().span())
+            syn::Ident::new(&pascal_case, field.ident.as_ref().expect("Field has no identifier").span())
         })
         .collect();
     // Generate snake_case field idents for macro checks
@@ -4121,7 +4362,7 @@ pub fn generate_entity(
     let to_model_field_conversions = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let is_nullable = crate::common::is_option(&field.ty);
 
             if is_nullable {
@@ -4140,7 +4381,7 @@ pub fn generate_entity(
     let from_model_field_conversions = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let is_nullable = crate::common::is_option(&field.ty);
 
             if is_nullable {
@@ -4177,7 +4418,7 @@ pub fn generate_entity(
     let from_model_field_conversions = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let is_nullable = crate::common::is_option(&field.ty);
 
             if is_nullable {
@@ -4214,7 +4455,7 @@ pub fn generate_entity(
     let to_model_field_conversions = fields
         .iter()
         .map(|field| {
-            let name = field.ident.as_ref().unwrap();
+            let name = field.ident.as_ref().expect("Field has no identifier");
             let is_nullable = crate::common::is_option(&field.ty);
 
             if is_nullable {
@@ -4241,7 +4482,7 @@ pub fn generate_entity(
         use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
         use uuid::Uuid;
         use std::vec::Vec;
-        use caustics::{SortOrder, MergeInto, FieldOp};
+        use caustics::{SortOrder, MergeInto, FieldOp, CausticsKey};
         use caustics::{FromModel, HasManySetHandler};
         use sea_query::{Condition, Expr, SimpleExpr};
         use sea_orm::{ColumnTrait, IntoSimpleExpr, QueryFilter, QueryOrder, QuerySelect};
@@ -4256,7 +4497,7 @@ pub fn generate_entity(
 
         // Centralize registry selection to avoid scattered cfg(test) blocks
         #[allow(dead_code)]
-        fn __caustics_fetch_registry<'a>() -> &'a super::CompositeEntityRegistry {
+        fn get_registry<'a>() -> &'a super::CompositeEntityRegistry {
             #[cfg(test)]
             { super::get_registry() }
             #[cfg(not(test))]
@@ -4528,15 +4769,10 @@ pub fn generate_entity(
 
         // Allow using UniqueWhereParam directly as a cursor argument on ManyQueryBuilder
         impl From<UniqueWhereParam> for (sea_query::SimpleExpr, sea_orm::Value) {
-            fn from(value: UniqueWhereParam) -> (sea_query::SimpleExpr, sea_orm::Value) {
+            fn from(param: UniqueWhereParam) -> (sea_query::SimpleExpr, sea_orm::Value) {
                 use sea_orm::IntoSimpleExpr;
-                match value {
-                    #(
-                        UniqueWhereParam::#unique_where_equals_variants(value) => {
-                            let expr = <Entity as EntityTrait>::Column::#unique_where_equals_columns.into_simple_expr();
-                            (expr, sea_orm::Value::from(value))
-                        }
-                    ),*
+                match param {
+                    #(#unique_where_to_expr_value_arms),*
                 }
             }
         }
@@ -4634,7 +4870,7 @@ pub fn generate_entity(
             fn exec_has_many_create_on_conn<'a>(
                 &'a self,
                 conn: &'a sea_orm::DatabaseConnection,
-                parent_id: i32,
+                parent_id: caustics::CausticsKey,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
                 let fut = async move {
                     match self {
@@ -4649,7 +4885,7 @@ pub fn generate_entity(
             fn exec_has_many_create_on_txn<'a>(
                 &'a self,
                 txn: &'a sea_orm::DatabaseTransaction,
-                parent_id: i32,
+                parent_id: caustics::CausticsKey,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'a>> {
                 let fut = async move {
                     match self {
@@ -4833,13 +5069,18 @@ pub fn generate_entity(
             pub _params: Vec<SetParam>,
         }
 
-        pub(crate) fn __extract_id(m: &<Entity as sea_orm::EntityTrait>::Model) -> i32 { m.#current_primary_key_ident }
+        pub(crate) fn __extract_id(m: &<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey {
+            caustics::CausticsKey::from_db_value(&m.#current_primary_key_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))
+        }
 
         impl Create {
             pub(crate) fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup>, Vec<caustics::PostInsertOp<'static>>) {
                 let mut model = ActiveModel::new();
                 let mut deferred_lookups = Vec::new();
                 let mut post_insert_ops: Vec<caustics::PostInsertOp<'static>> = Vec::new();
+
+                // Generate UUID for UUID primary keys if not already set
+                #uuid_pk_check
 
                 #(#required_assigns)*
                 #(#foreign_key_assigns)*
@@ -4924,7 +5165,7 @@ pub fn generate_entity(
             }
 
             pub fn find_unique(&self, condition: UniqueWhereParam) -> caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                let registry = __caustics_fetch_registry();
+                let registry = get_registry();
                 caustics::UniqueQueryBuilder {
                     query: <Entity as EntityTrait>::find().filter::<Condition>(condition.clone().into()),
                     conn: self.conn,
@@ -4935,7 +5176,7 @@ pub fn generate_entity(
             }
 
             pub fn find_first(&self, conditions: Vec<WhereParam>) -> caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                let registry = __caustics_fetch_registry();
+                let registry = get_registry();
                 let query = <Entity as EntityTrait>::find().filter::<Condition>(where_params_to_condition(conditions, self.database_backend));
                 caustics::FirstQueryBuilder {
                     query,
@@ -4948,7 +5189,7 @@ pub fn generate_entity(
             }
 
             pub fn find_many(&self, conditions: Vec<WhereParam>) -> caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations> {
-                let registry = __caustics_fetch_registry();
+                let registry = get_registry();
                 let query = <Entity as EntityTrait>::find().filter::<Condition>(where_params_to_condition(conditions, self.database_backend));
                 caustics::ManyQueryBuilder {
                     query,
@@ -5086,7 +5327,7 @@ pub fn generate_entity(
                     conn: self.conn,
                     deferred_lookups,
                     post_insert_ops: post_ops,
-                    id_extractor: (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> i32),
+                    id_extractor: (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey),
                     _phantom: std::marker::PhantomData,
                 }
             }
@@ -5102,7 +5343,7 @@ pub fn generate_entity(
                         model,
                         deferred_lookups,
                         post_ops,
-                        (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> i32),
+                        (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey),
                     ));
                 }
                 caustics::CreateManyQueryBuilder {
@@ -5144,8 +5385,8 @@ pub fn generate_entity(
                                 .one(conn)
                                 .await?;
                             if let Some(model) = found {
-                                let id_val: i32 = model.#current_primary_key_ident;
-                                Ok(sea_orm::Value::Int(Some(id_val)))
+                                let id_val: CausticsKey = model.#current_primary_key_ident.into();
+                                Ok(id_val.to_db_value())
                             } else {
                                 Err(sea_orm::DbErr::RecordNotFound("No record matched for has_many set".to_string()))
                             }
@@ -5213,7 +5454,7 @@ pub fn generate_entity(
                         model,
                         deferred_lookups,
                         post_insert_ops,
-                        (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> i32),
+                        (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey),
                     ),
                     update,
                     conn: self.conn,
@@ -5256,7 +5497,7 @@ pub fn generate_entity(
             fn fetch_by_foreign_key<'a>(
                 &'a self,
                 conn: &'a C,
-                foreign_key_value: Option<i32>,
+                foreign_key_value: Option<caustics::CausticsKey>,
                 foreign_key_column: &'a str,
                 target_entity: &'a str,
                 relation_name: &'a str,
@@ -5265,9 +5506,13 @@ pub fn generate_entity(
                 Box::pin(async move {
                     match relation_name {
                         #(
-                        #relation_names_snake_lits => { #relation_fetcher_bodies }
+                        #relation_names_snake_lits => {
+                            #relation_fetcher_bodies
+                        }
                         )*
-                        _ => Err(caustics::CausticsError::RelationNotFound { relation: relation_name.to_string() }.into()),
+                        _ => {
+                            Err(caustics::CausticsError::RelationNotFound { relation: relation_name.to_string() }.into())
+                        }
                     }
                 })
             }
@@ -5275,7 +5520,7 @@ pub fn generate_entity(
             fn fetch_by_foreign_key_with_selection<'a>(
                 &'a self,
                 conn: &'a C,
-                foreign_key_value: Option<i32>,
+                foreign_key_value: Option<caustics::CausticsKey>,
                 foreign_key_column: &'a str,
                 target_entity: &'a str,
                 relation_name: &'a str,
@@ -5284,8 +5529,8 @@ pub fn generate_entity(
                 Box::pin(async move {
                     match relation_name {
                         #(
-                        #relation_names_snake_lits => { 
-                            #relation_fetcher_bodies_selected 
+                        #relation_names_snake_lits => {
+                            #relation_fetcher_bodies_selected
                         }
                         )*
                         _ => {

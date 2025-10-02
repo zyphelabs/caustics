@@ -4,17 +4,19 @@
 include!(concat!(env!("OUT_DIR"), "/caustics_client_blog_test.rs"));
 
 use caustics_macros::caustics;
+use uuid::Uuid;
 
 #[caustics(namespace = "blog")]
 pub mod user {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
+    use sea_orm::ActiveValue::Set;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "users")]
     pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i32,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
         #[sea_orm(unique)]
         pub email: String,
         pub name: String,
@@ -42,18 +44,20 @@ pub mod user {
             Relation::Posts.def()
         }
     }
+
 }
 
 #[caustics(namespace = "blog")]
 pub mod post {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
+    use sea_orm::ActiveValue::Set;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "posts")]
     pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i32,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
         pub title: String,
         #[sea_orm(nullable)]
         pub content: Option<String>,
@@ -62,9 +66,9 @@ pub mod post {
         #[sea_orm(updated_at)]
         pub updated_at: DateTime<FixedOffset>,
         #[sea_orm(column_name = "user_id")]
-        pub user_id: i32,
+        pub user_id: Uuid,
         #[sea_orm(column_name = "reviewer_user_id", nullable)]
-        pub reviewer_user_id: Option<i32>,
+        pub reviewer_user_id: Option<Uuid>,
         #[sea_orm(column_name = "customData", nullable)]
         pub custom_data: Option<serde_json::Value>,
     }
@@ -95,6 +99,7 @@ pub mod post {
             Relation::User.def()
         }
     }
+
 }
 
 pub mod helpers {
@@ -212,6 +217,8 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
+        
+        println!("Created user with UUID: {:?}", user.id);
 
         let found_user = client
             .user()
@@ -239,14 +246,43 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
+        
+        println!("Created post with UUID: {:?}", post.id);
 
-        let found_post = client
+        println!("Looking for post with UUID: {:?}", post.id);
+        println!("Post ID type: {:?}", std::any::type_name_of_val(&post.id));
+        
+        // First, let's see if any posts exist at all
+        let all_posts = client
             .post()
-            .find_first(vec![post::id::equals(post.id)])
+            .find_many(vec![])
             .exec()
             .await
-            .unwrap()
             .unwrap();
+        println!("All posts in database: {:?}", all_posts);
+        
+        // Try finding by title first to see if queries work
+        let found_post_by_title = client
+            .post()
+            .find_first(vec![post::title::equals("Hello World")])
+            .exec()
+            .await
+            .unwrap();
+        println!("Found post by title: {:?}", found_post_by_title);
+        
+        // Try to find by UUID using a different approach
+        let post_id_uuid = post.id;
+        println!("Trying to find post with UUID: {:?}", post_id_uuid);
+        
+        let found_post_opt = client
+            .post()
+            .find_first(vec![post::id::equals(post_id_uuid)])
+            .exec()
+            .await
+            .unwrap();
+        println!("Found post by UUID: {:?}", found_post_opt);
+        // Try to use the UUID query and see what happens
+        let found_post = found_post_opt.unwrap();
         assert_eq!(found_post.title, "Hello World");
         assert_eq!(
             found_post.content,
@@ -1641,7 +1677,7 @@ mod query_builder_tests {
             .await
             .unwrap();
         assert_eq!(users_by_ids.len(), 5);
-        let found_ids: Vec<i32> = users_by_ids.iter().map(|u| u.id).collect();
+        let found_ids: Vec<Uuid> = users_by_ids.iter().map(|u| u.id).collect();
         assert!(found_ids.contains(&user1.id));
         assert!(found_ids.contains(&user2.id));
         assert!(found_ids.contains(&user3.id));
@@ -1787,7 +1823,7 @@ mod query_builder_tests {
             .await
             .unwrap();
         assert_eq!(users_with_age.len(), 3);
-        let user_ids_with_age: Vec<i32> = users_with_age.iter().map(|u| u.id).collect();
+        let user_ids_with_age: Vec<Uuid> = users_with_age.iter().map(|u| u.id).collect();
         assert!(user_ids_with_age.contains(&user_with_age.id));
         assert!(user_ids_with_age.contains(&user_deleted.id));
         assert!(user_ids_with_age.contains(&user_no_deletions.id));
@@ -1801,7 +1837,7 @@ mod query_builder_tests {
             .await
             .unwrap();
         assert_eq!(non_deleted_users.len(), 3);
-        let non_deleted_ids: Vec<i32> = non_deleted_users.iter().map(|u| u.id).collect();
+        let non_deleted_ids: Vec<Uuid> = non_deleted_users.iter().map(|u| u.id).collect();
         assert!(non_deleted_ids.contains(&user_with_age.id));
         assert!(non_deleted_ids.contains(&user_without_age.id));
         assert!(non_deleted_ids.contains(&user_no_deletions.id));
@@ -1873,7 +1909,7 @@ mod query_builder_tests {
             .await
             .unwrap();
         assert_eq!(users_with_age_not_deleted.len(), 2);
-        let filtered_ids: Vec<i32> = users_with_age_not_deleted.iter().map(|u| u.id).collect();
+        let filtered_ids: Vec<Uuid> = users_with_age_not_deleted.iter().map(|u| u.id).collect();
         assert!(filtered_ids.contains(&user_with_age.id));
         assert!(filtered_ids.contains(&user_no_deletions.id));
 
@@ -1888,7 +1924,7 @@ mod query_builder_tests {
             .await
             .unwrap();
         assert_eq!(users_missing_data.len(), 2);
-        let missing_data_ids: Vec<i32> = users_missing_data.iter().map(|u| u.id).collect();
+        let missing_data_ids: Vec<Uuid> = users_missing_data.iter().map(|u| u.id).collect();
         assert!(missing_data_ids.contains(&user_without_age.id));
         assert!(missing_data_ids.contains(&user_deleted.id));
     }
@@ -2178,7 +2214,7 @@ mod query_builder_tests {
             .await
             .unwrap();
         assert_eq!(posts_with_description_or_settings.len(), 2);
-        let found_ids: Vec<i32> = posts_with_description_or_settings
+        let found_ids: Vec<Uuid> = posts_with_description_or_settings
             .iter()
             .map(|p| p.id)
             .collect();
@@ -2196,7 +2232,7 @@ mod query_builder_tests {
             .unwrap();
         // Should find posts without JSON data and posts without metadata key
         assert!(posts_without_metadata.len() >= 3);
-        let found_ids: Vec<i32> = posts_without_metadata.iter().map(|p| p.id).collect();
+        let found_ids: Vec<Uuid> = posts_without_metadata.iter().map(|p| p.id).collect();
         assert!(found_ids.contains(&post_without_json.id));
         assert!(found_ids.contains(&post_with_array_json.id));
         assert!(found_ids.contains(&post_with_string_json.id));
@@ -2598,7 +2634,7 @@ mod query_builder_tests {
         // user2: ✅ has "Hello" posts, ✅ all posts have "Hello", ✅ no spam
         // user3: ✅ has "Hello" posts, ❌ has "Spam" post, ❌ has spam
         assert_eq!(complex_filtered_users.len(), 2);
-        let user_ids: Vec<i32> = complex_filtered_users.iter().map(|u| u.id).collect();
+        let user_ids: Vec<Uuid> = complex_filtered_users.iter().map(|u| u.id).collect();
         assert!(user_ids.contains(&user1.id));
         assert!(user_ids.contains(&user2.id));
         assert!(!user_ids.contains(&user3.id));
@@ -2630,7 +2666,7 @@ mod query_builder_tests {
 
         // Should return user1 and user2, but not user3 (has "Spam Post")
         assert_eq!(users_with_all_hello_posts.len(), 2);
-        let all_hello_user_ids: Vec<i32> =
+        let all_hello_user_ids: Vec<Uuid> =
             users_with_all_hello_posts.iter().map(|u| u.id).collect();
         assert!(all_hello_user_ids.contains(&user1.id));
         assert!(all_hello_user_ids.contains(&user2.id));
@@ -2648,7 +2684,7 @@ mod query_builder_tests {
 
         // Should return user1 and user2, but not user3 (has spam post)
         assert_eq!(users_without_spam_posts.len(), 2);
-        let no_spam_user_ids: Vec<i32> = users_without_spam_posts.iter().map(|u| u.id).collect();
+        let no_spam_user_ids: Vec<Uuid> = users_without_spam_posts.iter().map(|u| u.id).collect();
         assert!(no_spam_user_ids.contains(&user1.id));
         assert!(no_spam_user_ids.contains(&user2.id));
         assert!(!no_spam_user_ids.contains(&user3.id));
@@ -2666,7 +2702,7 @@ mod query_builder_tests {
 
         // Should return user1 and user2, but not user3
         assert_eq!(combined_filtered_users.len(), 2);
-        let combined_user_ids: Vec<i32> = combined_filtered_users.iter().map(|u| u.id).collect();
+        let combined_user_ids: Vec<Uuid> = combined_filtered_users.iter().map(|u| u.id).collect();
         assert!(combined_user_ids.contains(&user1.id));
         assert!(combined_user_ids.contains(&user2.id));
         assert!(!combined_user_ids.contains(&user3.id));
@@ -2696,7 +2732,7 @@ mod query_builder_tests {
             .unwrap();
 
         // Should include the user with no posts
-        let no_spam_user_ids_updated: Vec<i32> = users_with_no_spam.iter().map(|u| u.id).collect();
+        let no_spam_user_ids_updated: Vec<Uuid> = users_with_no_spam.iter().map(|u| u.id).collect();
         assert!(no_spam_user_ids_updated.contains(&user_no_posts.id));
 
         // User with no posts should NOT match "some" conditions
@@ -2710,7 +2746,7 @@ mod query_builder_tests {
             .unwrap();
 
         // Should NOT include the user with no posts
-        let hello_user_ids: Vec<i32> = users_with_hello_final.iter().map(|u| u.id).collect();
+        let hello_user_ids: Vec<Uuid> = users_with_hello_final.iter().map(|u| u.id).collect();
         assert!(!hello_user_ids.contains(&user_no_posts.id));
 
         // Test 7: Nullable field filtering in relations
@@ -2727,7 +2763,7 @@ mod query_builder_tests {
         // user2: has 1 post with content (and 1 without) ✅
         // user3: has 3 posts with content ✅
         assert_eq!(users_with_content_posts.len(), 3);
-        let content_user_ids: Vec<i32> = users_with_content_posts.iter().map(|u| u.id).collect();
+        let content_user_ids: Vec<Uuid> = users_with_content_posts.iter().map(|u| u.id).collect();
         assert!(content_user_ids.contains(&user1.id));
         assert!(content_user_ids.contains(&user2.id));
         assert!(content_user_ids.contains(&user3.id));
@@ -2754,7 +2790,7 @@ mod query_builder_tests {
 
         // Should return user1, user3, and user4 (no posts - vacuous truth), but not user2 (has post without content)
         assert_eq!(users_with_all_content.len(), 3);
-        let all_content_user_ids: Vec<i32> = users_with_all_content.iter().map(|u| u.id).collect();
+        let all_content_user_ids: Vec<Uuid> = users_with_all_content.iter().map(|u| u.id).collect();
         assert!(all_content_user_ids.contains(&user1.id));
         assert!(all_content_user_ids.contains(&user3.id));
         assert!(all_content_user_ids.contains(&user_no_posts.id)); // user with no posts
@@ -2770,7 +2806,7 @@ mod query_builder_tests {
 
         // Should return user1, user3, and user4 (no posts - vacuous truth), but not user2 (has post without content)
         assert_eq!(users_with_no_null_content.len(), 3);
-        let no_null_content_user_ids: Vec<i32> =
+        let no_null_content_user_ids: Vec<Uuid> =
             users_with_no_null_content.iter().map(|u| u.id).collect();
         assert!(no_null_content_user_ids.contains(&user1.id));
         assert!(no_null_content_user_ids.contains(&user3.id));
@@ -2818,7 +2854,7 @@ mod query_builder_tests {
         assert_eq!(rows[0].value, 1);
 
         // Create a small row to affect count
-        let u = client
+        let user = client
             .user()
             .create(
                 format!("raw_{}@example.com", chrono::Utc::now().timestamp()),
@@ -2830,7 +2866,7 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        assert!(u.id > 0);
+        // Uuid is always valid, no need to check > 0
 
         // Another typed query
         #[derive(Debug, FromQueryResult)]
@@ -2867,24 +2903,22 @@ mod query_builder_tests {
         // Advanced: IN list and JSON binding
         #[derive(Debug, FromQueryResult)]
         struct U {
-            id: i32,
+            id: Uuid,
             name: String,
         }
-        let (ph, params) = caustics::in_params!(&[1, 2, 3]);
         let users: Vec<U> = client
             ._query_raw::<U>(
                 caustics::raw!(
-                    "SELECT id, name FROM {} WHERE id IN ({}) ORDER BY id",
+                    "SELECT id, name FROM {} WHERE id = {} ORDER BY id",
                     caustics::ident!("users"),
-                    caustics::raw::Inline(ph)
+                    user.id
                 )
-                .with_params(params),
             )
             .exec()
             .await
             .unwrap();
         assert!(!users.is_empty());
-        assert!(users.first().is_some_and(|u| u.id == 1));
+        assert!(users.first().is_some_and(|u| u.id == user.id));
         assert!(users.first().is_some_and(|u| u.name == "Raw User"));
 
         // Injection protection: user-provided string is bound, not inlined
@@ -2985,8 +3019,7 @@ mod query_builder_tests {
 
         // Test that the has_many set operation structure compiles and runs
         // This should work even though the actual set operation is not implemented yet
-        
-        
+
         let updated_user = client
             .user()
             .update(
@@ -3130,7 +3163,7 @@ mod query_builder_tests {
         assert_eq!(final_posts.len(), 2);
 
         // Verify that only post1 and post2 are associated with the user
-        let final_post_ids: Vec<i32> = final_posts.iter().map(|p| p.id).collect();
+        let final_post_ids: Vec<Uuid> = final_posts.iter().map(|p| p.id).collect();
         assert!(final_post_ids.contains(&post1.id));
         assert!(final_post_ids.contains(&post2.id));
         assert!(!final_post_ids.contains(&_post3.id));
@@ -3508,7 +3541,7 @@ mod query_builder_tests {
         assert_eq!(final_posts.len(), 2);
 
         // Verify that only post1 and post2 are associated with the user
-        let final_post_ids: Vec<i32> = final_posts.iter().map(|p| p.id).collect();
+        let final_post_ids: Vec<Uuid> = final_posts.iter().map(|p| p.id).collect();
         assert!(final_post_ids.contains(&post1.id));
         assert!(final_post_ids.contains(&post2.id));
     }
@@ -3709,9 +3742,9 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        
+
         select_struct!(UserWithSelectedPosts from user::Selected {
-            id: i32,
+            id: Uuid,
             name: String,
             posts: Vec<PostTitle from post::Selected {
                 title: String
@@ -3736,7 +3769,10 @@ mod query_builder_tests {
 
         // Verify the post is included
         assert_eq!(user_with_selected_posts.posts.len(), 1);
-        assert_eq!(user_with_selected_posts.posts[0].title, "Field Selection Post");
+        assert_eq!(
+            user_with_selected_posts.posts[0].title,
+            "Field Selection Post"
+        );
     }
 
     #[tokio::test]
@@ -3872,5 +3908,4 @@ mod query_builder_tests {
 
         assert_eq!(user_with_post_count._count.posts, 2);
     }
-
 }

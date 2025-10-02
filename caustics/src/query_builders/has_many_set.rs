@@ -70,11 +70,14 @@ where
                 .into())
             }
         };
-        let parent_id_i32 = match entity_id {
-            sea_orm::Value::Int(Some(id)) => id,
+        // Convert entity_id to CausticsKey dynamically
+        let parent_id_key = match &entity_id {
+            sea_orm::Value::Int(Some(id)) => crate::CausticsKey::Int(*id),
+            sea_orm::Value::String(Some(s)) => crate::CausticsKey::String(s.to_string()),
+            sea_orm::Value::Uuid(Some(uuid)) => crate::CausticsKey::Uuid(**uuid),
             _ => {
                 return Err(crate::types::CausticsError::QueryValidation {
-                    message: "Unsupported id type for has_many create".to_string(),
+                    message: format!("Unsupported id type for has_many create: {:?}", entity_id),
                 }
                 .into())
             }
@@ -86,7 +89,7 @@ where
         if !has_many_create_changes.is_empty() {
             for change in has_many_create_changes {
                 change
-                    .exec_has_many_create_on_txn(&txn, parent_id_i32)
+                    .exec_has_many_create_on_txn(&txn, parent_id_key.clone())
                     .await?;
             }
         }
@@ -94,7 +97,7 @@ where
         if !has_many_set_changes.is_empty() {
             self.process_has_many_set_operations_in_txn(
                 has_many_set_changes,
-                sea_orm::Value::Int(Some(parent_id_i32)),
+                entity_id,
                 &txn,
             )
             .await?;
@@ -145,7 +148,9 @@ where
             })?;
 
             // Resolve the target primary key column name at runtime
-            let target_primary_key_column = if let Some(target_entity_name) = relation_metadata.target_entity_name {
+            let target_primary_key_column = if let Some(target_entity_name) =
+                relation_metadata.target_entity_name
+            {
                 // We have a target entity name, so we need to resolve the actual primary key from entity metadata
                 crate::get_entity_metadata(target_entity_name)
                     .map(|metadata| metadata.primary_key_field.to_string())
@@ -280,23 +285,46 @@ where
         // Get the database backend from the connection
         let db_backend: DatabaseBackend = conn.get_database_backend();
 
-        // First, remove existing associations
+        // First, handle existing associations intelligently
         if self.is_foreign_key_nullable {
-            // If nullable, set to NULL
-            let remove_stmt = sea_orm::Statement::from_sql_and_values(
-                db_backend,
-                format!(
-                    "UPDATE {} SET {} = NULL WHERE {} = ?",
-                    self.target_table_name, self.foreign_key_column, self.foreign_key_column
-                ),
-                vec![current_entity_id.clone()],
-            );
-            txn.execute(remove_stmt).await?;
+            // If nullable, set to NULL for records not in target list
+            if !target_ids.is_empty() {
+                let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let remove_stmt = sea_orm::Statement::from_sql_and_values(
+                    db_backend,
+                    format!(
+                        "UPDATE {} SET {} = NULL WHERE {} = ? AND {} NOT IN ({})",
+                        self.target_table_name,
+                        self.foreign_key_column,
+                        self.foreign_key_column,
+                        self.target_primary_key_column,
+                        placeholders
+                    ),
+                    {
+                        let mut values = vec![current_entity_id.clone()];
+                        values.extend(target_ids.clone());
+                        values
+                    },
+                );
+                txn.execute(remove_stmt).await?;
+            } else {
+                // If no target IDs, set all to NULL
+                let remove_stmt = sea_orm::Statement::from_sql_and_values(
+                    db_backend,
+                    format!(
+                        "UPDATE {} SET {} = NULL WHERE {} = ?",
+                        self.target_table_name, self.foreign_key_column, self.foreign_key_column
+                    ),
+                    vec![current_entity_id.clone()],
+                );
+                txn.execute(remove_stmt).await?;
+            }
         } else {
-            // For non-nullable foreign keys, delete associations not in target list
+            // For non-nullable foreign keys, we need to be more careful
             if !target_ids.is_empty() {
                 let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
+                // Only delete records that are currently associated but not in the target list
                 let delete_stmt = sea_orm::Statement::from_sql_and_values(
                     db_backend,
                     format!(
@@ -343,8 +371,7 @@ where
             let mut values = vec![current_entity_id];
             values.extend(target_ids.clone());
 
-            let set_stmt =
-                sea_orm::Statement::from_sql_and_values(db_backend, set_query, values);
+            let set_stmt = sea_orm::Statement::from_sql_and_values(db_backend, set_query, values);
             txn.execute(set_stmt).await?;
         }
 
@@ -365,9 +392,10 @@ where
         async move {
             let db_backend: DatabaseBackend = sea_orm::ConnectionTrait::get_database_backend(txn);
 
-            // First, remove existing associations
+            // First, handle existing associations intelligently
+
             if is_fk_nullable {
-                // If nullable, set to NULL
+                // First, set all records currently associated with this entity to NULL
                 let remove_stmt = sea_orm::Statement::from_sql_and_values(
                     db_backend,
                     format!(
@@ -379,22 +407,14 @@ where
                 <DatabaseTransaction as sea_orm::ConnectionTrait>::execute(txn, remove_stmt)
                     .await?;
             } else {
-                // For non-nullable foreign keys, we can't set them to NULL.
-                // Instead, we need to DELETE the associated records that are not in the target list.
-                // This is how Prisma handles this scenario - it deletes the records rather than trying to set foreign keys to NULL.
-                
+                // For non-nullable foreign keys, delete only records that are NOT in the target list
                 if !target_ids.is_empty() {
                     let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-
-                    // Delete records that are currently associated but not in the target list
                     let delete_stmt = sea_orm::Statement::from_sql_and_values(
                         db_backend,
                         format!(
                             "DELETE FROM {} WHERE {} = ? AND {} NOT IN ({})",
-                            target_table_name,
-                            foreign_key_column,
-                            target_primary_key_column,
-                            placeholders
+                            target_table_name, foreign_key_column, target_primary_key_column, placeholders
                         ),
                         {
                             let mut values = vec![current_entity_id.clone()];

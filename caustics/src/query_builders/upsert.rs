@@ -21,7 +21,7 @@ pub struct UpsertQueryBuilder<
         ActiveModel,
         Vec<DeferredLookup>,
         Vec<PostInsertOp<'a>>,
-        fn(&<Entity as EntityTrait>::Model) -> i32,
+        fn(&<Entity as EntityTrait>::Model) -> crate::CausticsKey,
     ),
     pub update: Vec<T>,
     pub conn: &'a C,
@@ -73,9 +73,9 @@ where
                     change.merge_into(&mut active_model);
                 }
                 let inserted = active_model.insert(txn).await?;
-                let parent_id: i32 = (id_extractor)(&inserted);
+                let parent_id = (id_extractor)(&inserted);
                 for op in post_ops {
-                    (op.run_on_txn)(txn, parent_id).await?;
+                    (op.run_on_txn)(txn, parent_id.clone()).await?;
                 }
                 Ok(ModelWithRelations::from_model(inserted))
             }
@@ -122,9 +122,9 @@ where
                     change.merge_into(&mut active_model);
                 }
                 let inserted = active_model.insert(self.conn).await?;
-                let parent_id: i32 = (id_extractor)(&inserted);
+                let parent_id = (id_extractor)(&inserted);
                 for op in post_ops {
-                    (op.run_on_conn)(self.conn, parent_id).await?;
+                    (op.run_on_conn)(self.conn, parent_id.clone()).await?;
                 }
                 Ok(ModelWithRelations::from_model(inserted))
             }

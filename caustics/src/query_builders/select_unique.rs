@@ -165,7 +165,6 @@ where
         self.relations_to_fetch.push(relation.into());
         self
     }
-
 }
 
 impl<'a, C, Entity, Selected>

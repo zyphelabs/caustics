@@ -594,7 +594,7 @@ mod caustics_school_tests {
             .exec()
             .await
             .unwrap();
-        
+
         select_struct! {
             StudentWithEnrollments from student::Selected {
                 first_name: String,
@@ -616,7 +616,7 @@ mod caustics_school_tests {
             .exec()
             .await
             .unwrap();
-        
+
         // Verify the mapping worked correctly
         assert!(!students_with_enrollments.is_empty());
         let student = &students_with_enrollments[0];
@@ -1170,7 +1170,7 @@ mod caustics_school_advanced_tests {
     async fn test_select_parity_with_include_belongs_to() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
-        
+
         select_struct! {
             TeacherWithDepartment from teacher::Selected {
                 first_name: String,
@@ -1419,7 +1419,7 @@ mod caustics_school_advanced_tests {
             .exec()
             .await
             .unwrap();
-        
+
         select_struct! {
             StudentWithNestedRelations from student::Selected {
                 first_name: String,
@@ -1542,7 +1542,6 @@ mod caustics_school_advanced_tests {
             .await
             .unwrap();
 
-        
         select_struct! {
             StudentWithEnrollmentsAndCourses from student::Selected {
                 first_name: String,

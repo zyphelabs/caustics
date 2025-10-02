@@ -109,9 +109,9 @@ where
             for rf in &self.relations_to_fetch {
                 if let Some(desc) = Selected::get_relation_descriptor(rf.relation) {
                     let fk_val = if desc.is_has_many {
-                        s.get_i32(desc.current_primary_key_field_name)
+                        s.get_key(desc.current_primary_key_field_name)
                     } else {
-                        s.get_i32(desc.foreign_key_field_name)
+                        s.get_key(desc.foreign_key_field_name)
                     };
                     if let Some(fk) = fk_val {
                         let fetcher =
@@ -183,7 +183,6 @@ where
         self.relations_to_fetch.push(relation.into());
         self
     }
-
 }
 
 impl<'a, C, Entity, Selected>

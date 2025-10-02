@@ -16,7 +16,7 @@ where
         ActiveModel,
         Vec<DeferredLookup>,
         Vec<PostInsertOp<'a>>,
-        fn(&<Entity as EntityTrait>::Model) -> i32,
+        fn(&<Entity as EntityTrait>::Model) -> crate::CausticsKey,
     )>,
     pub conn: &'a C,
     pub _phantom: std::marker::PhantomData<(Entity, ActiveModel)>,
@@ -43,7 +43,7 @@ where
             let inserted = model.insert(self.conn).await?;
             let parent_id = (id_extractor)(&inserted);
             for op in post_ops {
-                (op.run_on_conn)(self.conn, parent_id).await?;
+                (op.run_on_conn)(self.conn, parent_id.clone()).await?;
             }
             affected += 1;
         }
@@ -72,7 +72,7 @@ where
             let inserted = model.insert(self.conn).await?;
             let parent_id = (id_extractor)(&inserted);
             for op in post_ops {
-                (op.run_on_txn)(self.conn, parent_id).await?;
+                (op.run_on_txn)(self.conn, parent_id.clone()).await?;
             }
             affected += 1;
         }

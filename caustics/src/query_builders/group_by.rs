@@ -98,11 +98,7 @@ where
         self
     }
 
-    pub fn min<F: crate::FieldSelection<Entity>>(
-        mut self,
-        field: F,
-        alias: &'static str,
-    ) -> Self {
+    pub fn min<F: crate::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self {
         self.aggregates.push((
             SimpleExpr::FunctionCall(Func::min(field.to_simple_expr())),
             alias,
@@ -110,11 +106,7 @@ where
         self
     }
 
-    pub fn max<F: crate::FieldSelection<Entity>>(
-        mut self,
-        field: F,
-        alias: &'static str,
-    ) -> Self {
+    pub fn max<F: crate::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self {
         self.aggregates.push((
             SimpleExpr::FunctionCall(Func::max(field.to_simple_expr())),
             alias,
@@ -122,11 +114,7 @@ where
         self
     }
 
-    pub fn sum<F: crate::FieldSelection<Entity>>(
-        mut self,
-        field: F,
-        alias: &'static str,
-    ) -> Self {
+    pub fn sum<F: crate::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self {
         self.aggregates.push((
             SimpleExpr::FunctionCall(Func::sum(field.to_simple_expr())),
             alias,
@@ -134,11 +122,7 @@ where
         self
     }
 
-    pub fn avg<F: crate::FieldSelection<Entity>>(
-        mut self,
-        field: F,
-        alias: &'static str,
-    ) -> Self {
+    pub fn avg<F: crate::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self {
         self.aggregates.push((
             SimpleExpr::FunctionCall(Func::avg(field.to_simple_expr())),
             alias,
@@ -192,6 +176,7 @@ where
                     keys.insert(k.clone(), v.to_string());
                     continue;
                 }
+                // Try to get the value as the expected type based on the field
                 if let Ok(v) = r.try_get::<i32>("", k) {
                     keys.insert(k.clone(), v.to_string());
                     continue;
@@ -207,19 +192,7 @@ where
             }
             let mut aggs = std::collections::HashMap::new();
             for (_, alias) in &self.aggregates {
-                if let Ok(v) = r.try_get::<i64>("", alias) {
-                    aggs.insert((*alias).to_string(), v.to_string());
-                    continue;
-                }
-                if let Ok(v) = r.try_get::<i32>("", alias) {
-                    aggs.insert((*alias).to_string(), v.to_string());
-                    continue;
-                }
-                if let Ok(v) = r.try_get::<f64>("", alias) {
-                    aggs.insert((*alias).to_string(), v.to_string());
-                    continue;
-                }
-                if let Ok(v) = r.try_get::<String>("", alias) {
+                if let Some(v) = crate::extract_db_value_as_string(&r, alias) {
                     aggs.insert((*alias).to_string(), v);
                     continue;
                 }

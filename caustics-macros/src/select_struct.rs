@@ -3,8 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2::TokenTree;
 use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input, Ident, Type, Token, braced,
-    parse::Parse, parse::ParseStream, token::Brace,
+    braced, parse::Parse, parse::ParseStream, parse_macro_input, token::Brace, Ident, Token, Type,
 };
 
 // Define the 'from' token
@@ -13,7 +12,7 @@ syn::custom_keyword!(from);
 /// Main entry point for the select_struct! macro
 pub fn select_struct(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as SelectStructInput);
-    
+
     match generate_select_struct(&input) {
         Ok(output) => output.into(),
         Err(err) => err.to_compile_error().into(),
@@ -45,20 +44,24 @@ enum FieldType {
 impl Parse for SelectStructInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let name: Ident = input.parse()?;
-        
+
         // Always require explicit source type - no more inference
         input.parse::<from>()?;
         let source_type = input.parse::<Type>()?;
-        
+
         let content;
         braced!(content in input);
-        
+
         let fields = content
             .parse_terminated(FieldDefinition::parse, Token![,])?
             .into_iter()
             .collect();
-        
-        Ok(SelectStructInput { name, source_type: Some(source_type), fields })
+
+        Ok(SelectStructInput {
+            name,
+            source_type: Some(source_type),
+            fields,
+        })
     }
 }
 
@@ -67,7 +70,7 @@ impl Parse for FieldDefinition {
         let name: Ident = input.parse()?;
         input.parse::<Token![:]>()?;
         let field_type = FieldType::parse(input)?;
-        
+
         Ok(FieldDefinition { name, field_type })
     }
 }
@@ -76,7 +79,7 @@ impl Parse for FieldType {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Ident) {
             let ident: Ident = input.parse()?;
-            
+
             if ident == "Vec" {
                 // Parse Vec<...> syntax
                 input.parse::<Token![<]>()?;
@@ -93,14 +96,14 @@ impl Parse for FieldType {
                 // This is a nested struct with explicit source type
                 input.parse::<from>()?;
                 let source_type = input.parse::<Type>()?;
-                
+
                 let content;
                 braced!(content in input);
                 let nested_fields = content
                     .parse_terminated(FieldDefinition::parse, Token![,])?
                     .into_iter()
                     .collect();
-                
+
                 Ok(FieldType::Nested(SelectStructInput {
                     name: ident,
                     source_type: Some(source_type),
@@ -114,7 +117,7 @@ impl Parse for FieldType {
                     .parse_terminated(FieldDefinition::parse, Token![,])?
                     .into_iter()
                     .collect();
-                
+
                 Ok(FieldType::Nested(SelectStructInput {
                     name: ident,
                     source_type: None, // Will use inference
@@ -126,7 +129,7 @@ impl Parse for FieldType {
                 let full_type = format!("{}", ident.to_token_stream());
                 let mut depth = 0;
                 let mut tokens = vec![ident.to_token_stream()];
-                
+
                 while !input.is_empty() {
                     if input.peek(Token![<]) {
                         depth += 1;
@@ -141,8 +144,12 @@ impl Parse for FieldType {
                         tokens.push(input.parse::<TokenTree>()?.to_token_stream());
                     }
                 }
-                
-                let full_type_str = tokens.into_iter().map(|t| t.to_string()).collect::<Vec<_>>().join("");
+
+                let full_type_str = tokens
+                    .into_iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
                 let ty = syn::parse_str::<syn::Type>(&full_type_str)?;
                 Ok(FieldType::Primitive(ty))
             } else {
@@ -162,17 +169,17 @@ impl Parse for FieldType {
 fn generate_select_struct(input: &SelectStructInput) -> syn::Result<TokenStream2> {
     let mut all_structs = Vec::new();
     let mut all_from_impls = Vec::new();
-    
+
     // Generate the main struct
     let main_struct = generate_struct(&input.name, &input.fields);
     all_structs.push(main_struct);
-    
+
     // Generate nested structs
     generate_nested_structs(input, &mut all_structs);
-    
+
     // Generate From implementations
     generate_from_implementations(input, &mut all_from_impls)?;
-    
+
     Ok(quote! {
         #(#all_structs)*
         #(#all_from_impls)*
@@ -198,12 +205,12 @@ fn generate_struct(name: &Ident, fields: &[FieldDefinition]) -> TokenStream2 {
                 quote! { #nested_name }
             }
         };
-        
+
         quote! {
             pub #field_name: #field_type,
         }
     });
-    
+
     quote! {
         #[derive(Debug, Clone)]
         pub struct #name {
@@ -232,17 +239,14 @@ fn extract_type_for_field(field_type: &FieldType) -> TokenStream2 {
 }
 
 /// Generate nested structs recursively
-fn generate_nested_structs(
-    input: &SelectStructInput,
-    all_structs: &mut Vec<TokenStream2>,
-) {
+fn generate_nested_structs(input: &SelectStructInput, all_structs: &mut Vec<TokenStream2>) {
     for field in &input.fields {
         match &field.field_type {
             FieldType::Nested(nested) => {
                 // Generate the nested struct
                 let nested_struct = generate_struct(&nested.name, &nested.fields);
                 all_structs.push(nested_struct);
-                
+
                 // Recursively generate deeper nested structs
                 generate_nested_structs(nested, all_structs);
             }
@@ -267,7 +271,7 @@ fn generate_nested_structs_from_field_type(
             // Generate the nested struct
             let nested_struct = generate_struct(&nested.name, &nested.fields);
             all_structs.push(nested_struct);
-            
+
             // Recursively generate deeper nested structs
             generate_nested_structs(nested, all_structs);
         }
@@ -287,9 +291,10 @@ fn generate_from_implementations(
     all_from_impls: &mut Vec<TokenStream2>,
 ) -> syn::Result<()> {
     // Generate From implementation for the main struct
-    let from_impl = generate_from_impl_for_struct(&input.name, input.source_type.as_ref(), &input.fields)?;
+    let from_impl =
+        generate_from_impl_for_struct(&input.name, input.source_type.as_ref(), &input.fields)?;
     all_from_impls.push(from_impl);
-    
+
     // Generate From implementations for nested structs
     generate_nested_from_implementations(input, all_from_impls)?;
     Ok(())
@@ -308,16 +313,16 @@ fn generate_from_impl_for_struct(
             #field_name: #mapping,
         }
     });
-    
+
     // Require explicit source type - no more hardcoded inference
     let source_type_ident = source_type.ok_or_else(|| {
         syn::Error::new(
             struct_name.span(),
-            format!("Source type must be explicitly specified for struct '{}'. Use: select_struct!({} from YourSourceType {{ ... }})", 
+            format!("Source type must be explicitly specified for struct '{}'. Use: select_struct!({} from YourSourceType {{ ... }})",
                     struct_name, struct_name)
         )
     })?.clone();
-    
+
     Ok(quote! {
         impl From<#source_type_ident> for #struct_name {
             fn from(selected: #source_type_ident) -> Self {
@@ -332,11 +337,11 @@ fn generate_from_impl_for_struct(
 /// Generate field mapping for a specific field
 fn generate_field_mapping(field: &FieldDefinition) -> TokenStream2 {
     let field_name = &field.name;
-    
+
     match &field.field_type {
         FieldType::Primitive(_ty) => {
             // Direct type conversion - let Rust's type system handle it
-            quote! { 
+            quote! {
                 selected.#field_name.unwrap()
             }
         }
@@ -407,7 +412,11 @@ fn generate_nested_from_implementations(
     for field in &input.fields {
         match &field.field_type {
             FieldType::Nested(nested) => {
-                let from_impl = generate_from_impl_for_struct(&nested.name, nested.source_type.as_ref(), &nested.fields)?;
+                let from_impl = generate_from_impl_for_struct(
+                    &nested.name,
+                    nested.source_type.as_ref(),
+                    &nested.fields,
+                )?;
                 all_from_impls.push(from_impl);
                 generate_nested_from_implementations(nested, all_from_impls)?;
             }
@@ -430,7 +439,11 @@ fn generate_from_impl_for_field_type(
 ) -> syn::Result<()> {
     match field_type {
         FieldType::Nested(nested) => {
-            let from_impl = generate_from_impl_for_struct(&nested.name, nested.source_type.as_ref(), &nested.fields)?;
+            let from_impl = generate_from_impl_for_struct(
+                &nested.name,
+                nested.source_type.as_ref(),
+                &nested.fields,
+            )?;
             all_from_impls.push(from_impl);
             generate_nested_from_implementations(nested, all_from_impls)?;
         }

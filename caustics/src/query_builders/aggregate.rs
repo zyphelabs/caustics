@@ -101,16 +101,7 @@ where
                 }
             }
             for (_, alias, kind) in &self.aggregates {
-                let mut as_string: Option<String> = None;
-                if let Ok(v) = r.try_get::<i64>("", alias) {
-                    as_string = Some(v.to_string());
-                } else if let Ok(v) = r.try_get::<i32>("", alias) {
-                    as_string = Some(v.to_string());
-                } else if let Ok(v) = r.try_get::<f64>("", alias) {
-                    as_string = Some(v.to_string());
-                } else if let Ok(v) = r.try_get::<String>("", alias) {
-                    as_string = Some(v);
-                }
+                let as_string = crate::extract_db_value_as_string(&r, alias);
 
                 if let Some(vs) = as_string {
                     match *kind {

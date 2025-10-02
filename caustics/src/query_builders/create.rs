@@ -15,7 +15,7 @@ pub struct CreateQueryBuilder<
     pub conn: &'a C,
     pub deferred_lookups: Vec<DeferredLookup>,
     pub post_insert_ops: Vec<PostInsertOp<'a>>,
-    pub id_extractor: fn(&<Entity as EntityTrait>::Model) -> i32,
+    pub id_extractor: fn(&<Entity as EntityTrait>::Model) -> crate::CausticsKey,
     pub _phantom: std::marker::PhantomData<(Entity, ModelWithRelations)>,
 }
 
@@ -47,7 +47,7 @@ where
         let inserted = model.insert(txn).await?;
         let parent_id = (self.id_extractor)(&inserted);
         for op in self.post_insert_ops {
-            (op.run_on_txn)(txn, parent_id).await?;
+            (op.run_on_txn)(txn, parent_id.clone()).await?;
         }
         Ok(ModelWithRelations::from_model(inserted))
     }
@@ -76,7 +76,7 @@ where
         let inserted = model.insert(self.conn).await?;
         let parent_id = (self.id_extractor)(&inserted);
         for op in self.post_insert_ops {
-            (op.run_on_conn)(self.conn, parent_id).await?;
+            (op.run_on_conn)(self.conn, parent_id.clone()).await?;
         }
         Ok(ModelWithRelations::from_model(inserted))
     }
@@ -104,7 +104,7 @@ where
         let inserted = model.insert(self.conn).await?;
         let parent_id = (self.id_extractor)(&inserted);
         for op in self.post_insert_ops {
-            (op.run_on_txn)(self.conn, parent_id).await?;
+            (op.run_on_txn)(self.conn, parent_id.clone()).await?;
         }
         Ok(ModelWithRelations::from_model(inserted))
     }

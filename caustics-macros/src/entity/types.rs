@@ -32,7 +32,6 @@ pub struct Relation {
     pub primary_key_field: Option<String>,
     pub target_entity_name: Option<String>, // Entity name extracted from "to" attribute
     pub current_table_name: Option<String>,
-    pub target_table_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

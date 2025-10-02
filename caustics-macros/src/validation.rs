@@ -3,10 +3,10 @@
 
 use crate::errors::CausticsError;
 use crate::primary_key::PrimaryKeyInfo;
+use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Field};
-use proc_macro2::Span;
 
 /// Strictly validate that an entity has a primary key
 /// Fails with clear error if no primary key is found
@@ -34,8 +34,7 @@ pub fn validate_primary_key(entity_ast: &DeriveInput) -> Result<PrimaryKeyInfo, 
     let explicit_pk = fields.iter().find(|field| {
         field.attrs.iter().any(|attr| {
             if let syn::Meta::List(meta) = &attr.meta {
-                meta.path.is_ident("sea_orm") && 
-                meta.tokens.to_string().contains("primary_key")
+                meta.path.is_ident("sea_orm") && meta.tokens.to_string().contains("primary_key")
             } else {
                 false
             }
@@ -45,7 +44,6 @@ pub fn validate_primary_key(entity_ast: &DeriveInput) -> Result<PrimaryKeyInfo, 
     if let Some(field) = explicit_pk {
         return Ok(PrimaryKeyInfo::from_field(field));
     }
-
 
     // No primary key found - fail with clear error
     Err(CausticsError::no_primary_key(
@@ -84,7 +82,7 @@ pub fn validate_relation_primary_key(
 /// Fails with clear error if no table name is specified
 pub fn validate_table_name(entity_ast: &DeriveInput) -> Result<String, TokenStream> {
     let entity_name = &entity_ast.ident;
-    
+
     for attr in &entity_ast.attrs {
         if let syn::Meta::List(meta) = &attr.meta {
             if meta.path.is_ident("sea_orm") {
@@ -108,7 +106,7 @@ pub fn validate_table_name(entity_ast: &DeriveInput) -> Result<String, TokenStre
             }
         }
     }
-    
+
     // No table name found - fail with clear error
     Err(CausticsError::no_table_name(
         &entity_name.to_string(),
@@ -120,29 +118,47 @@ pub fn validate_table_name(entity_ast: &DeriveInput) -> Result<String, TokenStre
 pub fn validate_field_type(field: &Field) -> Result<(), TokenStream> {
     let field_name = field.ident.as_ref().unwrap().to_string();
     let type_name = quote::quote! { #field.ty }.to_string();
-    
+
     // Check if it's a supported type
     let is_supported = match &field.ty {
         syn::Type::Path(path) => {
             if let Some(segment) = path.path.segments.last() {
-                matches!(segment.ident.to_string().as_str(), 
-                    "String" | "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" 
-                    | "f32" | "f64" | "Uuid" | "DateTime" | "NaiveDateTime" | "NaiveDate" 
-                    | "Value" | "Option")
+                matches!(
+                    segment.ident.to_string().as_str(),
+                    "String"
+                        | "bool"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "f32"
+                        | "f64"
+                        | "Uuid"
+                        | "DateTime"
+                        | "NaiveDateTime"
+                        | "NaiveDate"
+                        | "Value"
+                        | "Option"
+                )
             } else {
                 false
             }
         }
         _ => false,
     };
-    
+
     if !is_supported {
         return Err(CausticsError::UnsupportedFieldType {
             field_name,
             type_name,
-        }.to_compile_error(field.ident.as_ref().unwrap().span()));
+        }
+        .to_compile_error(field.ident.as_ref().unwrap().span()));
     }
-    
+
     Ok(())
 }
 
@@ -153,8 +169,7 @@ pub fn validate_no_duplicate_primary_keys(fields: &[&Field]) -> Result<(), Token
         .filter(|field| {
             field.attrs.iter().any(|attr| {
                 if let syn::Meta::List(meta) = &attr.meta {
-                    meta.path.is_ident("sea_orm") && 
-                    meta.tokens.to_string().contains("primary_key")
+                    meta.path.is_ident("sea_orm") && meta.tokens.to_string().contains("primary_key")
                 } else {
                     false
                 }
@@ -167,12 +182,12 @@ pub fn validate_no_duplicate_primary_keys(fields: &[&Field]) -> Result<(), Token
             .iter()
             .map(|field| field.ident.as_ref().unwrap().to_string())
             .collect();
-        
+
         let field_names_str = field_names.join(", ");
         return Err(quote! {
             compile_error!(concat!(
-                "Multiple primary key fields found: ", 
-                #field_names_str, 
+                "Multiple primary key fields found: ",
+                #field_names_str,
                 ". Please specify exactly one primary key field."
             ))
         });
@@ -188,18 +203,21 @@ pub fn validate_no_circular_relations(
 ) -> Result<(), TokenStream> {
     // Check for self-referencing relations
     for relation in relations {
-        let target_entity_name = relation.target.segments.last()
+        let target_entity_name = relation
+            .target
+            .segments
+            .last()
             .map(|segment| segment.ident.to_string())
             .unwrap_or_default();
-        
+
         if target_entity_name.to_lowercase() == entity_name.to_lowercase() {
             let relation_name = &relation.name;
             return Err(quote! {
                 compile_error!(concat!(
-                    "Circular relation detected: '", 
-                    #entity_name, 
-                    "' references itself through relation '", 
-                    #relation_name, 
+                    "Circular relation detected: '",
+                    #entity_name,
+                    "' references itself through relation '",
+                    #relation_name,
                     "'. Please remove the circular dependency."
                 ))
             });
@@ -210,17 +228,15 @@ pub fn validate_no_circular_relations(
 }
 
 /// Validate that relation targets are valid entity paths
-pub fn validate_relation_targets(
-    relations: &[crate::entity::Relation],
-) -> Result<(), TokenStream> {
+pub fn validate_relation_targets(relations: &[crate::entity::Relation]) -> Result<(), TokenStream> {
     for relation in relations {
         // Check if the target path is valid (basic validation)
         if relation.target.segments.is_empty() {
             let relation_name = &relation.name;
             return Err(quote! {
                 compile_error!(concat!(
-                    "Invalid relation target for '", 
-                    #relation_name, 
+                    "Invalid relation target for '",
+                    #relation_name,
                     "': empty path. Please provide a valid entity path."
                 ))
             });

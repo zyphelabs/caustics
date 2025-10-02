@@ -159,7 +159,8 @@ where
         if let Some((cursor_expr, cursor_value)) = &self.cursor {
             // Determine effective order to derive comparison operator
             let first_order = self
-                .pending_order_bys.first()
+                .pending_order_bys
+                .first()
                 .map(|(_, ord)| ord.clone())
                 .unwrap_or(sea_orm::Order::Asc);
             let effective_order = if self.reverse_order {

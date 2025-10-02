@@ -136,7 +136,7 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
                     let core = caustics::IncludeBuilderCore::new();
                     let b = f(RelBuilder { core });
                     let mut g = b.core.build(#relation_name_lit);
-                    
+
                     // If there are field selections AND nested includes, automatically include foreign key fields
                     if let Some(ref mut select_aliases) = g.nested_select_aliases {
                         if !g.nested_includes.is_empty() && !select_aliases.is_empty() {
@@ -152,12 +152,12 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
                                     Some(first) => first.to_uppercase().chain(chars).collect(),
                                 }
                             }).collect::<String>();
-                            
+
                             // Use metadata system when available
                             // For now, skip automatic foreign key inclusion
                         }
                     }
-                    
+
                     super::RelationFilter {
                         relation: g.relation,
                         filters: g.filters,
@@ -193,7 +193,7 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
 
                     pub fn take(mut self, n: i64) -> Self { self.core.set_take(n); self }
                     pub fn skip(mut self, n: i64) -> Self { self.core.set_skip(n); self }
-                    pub fn cursor(mut self, id: i32) -> Self { self.core.set_cursor_id(id); self }
+                    pub fn cursor(mut self, id: impl Into<caustics::CausticsKey>) -> Self { self.core.set_cursor_id(id.into()); self }
                     pub fn with(mut self, include: super::#target::RelationFilter) -> Self {
                         self.core.with_nested(include.into());
                         self

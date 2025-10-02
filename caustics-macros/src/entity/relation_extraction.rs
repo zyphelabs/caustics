@@ -98,7 +98,7 @@ pub fn extract_relations(
                                                 // Convert PascalCase to snake_case to match database column names
                                                 let snake_case_name = field_name.to_string().to_snake_case();
                                                 foreign_key_column = Some(snake_case_name.clone());
-                                                
+
                                                 // Extract entity name from the "to" attribute path
                                                 // Format: "super::entity::Column::FieldName"
                                                 // We need to get the entity name (e.g., "Post" from "super::post::Column::Id")
@@ -108,12 +108,12 @@ pub fn extract_relations(
                                                     let entity_name_lower = path_parts[path_parts.len() - 3].to_lowercase();
                                                     // Convert to PascalCase to match the registry format
                                                     let entity_name = entity_name_lower.chars().next().unwrap().to_uppercase().collect::<String>() + &entity_name_lower[1..];
-                                                    
+
                                 // Store the entity name for runtime resolution
                                 // The actual primary key resolution will happen in the generated code
                                 // using get_entity_metadata() function
                                 target_entity_name = Some(entity_name);
-                                
+
                                 // Set primary_key_field to None for runtime resolution
                                 // The runtime code will use target_entity_name to look up the actual primary key
                                 primary_key_field = None;
@@ -174,16 +174,6 @@ pub fn extract_relations(
                     }
                 }
 
-                // Extract target table name from target entity path
-                let target_table_name = if let Some(last_segment) = target.segments.last() {
-                    // Use the relation name (which is typically plural) instead of the entity name
-                    // This is more likely to match the actual table name
-                    name.to_snake_case()
-                } else {
-                    // This should not happen if the relation is properly configured
-                    panic!("Missing target entity name for relation '{}'. Please ensure the relation is properly configured with all required attributes.", name)
-                };
-
                 relations.push(Relation {
                     name,
                     target,
@@ -196,7 +186,6 @@ pub fn extract_relations(
                     primary_key_field,
                     target_entity_name,
                     current_table_name: Some(current_table_name.to_string()),
-                    target_table_name: Some(target_table_name),
                 });
             }
         }

@@ -80,7 +80,8 @@ where
         // Apply cursor filtering if provided (copied from ManyQueryBuilder)
         if let Some((cursor_expr, cursor_value)) = &self.cursor {
             let first_order = self
-                .pending_order_bys.first()
+                .pending_order_bys
+                .first()
                 .map(|(_, ord)| ord.clone())
                 .unwrap_or(sea_orm::Order::Asc);
             let effective_order = if self.reverse_order {
@@ -253,7 +254,7 @@ where
                             } else {
                                 rel.foreign_key_field_name
                             };
-                            if s.get_i32(needed_key).is_some() {
+                            if s.get_key(needed_key).is_some() {
                             } else {
                                 continue;
                             }
@@ -306,7 +307,6 @@ where
         self.relations_to_fetch.push(relation.into());
         self
     }
-
 }
 
 impl<'a, C, Entity, Selected> SelectManyQueryBuilder<'a, C, Entity, Selected>

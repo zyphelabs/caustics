@@ -8,8 +8,10 @@ use quote::{format_ident, quote};
 pub fn generate_where_param_logic(
     fields: &[&syn::Field],
     unique_fields: &[&syn::Field],
+    primary_key_fields: &[&syn::Field],
     full_mod_path: &syn::Path,
     relations: &[crate::entity::Relation],
+    entity_name: &str,
 ) -> (
     Vec<proc_macro2::TokenStream>,
     Vec<proc_macro2::TokenStream>,
@@ -25,11 +27,20 @@ pub fn generate_where_param_logic(
             .iter()
             .any(|unique_field| unique_field.ident.as_ref().unwrap() == name);
 
+        let is_primary_key = primary_key_fields
+            .iter()
+            .any(|pk_field| pk_field.ident.as_ref().unwrap() == name);
+
         // Detect field type for appropriate operation generation
         let field_type = detect_field_type(ty);
 
-        // WhereParam variant uses FieldOp<T>
-        where_field_variants.push(quote! { #pascal_name(FieldOp<#ty>) });
+        // WhereParam variant uses FieldOp<T> - use CausticsKey for primary key fields, actual field type for others
+        //eprintln!("DEBUG: Generating WhereParam variant for field {} with type {:?}", name, ty);
+        if is_primary_key {
+            where_field_variants.push(quote! { #pascal_name(FieldOp<caustics::CausticsKey>) });
+        } else {
+            where_field_variants.push(quote! { #pascal_name(FieldOp<#ty>) });
+        }
 
         // Field operator module
         let set_fn = if !is_unique {
@@ -45,19 +56,41 @@ pub fn generate_where_param_logic(
         // Unique where function
         let unique_where_fn = if is_unique {
             let equals_variant = format_ident!("{}Equals", pascal_name);
-            quote! {
-                pub fn equals<T: From<Equals>>(value: impl Into<#ty>) -> T {
-                    Equals(value.into()).into()
-                }
-                pub struct Equals(pub #ty);
-                impl From<Equals> for super::UniqueWhereParam {
-                    fn from(Equals(v): Equals) -> Self {
-                        super::UniqueWhereParam::#equals_variant(v)
+            if is_primary_key {
+                // For primary key fields that are also unique, accept CausticsKey directly
+                quote! {
+                    pub fn equals<T: From<Equals>>(value: impl Into<caustics::CausticsKey>) -> T {
+                        let key = value.into();
+                        Equals(key).into()
+                    }
+                    pub struct Equals(pub caustics::CausticsKey);
+                    impl From<Equals> for super::UniqueWhereParam {
+                        fn from(Equals(v): Equals) -> Self {
+                            super::UniqueWhereParam::#equals_variant(v.clone())
+                        }
+                    }
+                    impl From<Equals> for super::WhereParam {
+                        fn from(Equals(v): Equals) -> Self {
+                            super::WhereParam::#pascal_name(caustics::FieldOp::Equals(v.clone()))
+                        }
                     }
                 }
-                impl From<Equals> for super::WhereParam {
-                    fn from(Equals(v): Equals) -> Self {
-                        super::WhereParam::#pascal_name(caustics::FieldOp::Equals(v))
+            } else {
+                // For other unique fields, use the field's actual type
+                quote! {
+                    pub fn equals<T: From<Equals>>(value: impl Into<#ty>) -> T {
+                        Equals(value.into()).into()
+                    }
+                    pub struct Equals(pub #ty);
+                    impl From<Equals> for super::UniqueWhereParam {
+                        fn from(Equals(v): Equals) -> Self {
+                            super::UniqueWhereParam::#equals_variant(v)
+                        }
+                    }
+                    impl From<Equals> for super::WhereParam {
+                        fn from(Equals(v): Equals) -> Self {
+                            super::WhereParam::#pascal_name(caustics::FieldOp::Equals(v))
+                        }
                     }
                 }
             }
@@ -81,17 +114,29 @@ pub fn generate_where_param_logic(
         };
 
         // Generate type-specific operations
-        let type_specific_ops = if !is_unique {
+        //eprintln!("DEBUG: Field {} - is_primary_key: {}, is_unique: {}", name, is_primary_key, is_unique);
+        let type_specific_ops = if is_primary_key {
+            // For primary key fields, generate operations that accept CausticsKey
+            //eprintln!("DEBUG: Generating primary key operations for field {}", name);
+            generate_primary_key_operations(&field_type, &pascal_name, ty)
+        } else if !is_unique {
+            //eprintln!("DEBUG: Generating regular operations for field {}", name);
             generate_type_specific_operations(&field_type, &pascal_name, ty)
         } else {
+            //eprintln!("DEBUG: Skipping operations for unique field {}", name);
             quote! {} // Don't generate equals for unique fields since unique_where_fn already has it
         };
 
         // Field-level `not` alias: maps to NotEquals with same value type
-        let field_not_alias = quote! {
-            pub fn not<T: Into<#ty>>(value: T) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
+        // Skip for primary key fields (handled by generate_primary_key_operations)
+        let field_not_alias = if !is_primary_key {
+            quote! {
+                pub fn not<T: Into<#ty>>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
+                }
             }
+        } else {
+            quote! {}
         };
 
         // String ops (only for string types)
@@ -113,7 +158,8 @@ pub fn generate_where_param_logic(
         };
 
         // Common comparison operations (for most types except boolean)
-        let comparison_ops = if !matches!(
+        // Skip for primary key fields (handled by generate_primary_key_operations)
+        let comparison_ops = if !is_primary_key && !matches!(
             field_type,
             FieldType::Boolean
                 | FieldType::OptionBoolean
@@ -139,23 +185,30 @@ pub fn generate_where_param_logic(
                 WhereParam::#pascal_name(caustics::FieldOp::Lte(value.into()))
             }
             }
-        } else {
+        } else if !is_primary_key {
             // For boolean, UUID, and JSON fields, only provide equals/not_equals
             quote! {
                 pub fn not_equals<T: Into<#ty>>(value: T) -> WhereParam {
                     WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
                 }
             }
+        } else {
+            quote! {}
         };
 
         // Collection operations (for all types)
-        let collection_ops = quote! {
-            pub fn in_vec<T: Into<#ty>>(values: Vec<T>) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::InVec(values.into_iter().map(|v| v.into()).collect()))
+        // Skip for primary key fields (handled by generate_primary_key_operations)
+        let collection_ops = if !is_primary_key {
+            quote! {
+                pub fn in_vec<T: Into<#ty>>(values: Vec<T>) -> WhereParam {
+                    WhereParam::#pascal_name(caustics::FieldOp::InVec(values.into_iter().map(|v| v.into()).collect()))
+                }
+                pub fn not_in_vec<T: Into<#ty>>(values: Vec<T>) -> WhereParam {
+                    WhereParam::#pascal_name(caustics::FieldOp::NotInVec(values.into_iter().map(|v| v.into()).collect()))
+                }
             }
-            pub fn not_in_vec<T: Into<#ty>>(values: Vec<T>) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::NotInVec(values.into_iter().map(|v| v.into()).collect()))
-            }
+        } else {
+            quote! {}
         };
 
         // Null operations (only for nullable types)
@@ -343,7 +396,7 @@ pub fn generate_where_param_logic(
 
     // Generate a function that processes all WhereParams together, properly handling QueryMode
     let where_params_to_condition_fn =
-        generate_where_params_to_condition_function(fields, relations);
+        generate_where_params_to_condition_function(fields, primary_key_fields, relations, entity_name);
 
     let where_match_arms: Vec<proc_macro2::TokenStream> = vec![where_params_to_condition_fn];
     (where_field_variants, where_match_arms, field_ops)
@@ -352,7 +405,9 @@ pub fn generate_where_param_logic(
 /// Generate a function that converts Vec<WhereParam> to Condition, properly handling QueryMode
 fn generate_where_params_to_condition_function(
     fields: &[&syn::Field],
+    primary_key_fields: &[&syn::Field],
     relations: &[crate::entity::Relation],
+    entity_name: &str,
 ) -> proc_macro2::TokenStream {
     let mut field_handlers = Vec::new();
     let mut mode_handlers = Vec::new();
@@ -365,54 +420,59 @@ fn generate_where_params_to_condition_function(
         // Comprehensive type detection
         let field_type = detect_field_type(ty);
 
+        // Check if this is a primary key field
+        let is_primary_key = primary_key_fields
+            .iter()
+            .any(|pk_field| pk_field.ident.as_ref().unwrap() == name);
+
         // Generate field operation handler based on type
         match field_type {
             FieldType::String => {
-                field_handlers.push(generate_string_field_handler(&pascal_name, false));
+                field_handlers.push(generate_string_field_handler(&pascal_name, false, is_primary_key));
                 mode_handlers.push(generate_mode_handler(&pascal_name, name));
             }
             FieldType::OptionString => {
-                field_handlers.push(generate_string_field_handler(&pascal_name, true));
+                field_handlers.push(generate_string_field_handler(&pascal_name, true, is_primary_key));
                 mode_handlers.push(generate_mode_handler(&pascal_name, name));
             }
             FieldType::Integer => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, false));
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, false, is_primary_key, entity_name));
             }
             FieldType::OptionInteger => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, true));
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, true, is_primary_key, entity_name));
             }
             FieldType::Float => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, false));
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, false, is_primary_key, entity_name));
             }
             FieldType::OptionFloat => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, true));
+                field_handlers.push(generate_numeric_field_handler(&pascal_name, true, is_primary_key, entity_name));
             }
             FieldType::Boolean => {
-                field_handlers.push(generate_boolean_field_handler(&pascal_name, false));
+                field_handlers.push(generate_boolean_field_handler(&pascal_name, false, is_primary_key));
             }
             FieldType::OptionBoolean => {
-                field_handlers.push(generate_boolean_field_handler(&pascal_name, true));
+                field_handlers.push(generate_boolean_field_handler(&pascal_name, true, is_primary_key));
             }
             FieldType::DateTime => {
-                field_handlers.push(generate_datetime_field_handler(&pascal_name, false));
+                field_handlers.push(generate_datetime_field_handler(&pascal_name, false, is_primary_key));
             }
             FieldType::OptionDateTime => {
-                field_handlers.push(generate_datetime_field_handler(&pascal_name, true));
+                field_handlers.push(generate_datetime_field_handler(&pascal_name, true, is_primary_key));
             }
             FieldType::Uuid => {
-                field_handlers.push(generate_uuid_field_handler(&pascal_name, false));
+                field_handlers.push(generate_uuid_field_handler(&pascal_name, false, is_primary_key, entity_name));
             }
             FieldType::OptionUuid => {
-                field_handlers.push(generate_uuid_field_handler(&pascal_name, true));
+                field_handlers.push(generate_uuid_field_handler(&pascal_name, true, is_primary_key, entity_name));
             }
             FieldType::Json => {
-                field_handlers.push(generate_json_field_handler(&pascal_name, false));
+                field_handlers.push(generate_json_field_handler(&pascal_name, false, is_primary_key));
             }
             FieldType::OptionJson => {
-                field_handlers.push(generate_json_field_handler(&pascal_name, true));
+                field_handlers.push(generate_json_field_handler(&pascal_name, true, is_primary_key));
             }
             FieldType::Other => {
-                field_handlers.push(generate_generic_field_handler(&pascal_name));
+                field_handlers.push(generate_generic_field_handler(&pascal_name, is_primary_key));
             }
         }
     }
@@ -447,11 +507,8 @@ fn generate_where_params_to_condition_function(
         };
 
         // Get table names from relation metadata
-        let target_table_name_str = relation
-            .target_table_name
-            .as_ref()
-            .unwrap_or(&relation_name_str)
-            .to_string();
+        // Use the resolved target table name from build-time metadata
+        let target_table_name_str = relation_name_str.clone();
         let current_table_name_str = relation
             .current_table_name
             .as_ref()
@@ -541,6 +598,18 @@ fn generate_where_params_to_condition_function(
     }
 
     quote! {
+        /// Convert CausticsKey to the appropriate type for SeaORM operations
+        fn convert_caustics_key_to_type<T>(key: caustics::CausticsKey) -> T 
+        where 
+            T: From<String> + From<i32> + From<uuid::Uuid>,
+        {
+            match key {
+                caustics::CausticsKey::String(s) => T::from(s),
+                caustics::CausticsKey::Int(i) => T::from(i),
+                caustics::CausticsKey::Uuid(u) => T::from(u),
+            }
+        }
+
         /// Convert a Filter to a SeaORM condition for the target entity
         fn convert_filter_to_condition<T: EntityTrait>(filter: &caustics::Filter, table_name: &str) -> sea_query::Condition {
             use sea_orm::{EntityTrait, ColumnTrait};
@@ -829,6 +898,7 @@ pub fn detect_field_type(ty: &syn::Type) -> FieldType {
 fn generate_string_field_handler(
     pascal_name: &proc_macro2::Ident,
     is_nullable: bool,
+    is_primary_key: bool,
 ) -> proc_macro2::TokenStream {
     let field_name_str = pascal_name.to_string().to_lowercase();
 
@@ -1101,8 +1171,43 @@ fn generate_mode_handler(
 fn generate_numeric_field_handler(
     pascal_name: &proc_macro2::Ident,
     is_nullable: bool,
+    is_primary_key: bool,
+    entity_name: &str,
 ) -> proc_macro2::TokenStream {
-    if is_nullable {
+    if is_primary_key {
+        // For primary key fields, FieldOp is generic over CausticsKey, so convert using registry
+        let field_name_snake = pascal_name.to_string().to_snake_case();
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => {
+                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                        .expect("Failed to convert CausticsKey to field type");
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                },
+                FieldOp::NotEquals(v) => {
+                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                        .expect("Failed to convert CausticsKey to field type");
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value))
+                },
+                FieldOp::InVec(vs) => {
+                    let values: Vec<sea_orm::Value> = vs.into_iter()
+                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                            .expect("Failed to convert CausticsKey to field type"))
+                        .collect();
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(values))
+                },
+                FieldOp::NotInVec(vs) => {
+                    let values: Vec<sea_orm::Value> = vs.into_iter()
+                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                            .expect("Failed to convert CausticsKey to field type"))
+                        .collect();
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(values))
+                },
+                // Catch-all for unsupported operations
+                _ => panic!("Unsupported FieldOp operation for this field type"),
+            }
+        }
+    } else if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => match op {
                 FieldOp::Equals(v) => {
@@ -1171,6 +1276,7 @@ fn generate_numeric_field_handler(
 fn generate_boolean_field_handler(
     pascal_name: &proc_macro2::Ident,
     is_nullable: bool,
+    is_primary_key: bool,
 ) -> proc_macro2::TokenStream {
     if is_nullable {
         quote! {
@@ -1213,6 +1319,7 @@ fn generate_boolean_field_handler(
 fn generate_datetime_field_handler(
     pascal_name: &proc_macro2::Ident,
     is_nullable: bool,
+    is_primary_key: bool,
 ) -> proc_macro2::TokenStream {
     if is_nullable {
         quote! {
@@ -1283,8 +1390,43 @@ fn generate_datetime_field_handler(
 fn generate_uuid_field_handler(
     pascal_name: &proc_macro2::Ident,
     is_nullable: bool,
+    is_primary_key: bool,
+    entity_name: &str,
 ) -> proc_macro2::TokenStream {
-    if is_nullable {
+    if is_primary_key {
+        // For primary key fields, FieldOp is generic over CausticsKey, so convert using registry
+        let field_name_snake = pascal_name.to_string().to_snake_case();
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                FieldOp::Equals(v) => {
+                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                        .expect("Failed to convert CausticsKey to field type");
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                },
+                FieldOp::NotEquals(v) => {
+                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                        .expect("Failed to convert CausticsKey to field type");
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value))
+                },
+                FieldOp::InVec(vs) => {
+                    let values: Vec<sea_orm::Value> = vs.into_iter()
+                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                            .expect("Failed to convert CausticsKey to field type"))
+                        .collect();
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(values))
+                },
+                FieldOp::NotInVec(vs) => {
+                    let values: Vec<sea_orm::Value> = vs.into_iter()
+                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
+                            .expect("Failed to convert CausticsKey to field type"))
+                        .collect();
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(values))
+                },
+                // Catch-all for unsupported operations
+                _ => panic!("Unsupported FieldOp operation for this field type"),
+            }
+        }
+    } else if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => match op {
                 FieldOp::Equals(v) => {
@@ -1325,6 +1467,7 @@ fn generate_uuid_field_handler(
 fn generate_json_field_handler(
     pascal_name: &proc_macro2::Ident,
     is_nullable: bool,
+    is_primary_key: bool,
 ) -> proc_macro2::TokenStream {
     if is_nullable {
         quote! {
@@ -1496,7 +1639,7 @@ fn generate_json_field_handler(
 }
 
 /// Generate generic field handler for unknown types
-fn generate_generic_field_handler(pascal_name: &proc_macro2::Ident) -> proc_macro2::TokenStream {
+fn generate_generic_field_handler(pascal_name: &proc_macro2::Ident, is_primary_key: bool) -> proc_macro2::TokenStream {
     quote! {
         WhereParam::#pascal_name(op) => match op {
             FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
@@ -1524,6 +1667,31 @@ fn generate_type_specific_operations(
     quote! {
         pub fn equals<T: Into<#ty>>(value: T) -> WhereParam {
             WhereParam::#pascal_name(FieldOp::Equals(value.into()))
+        }
+    }
+}
+
+/// Generate primary key operations that accept CausticsKey and convert to field type
+fn generate_primary_key_operations(
+    field_type: &FieldType,
+    pascal_name: &proc_macro2::Ident,
+    ty: &syn::Type,
+) -> proc_macro2::TokenStream {
+    //eprintln!("DEBUG: Generating primary key operations for field {} with type {:?}", pascal_name, ty);
+    // For primary key fields, generate operations that accept CausticsKey directly
+    // Note: equals is handled by unique_where_fn for unique fields, so we don't generate it here
+    quote! {
+        pub fn not_equals<T: Into<caustics::CausticsKey>>(value: T) -> WhereParam {
+            let key = value.into();
+            WhereParam::#pascal_name(FieldOp::NotEquals(key))
+        }
+        pub fn in_vec<T: Into<caustics::CausticsKey>>(values: Vec<T>) -> WhereParam {
+            let keys: Vec<caustics::CausticsKey> = values.into_iter().map(|v| v.into()).collect();
+            WhereParam::#pascal_name(FieldOp::InVec(keys))
+        }
+        pub fn not_in_vec<T: Into<caustics::CausticsKey>>(values: Vec<T>) -> WhereParam {
+            let keys: Vec<caustics::CausticsKey> = values.into_iter().map(|v| v.into()).collect();
+            WhereParam::#pascal_name(FieldOp::NotInVec(keys))
         }
     }
 }
