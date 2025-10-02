@@ -125,12 +125,10 @@ pub fn validate_field_type(field: &Field) -> Result<(), TokenStream> {
     let is_supported = match &field.ty {
         syn::Type::Path(path) => {
             if let Some(segment) = path.path.segments.last() {
-                match segment.ident.to_string().as_str() {
+                matches!(segment.ident.to_string().as_str(), 
                     "String" | "bool" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" 
                     | "f32" | "f64" | "Uuid" | "DateTime" | "NaiveDateTime" | "NaiveDate" 
-                    | "Value" | "Option" => true,
-                    _ => false,
-                }
+                    | "Value" | "Option")
             } else {
                 false
             }

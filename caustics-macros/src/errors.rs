@@ -34,7 +34,7 @@ pub enum CausticsError {
 
 impl CausticsError {
     /// Convert to syn::Error for compilation
-    pub fn to_compile_error(self, span: Span) -> proc_macro2::TokenStream {
+    pub fn to_compile_error(&self, span: Span) -> proc_macro2::TokenStream {
         Error::new(span, self.to_string()).to_compile_error()
     }
     

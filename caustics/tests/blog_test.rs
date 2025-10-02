@@ -1,4 +1,5 @@
 #![feature(decl_macro)]
+#![allow(unused_imports)]
 
 include!(concat!(env!("OUT_DIR"), "/caustics_client_blog_test.rs"));
 
@@ -150,7 +151,6 @@ mod query_builder_tests {
     use caustics::{QueryError, SortOrder};
     use caustics_macros::select_struct;
     use chrono::{DateTime, FixedOffset, TimeZone};
-    use serde_json;
     // Bring typed aggregate extension traits into scope
     use super::user::{
         AggregateAggExt as UserAggregateAggExt, GroupByHavingAggExt as UserGroupByHavingAggExt,
@@ -1467,7 +1467,7 @@ mod query_builder_tests {
         assert_eq!(young_or_old_users.len(), 2); // John (16) and Bob (70)
         assert!(young_or_old_users.iter().all(|u| {
             let age = u.age.unwrap_or(0);
-            age < 18 || age > 65
+            !(18..=65).contains(&age)
         }));
 
         // Test NOT operator - users who are NOT minors
@@ -2883,9 +2883,9 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        assert!(users.len() >= 1);
-        assert!(users.iter().next().is_some_and(|u| u.id == 1));
-        assert!(users.iter().next().is_some_and(|u| u.name == "Raw User"));
+        assert!(!users.is_empty());
+        assert!(users.first().is_some_and(|u| u.id == 1));
+        assert!(users.first().is_some_and(|u| u.name == "Raw User"));
 
         // Injection protection: user-provided string is bound, not inlined
         let evil = "1); DROP TABLE User; --".to_string();
@@ -3257,16 +3257,16 @@ mod query_builder_tests {
             .user()
             .aggregate(vec![])
             .count()
-            .avg(user::AvgSelect::Age, "age_avg")
-            .min(user::MinSelect::Age, "age_min")
-            .max(user::MaxSelect::Age, "age_max")
+            .avg(user::select!(age), "age_avg")
+            .min(user::select!(age), "age_min")
+            .max(user::select!(age), "age_max")
             .exec()
             .await
             .unwrap();
         assert_eq!(agg.count, Some(2));
-        assert!(agg.avg.get("age_avg").is_some());
-        assert!(agg.min.get("age_min").is_some());
-        assert!(agg.max.get("age_max").is_some());
+        assert!(agg.avg.contains_key("age_avg"));
+        assert!(agg.min.contains_key("age_min"));
+        assert!(agg.max.contains_key("age_max"));
 
         // Group by age with count
         let rows = client
@@ -3280,8 +3280,8 @@ mod query_builder_tests {
                 None,
             )
             .count("cnt")
-            .sum(user::SumSelect::Age, "age_sum")
-            .having_sum_gte(user::SumSelect::Age, 20)
+            .sum(user::select!(age), "age_sum")
+            .having_sum_gte(user::select!(age), 20)
             .exec()
             .await
             .unwrap();
@@ -3330,16 +3330,16 @@ mod query_builder_tests {
             .user()
             .aggregate(vec![])
             .count()
-            .avg(user::AvgSelect::Age, "age_avg")
-            .min(user::MinSelect::Age, "age_min")
-            .max(user::MaxSelect::Age, "age_max")
+            .avg(user::select!(age), "age_avg")
+            .min(user::select!(age), "age_min")
+            .max(user::select!(age), "age_max")
             .exec()
             .await
             .unwrap();
         assert_eq!(agg_typed.count, Some(2));
-        assert!(agg_typed.avg.get("age_avg").is_some());
-        assert!(agg_typed.min.get("age_min").is_some());
-        assert!(agg_typed.max.get("age_max").is_some());
+        assert!(agg_typed.avg.contains_key("age_avg"));
+        assert!(agg_typed.min.contains_key("age_min"));
+        assert!(agg_typed.max.contains_key("age_max"));
 
         // Group by typed
         let rows = client
@@ -3353,7 +3353,7 @@ mod query_builder_tests {
                 None,
             )
             .count("cnt")
-            .sum(user::SumSelect::Age, "age_sum")
+            .sum(user::select!(age), "age_sum")
             .exec()
             .await
             .unwrap();
@@ -3872,4 +3872,5 @@ mod query_builder_tests {
 
         assert_eq!(user_with_post_count._count.posts, 2);
     }
+
 }

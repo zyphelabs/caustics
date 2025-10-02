@@ -1,3 +1,8 @@
+#![allow(clippy::cmp_owned)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::possible_missing_else)]
+
 use quote::{format_ident, quote, ToTokens};
 use std::env;
 use std::fs;
@@ -178,7 +183,7 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
 
     for entry in WalkDir::new(dir) {
         let entry = entry.unwrap();
-        if entry.path().extension().map_or(false, |ext| ext == "rs") {
+        if entry.path().extension().is_some_and(|ext| ext == "rs") {
             let content = match fs::read_to_string(entry.path()) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -233,7 +238,7 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
     // Also include entities from tests directory for metadata
     for entry in WalkDir::new("tests") {
         let entry = entry.unwrap();
-        if entry.path().extension().map_or(false, |ext| ext == "rs") {
+        if entry.path().extension().is_some_and(|ext| ext == "rs") {
             let content = match fs::read_to_string(entry.path()) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -312,7 +317,7 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
     for dir in dirs {
         for entry in WalkDir::new(dir) {
             let entry = entry.unwrap();
-            if entry.path().extension().map_or(false, |ext| ext == "rs") {
+            if entry.path().extension().is_some_and(|ext| ext == "rs") {
                 let content = match fs::read_to_string(entry.path()) {
                     Ok(c) => c,
                     Err(_) => continue,
@@ -410,7 +415,7 @@ fn generate_per_namespace_files(dirs: &[&str]) {
     for dir in dirs {
         for entry in WalkDir::new(dir) {
             let entry = entry.unwrap();
-            if entry.path().extension().map_or(false, |ext| ext == "rs") {
+            if entry.path().extension().is_some_and(|ext| ext == "rs") {
                 let content = match fs::read_to_string(entry.path()) {
                     Ok(c) => c,
                     Err(_) => continue,
@@ -441,7 +446,7 @@ fn generate_per_namespace_files(dirs: &[&str]) {
                                             let source_file = entry.path().to_string_lossy().to_string();
                                             namespace_entities
                                                 .entry(namespace.clone())
-                                                .or_insert_with(Vec::new)
+                                                .or_default()
                                                 .push((entity_name.clone(), module_path, source_file.clone()));
                                         }
                                     }
@@ -458,7 +463,7 @@ fn generate_per_namespace_files(dirs: &[&str]) {
                                 let module_path = module_name.clone();
                                 let entities = namespace_entities
                                     .entry(namespace.clone())
-                                    .or_insert_with(Vec::new);
+                                    .or_default();
                                 if !entities.iter().any(|(name, _, _)| name == &entity_name) {
                                     let source_file = entry.path().to_string_lossy().to_string();
                                 entities.push((entity_name, module_path, source_file));
@@ -475,7 +480,7 @@ fn generate_per_namespace_files(dirs: &[&str]) {
     for (namespace, entities) in namespace_entities {
         if !entities.is_empty() {
             // Check if we're in a test directory by looking at the current directory
-            let is_test = dirs.iter().any(|dir| *dir == "tests");
+            let is_test = dirs.contains(&"tests");
             let out_file = if is_test {
                 format!("caustics_client_{}_test.rs", namespace)
             } else {
@@ -644,7 +649,7 @@ fn generate_metadata_only_client(entities_metadata: &[EntityMetadata]) -> String
             
             // Try namespace-aware resolution
             // 1. Try with namespace prefix (e.g., "blog::Post" -> "Post")
-            if let Some(colon_pos) = entity_name.rfind("::") {
+            else if let Some(colon_pos) = entity_name.rfind("::") {
                 let name_without_namespace = &entity_name[colon_pos + 2..];
                 if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == name_without_namespace) {
                     return Some(meta);
@@ -916,7 +921,7 @@ fn generate_client_code(entities: &[(String, String)], entities_metadata: &[Enti
             
             // Try namespace-aware resolution
             // 1. Try with namespace prefix (e.g., "blog::Post" -> "Post")
-            if let Some(colon_pos) = entity_name.rfind("::") {
+            else if let Some(colon_pos) = entity_name.rfind("::") {
                 let name_without_namespace = &entity_name[colon_pos + 2..];
                 if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == name_without_namespace) {
                     return Some(meta);

@@ -187,6 +187,10 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
 
             // Return the modified module
             quote! {
+                #[allow(clippy::cmp_owned)]
+                #[allow(clippy::type_complexity)]
+                #[allow(clippy::too_many_arguments)]
+                #[allow(clippy::possible_missing_else)]
                 #ast
             }
             .into()
@@ -194,6 +198,10 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
         _ => {
             // If we didn't find both struct and enum with #[derive(Caustics)], return the original module
             quote! {
+                #[allow(clippy::cmp_owned)]
+                #[allow(clippy::type_complexity)]
+                #[allow(clippy::too_many_arguments)]
+                #[allow(clippy::possible_missing_else)]
                 #ast
             }
             .into()

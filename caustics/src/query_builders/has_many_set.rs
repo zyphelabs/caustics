@@ -14,6 +14,7 @@ where
     pub condition: sea_orm::Condition,
     pub changes: Vec<T>,
     pub conn: &'a C,
+    #[allow(clippy::type_complexity)]
     pub entity_id_resolver: Option<
         Box<
             dyn for<'b> Fn(
@@ -268,89 +269,87 @@ where
         self.is_foreign_key_nullable
     }
 
-    fn process_set_operation(
+    async fn process_set_operation(
         &self,
         conn: &C,
         current_entity_id: sea_orm::Value,
         target_ids: Vec<sea_orm::Value>,
-    ) -> impl std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send {
-        async move {
-            let txn = conn.begin().await?;
+    ) -> Result<(), sea_orm::DbErr> {
+        let txn = conn.begin().await?;
 
-            // Get the database backend from the connection
-            let db_backend: DatabaseBackend = conn.get_database_backend();
+        // Get the database backend from the connection
+        let db_backend: DatabaseBackend = conn.get_database_backend();
 
-            // First, remove existing associations
-            if self.is_foreign_key_nullable {
-                // If nullable, set to NULL
-                let remove_stmt = sea_orm::Statement::from_sql_and_values(
+        // First, remove existing associations
+        if self.is_foreign_key_nullable {
+            // If nullable, set to NULL
+            let remove_stmt = sea_orm::Statement::from_sql_and_values(
+                db_backend,
+                format!(
+                    "UPDATE {} SET {} = NULL WHERE {} = ?",
+                    self.target_table_name, self.foreign_key_column, self.foreign_key_column
+                ),
+                vec![current_entity_id.clone()],
+            );
+            txn.execute(remove_stmt).await?;
+        } else {
+            // For non-nullable foreign keys, delete associations not in target list
+            if !target_ids.is_empty() {
+                let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+
+                let delete_stmt = sea_orm::Statement::from_sql_and_values(
                     db_backend,
                     format!(
-                        "UPDATE {} SET {} = NULL WHERE {} = ?",
-                        self.target_table_name, self.foreign_key_column, self.foreign_key_column
+                        "DELETE FROM {} WHERE {} = ? AND {} NOT IN ({})",
+                        self.target_table_name,
+                        self.foreign_key_column,
+                        self.target_primary_key_column,
+                        placeholders
+                    ),
+                    {
+                        let mut values = vec![current_entity_id.clone()];
+                        values.extend(target_ids.clone());
+                        values
+                    },
+                );
+
+                txn.execute(delete_stmt).await?;
+            } else {
+                // If no target IDs, delete all existing associations
+                let delete_stmt = sea_orm::Statement::from_sql_and_values(
+                    db_backend,
+                    format!(
+                        "DELETE FROM {} WHERE {} = ?",
+                        self.target_table_name, self.foreign_key_column
                     ),
                     vec![current_entity_id.clone()],
                 );
-                txn.execute(remove_stmt).await?;
-            } else {
-                // For non-nullable foreign keys, delete associations not in target list
-                if !target_ids.is_empty() {
-                    let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
-                    let delete_stmt = sea_orm::Statement::from_sql_and_values(
-                        db_backend,
-                        format!(
-                            "DELETE FROM {} WHERE {} = ? AND {} NOT IN ({})",
-                            self.target_table_name,
-                            self.foreign_key_column,
-                            self.target_primary_key_column,
-                            placeholders
-                        ),
-                        {
-                            let mut values = vec![current_entity_id.clone()];
-                            values.extend(target_ids.clone());
-                            values
-                        },
-                    );
-
-                    txn.execute(delete_stmt).await?;
-                } else {
-                    // If no target IDs, delete all existing associations
-                    let delete_stmt = sea_orm::Statement::from_sql_and_values(
-                        db_backend,
-                        format!(
-                            "DELETE FROM {} WHERE {} = ?",
-                            self.target_table_name, self.foreign_key_column
-                        ),
-                        vec![current_entity_id.clone()],
-                    );
-
-                    txn.execute(delete_stmt).await?;
-                }
+                txn.execute(delete_stmt).await?;
             }
-
-            // Then, set the target associations
-            if !target_ids.is_empty() {
-                let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                let set_query = format!(
-                    "UPDATE {} SET {} = ? WHERE {} IN ({})",
-                    self.target_table_name,
-                    self.foreign_key_column,
-                    self.target_primary_key_column,
-                    placeholders
-                );
-
-                let mut values = vec![current_entity_id];
-                values.extend(target_ids.clone());
-
-                let set_stmt =
-                    sea_orm::Statement::from_sql_and_values(db_backend, set_query, values);
-                txn.execute(set_stmt).await?;
-            }
-
-            txn.commit().await?;
-            Ok(())
         }
+
+        // Then, set the target associations
+        if !target_ids.is_empty() {
+            let placeholders = target_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let set_query = format!(
+                "UPDATE {} SET {} = ? WHERE {} IN ({})",
+                self.target_table_name,
+                self.foreign_key_column,
+                self.target_primary_key_column,
+                placeholders
+            );
+
+            let mut values = vec![current_entity_id];
+            values.extend(target_ids.clone());
+
+            let set_stmt =
+                sea_orm::Statement::from_sql_and_values(db_backend, set_query, values);
+            txn.execute(set_stmt).await?;
+        }
+
+        txn.commit().await?;
+        Ok(())
     }
 
     fn process_set_operation_in_txn(

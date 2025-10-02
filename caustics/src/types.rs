@@ -337,6 +337,7 @@ impl CausticsError {
 
 /// Operation to run after a parent insert completes (used by nested writes)
 pub struct PostInsertOp<'a> {
+    #[allow(clippy::type_complexity)]
     pub run_on_conn: Box<
         dyn for<'b> Fn(
                 &'b DatabaseConnection,
@@ -346,6 +347,7 @@ pub struct PostInsertOp<'a> {
             > + Send
             + 'a,
     >,
+    #[allow(clippy::type_complexity)]
     pub run_on_txn: Box<
         dyn for<'b> Fn(
                 &'b DatabaseTransaction,
@@ -747,6 +749,9 @@ pub trait SelectionSpec {
     type Data: EntitySelection + HasRelationMetadata<Self::Data> + Send + 'static;
     /// Return the list of scalar aliases (snake_case rust field names) to fetch
     fn collect_aliases(self) -> Vec<String>;
+    /// Convert to a single column expression for aggregate functions
+    /// Panics if more than one field is selected
+    fn to_single_column_expr(self) -> sea_orm::sea_query::SimpleExpr;
 }
 
 /// Concrete typed selection marker carrying aliases and output type info
@@ -764,6 +769,11 @@ where
     type Data = D;
     fn collect_aliases(self) -> Vec<String> {
         self.aliases
+    }
+    fn to_single_column_expr(self) -> sea_orm::sea_query::SimpleExpr {
+        // This will be implemented by the generated code for each entity
+        // For now, panic to indicate this needs to be implemented
+        panic!("to_single_column_expr must be implemented by generated code")
     }
 }
 
@@ -801,6 +811,7 @@ where
 /// Trait for dynamic entity fetching without hardcoding
 pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
     /// Fetch entities by foreign key value (legacy - returns Box<dyn Any + Send>)
+    #[allow(clippy::type_complexity)]
     fn fetch_by_foreign_key<'a>(
         &'a self,
         conn: &'a C,
@@ -818,6 +829,7 @@ pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
     >;
 
     /// Fetch entities by foreign key value with selection (returns Selected types directly)
+    #[allow(clippy::type_complexity)]
     fn fetch_by_foreign_key_with_selection<'a>(
         &'a self,
         conn: &'a C,
@@ -839,6 +851,20 @@ pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
 pub trait EntityRegistry<C: sea_orm::ConnectionTrait> {
     /// Get the fetcher for a given entity name
     fn get_fetcher(&self, entity_name: &str) -> Option<&dyn EntityFetcher<C>>;
+}
+
+/// Trait for field selection in aggregate functions
+/// Allows both enum-based and select!-based field selection
+pub trait FieldSelection<Entity: sea_orm::EntityTrait> {
+    fn to_simple_expr(self) -> sea_orm::sea_query::SimpleExpr;
+}
+
+/// Implement FieldSelection for SelectionSpec types (select! output)
+impl<Entity: sea_orm::EntityTrait, S> FieldSelection<Entity> for S 
+where S: SelectionSpec<Entity = Entity> {
+    fn to_simple_expr(self) -> sea_orm::sea_query::SimpleExpr {
+        self.to_single_column_expr()
+    }
 }
 
 /// Trait for converting various typed order specifications into a (expr, order) pair

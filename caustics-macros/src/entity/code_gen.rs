@@ -11,6 +11,13 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields};
 
+#[allow(clippy::cmp_owned)]
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::possible_missing_else)]
+#[allow(clippy::unnecessary_filter_map)]
+#[allow(clippy::useless_conversion)]
+#[allow(clippy::if_same_then_else)]
 pub fn generate_entity(
     model_ast: DeriveInput,
     relation_ast: DeriveInput,
@@ -269,8 +276,7 @@ pub fn generate_entity(
                     RelationKind::BelongsTo => {
                         // For belongs_to, the 'to' column is the primary key of the target entity
                         // Example: to = "super::user::Column::Id" -> primary key is "id"
-                        rel.foreign_key_column.as_ref()
-                            .map(|col| col.clone())
+                        rel.foreign_key_column.clone()
                             .unwrap_or_else(|| {
                                 panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
                             })
@@ -681,11 +687,11 @@ pub fn generate_entity(
             let is_nullable_fk = rel
                 .foreign_key_field
                 .as_ref()
-                .map_or(false, |fk_field_name| {
+                .is_some_and(|fk_field_name| {
                     fields
                         .iter()
                         .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
-                        .map_or(false, |field| is_option(&field.ty))
+                        .is_some_and(|field| is_option(&field.ty))
                 });
 
             if is_nullable_fk {
@@ -1132,9 +1138,7 @@ pub fn generate_entity(
                 // Check if the foreign key field is not nullable (not Option<T>)
                 // Only required relations should be in foreign key assignments
                 let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
-                if let Some(field) = fields.iter().find(|f| {
-                    f.ident.as_ref().unwrap().to_string() == *fk_field_name
-                }) {
+                if let Some(field) = fields.iter().find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name) {
                     !is_option(&field.ty)
                 } else {
                     false
@@ -1690,12 +1694,13 @@ pub fn generate_entity(
 
     // Combine all SetParam variants as a flat Vec
     let all_set_param_variants: Vec<_> = field_variants
+        .clone()
         .into_iter()
-        .chain(atomic_variants.into_iter())
-        .chain(relation_connect_variants.into_iter())
-        .chain(relation_disconnect_variants.into_iter())
-        .chain(has_many_set_variant_tokens.into_iter())
-        .chain(has_many_create_variant_tokens.into_iter())
+        .chain(atomic_variants)
+        .chain(relation_connect_variants)
+        .chain(relation_disconnect_variants)
+        .chain(has_many_set_variant_tokens)
+        .chain(has_many_create_variant_tokens)
         .collect();
 
     // Generate field variants and field operator modules for WhereParam enum (all fields, with string ops for string fields)
@@ -1945,7 +1950,7 @@ pub fn generate_entity(
     // Filter out the primary key variant (IdEquals)
     let other_unique_variants: Vec<_> = unique_where_variant_idents
         .iter()
-        .filter(|ident| ident.to_string() != "IdEquals")
+        .filter(|ident| *ident != "IdEquals")
         .collect();
 
     // Generate UniqueWhereParam serialize implementation
@@ -2616,14 +2621,10 @@ pub fn generate_entity(
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
                 let target_table_name = relation
-                    .target_table_name
-                    .as_ref()
-                    .map(|s| s.clone())
+                    .target_table_name.clone()
                     .unwrap_or_else(|| relation.name.to_snake_case());
                 let current_table_name = relation
-                    .current_table_name
-                    .as_ref()
-                    .map(|s| s.clone())
+                    .current_table_name.clone()
                     .unwrap_or_else(|| {
                         panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
                     });
@@ -2656,14 +2657,10 @@ pub fn generate_entity(
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
                 let target_table_name = relation
-                    .target_table_name
-                    .as_ref()
-                    .map(|s| s.clone())
+                    .target_table_name.clone()
                     .unwrap_or_else(|| relation.name.to_snake_case());
                 let current_table_name = relation
-                    .current_table_name
-                    .as_ref()
-                    .map(|s| s.clone())
+                    .current_table_name.clone()
                     .unwrap_or_else(|| {
                         panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
                     });
@@ -2697,14 +2694,10 @@ pub fn generate_entity(
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
                 let target_table_name = relation
-                    .target_table_name
-                    .as_ref()
-                    .map(|s| s.clone())
+                    .target_table_name.clone()
                     .unwrap_or_else(|| relation.name.to_snake_case());
                 let current_table_name = relation
-                    .current_table_name
-                    .as_ref()
-                    .map(|s| s.clone())
+                    .current_table_name.clone()
                     .unwrap_or_else(|| {
                         panic!("Missing current table name for relation '{}'. This indicates a bug in relation extraction.\n\nPlease ensure the relation is properly configured with all required attributes.", relation.name)
                     });
@@ -3533,9 +3526,7 @@ pub fn generate_entity(
         
         let rel_type = match relation.kind {
             RelationKind::HasMany => quote! { Option<Vec<#target::Selected>> },
-            RelationKind::BelongsTo => {
-                if is_optional { quote! { Option<#target::Selected> } } else { quote! { Option<#target::Selected> } }
-            }
+            RelationKind::BelongsTo => quote! { Option<#target::Selected> },
         };
         let foreign_key_column = relation.foreign_key_column.as_ref().map(|s| s.to_snake_case()).unwrap_or_else(|| current_pk_column_name.clone());
         let target_entity_module_name_lower = relation
@@ -3561,9 +3552,7 @@ pub fn generate_entity(
         let current_primary_key_field_name_lit = syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site());
         let current_primary_key_column_lit = syn::LitStr::new(&current_primary_key_column_name, proc_macro2::Span::call_site());
         let target_primary_key_column_lit = syn::LitStr::new(&relation
-            .primary_key_field
-            .as_ref()
-            .map(|s| s.clone())
+            .primary_key_field.clone()
             .unwrap_or_else(|| current_primary_key_field_name.clone()), proc_macro2::Span::call_site());
         let is_has_many_lit = match relation.kind {
             RelationKind::HasMany => syn::LitBool::new(true, proc_macro2::Span::call_site()),
@@ -3684,9 +3673,7 @@ pub fn generate_entity(
             let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
 
             // Check if this is an optional relation
-            let is_optional = if let Some(field) = fields.iter().find(|f| {
-                f.ident.as_ref().unwrap().to_string() == *fk_field_name
-            }) {
+            let is_optional = if let Some(field) = fields.iter().find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name) {
                 is_option(&field.ty)
             } else {
                 false
@@ -4243,6 +4230,14 @@ pub fn generate_entity(
         .collect::<Vec<_>>();
 
     let expanded = quote! {
+        #[allow(clippy::cmp_owned)]
+        #[allow(clippy::type_complexity)]
+        #[allow(clippy::too_many_arguments)]
+        #[allow(clippy::possible_missing_else)]
+        #[allow(clippy::unnecessary_filter_map)]
+        #[allow(clippy::useless_conversion)]
+        #[allow(clippy::if_same_then_else)]
+        #[allow(unused_imports)]
         use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
         use uuid::Uuid;
         use std::vec::Vec;
@@ -4315,6 +4310,7 @@ pub fn generate_entity(
         // Usage: `entity::select!(field_a, field_b)`
         // Build-time name check inline with match on valid names
         pub macro select($($field:ident),* $(,)?) {{
+            #[allow(unused_imports)]
             macro_rules! __check_field_ident {
                 #( ( #all_field_idents_snake ) => {}; )*
                 ( $other:ident ) => { compile_error!(concat!("unknown field: ", stringify!($other))); };
@@ -4325,6 +4321,15 @@ pub fn generate_entity(
                 type Entity = Entity;
                 type Data = Selected;
                 fn collect_aliases(self) -> Vec<String> { vec![ $( stringify!($field).to_string() ),* ] }
+                fn to_single_column_expr(self) -> sea_orm::sea_query::SimpleExpr {
+                    use sea_orm::IntoSimpleExpr;
+                    let aliases = self.collect_aliases();
+                    if aliases.len() != 1 {
+                        panic!("Aggregate functions require exactly one field, got: {:?}", aliases);
+                    }
+                    let field_name = &aliases[0];
+                    Selected::column_for_alias(field_name).unwrap_or_else(|| panic!("Unknown field: {}", field_name))
+                }
             }
             __CausticsSelectMarker
         }}
@@ -4684,26 +4689,7 @@ pub fn generate_entity(
             }
         }
 
-        // Typed aggregate selection enums
-        #[derive(Debug, Clone)]
-        pub enum SumSelect { #( #sum_select_variants ),* }
-        #[derive(Debug, Clone)]
-        pub enum AvgSelect { #( #avg_select_variants ),* }
-        #[derive(Debug, Clone)]
-        pub enum MinSelect { #( #min_select_variants ),* }
-        #[derive(Debug, Clone)]
-        pub enum MaxSelect { #( #max_select_variants ),* }
-
-        impl SumSelect { fn to_expr(&self) -> sea_query::SimpleExpr { match self { #( SumSelect::#sum_select_variants => <Entity as EntityTrait>::Column::#sum_select_variants.into_simple_expr(), )* } } }
-        impl AvgSelect { fn to_expr(&self) -> sea_query::SimpleExpr { match self { #( AvgSelect::#avg_select_variants => <Entity as EntityTrait>::Column::#avg_select_variants.into_simple_expr(), )* } } }
-        impl MinSelect { fn to_expr(&self) -> sea_query::SimpleExpr { match self { #( MinSelect::#min_select_variants => <Entity as EntityTrait>::Column::#min_select_variants.into_simple_expr(), )* } } }
-        impl MaxSelect { fn to_expr(&self) -> sea_query::SimpleExpr { match self { #( MaxSelect::#max_select_variants => <Entity as EntityTrait>::Column::#max_select_variants.into_simple_expr(), )* } } }
-
-        // Allow using typed enums anywhere a column expression is expected
-        impl sea_orm::IntoSimpleExpr for SumSelect { fn into_simple_expr(self) -> sea_query::SimpleExpr { self.to_expr() } }
-        impl sea_orm::IntoSimpleExpr for AvgSelect { fn into_simple_expr(self) -> sea_query::SimpleExpr { self.to_expr() } }
-        impl sea_orm::IntoSimpleExpr for MinSelect { fn into_simple_expr(self) -> sea_query::SimpleExpr { self.to_expr() } }
-        impl sea_orm::IntoSimpleExpr for MaxSelect { fn into_simple_expr(self) -> sea_query::SimpleExpr { self.to_expr() } }
+        // Aggregate selection enums removed - use select! syntax instead
 
         // Provide an entity-specific extension trait on ManyQueryBuilder to accept a typed UniqueWhereParam as cursor
         pub trait ManyCursorExt<'a, C: sea_orm::ConnectionTrait> {
@@ -4726,8 +4712,7 @@ pub fn generate_entity(
             pub use super::ManyCursorExt;
             pub use super::DistinctFieldsExt;
             pub use super::SelectManyDistinctFieldsExt;
-            pub use super::AggregateSelectorExt;
-            pub use super::GroupBySelectorExt;
+            // AggregateSelectorExt and GroupBySelectorExt removed - use select! syntax instead
             pub use super::GroupByHavingAggExt;
             pub use super::GroupByAggExt;
             pub use super::AggregateAggExt;
@@ -4741,229 +4726,103 @@ pub fn generate_entity(
             pub use super::SelectManyRelationOrderExt;
         }
 
-        // Aggregate selector facade on AggregateQueryBuilder
-        pub trait AggregateSelectorExt<'a, C: sea_orm::ConnectionTrait> {
-            fn _count(self) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
-            fn _avg(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
-            fn _sum(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
-            fn _min(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
-            fn _max(self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity>;
-        }
+        // AggregateSelectorExt trait removed - use select! syntax instead
 
-        impl<'a, C: sea_orm::ConnectionTrait> AggregateSelectorExt<'a, C>
-            for caustics::AggregateQueryBuilder<'a, C, Entity>
-        {
-            fn _count(mut self) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
-                self = self.count();
-                self
-            }
+        // AggregateSelectorExt implementation removed - use select! syntax instead
 
-            fn _avg(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.avg(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
-                        },)*
-                    }
-                }
-                self
-            }
-
-            fn _sum(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.sum(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
-                        },)*
-                    }
-                }
-                self
-            }
-
-            fn _min(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.min(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
-                        },)*
-                    }
-                }
-                self
-            }
-
-            fn _max(mut self, fields: Vec<ScalarField>) -> caustics::AggregateQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.max(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
-                        },)*
-                    }
-                }
-                self
-            }
-        }
-
-        // Aggregate selector facade on GroupByQueryBuilder
-        pub trait GroupBySelectorExt<'a, C: sea_orm::ConnectionTrait> {
-            fn _count(self) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
-            fn _avg(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
-            fn _sum(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
-            fn _min(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
-            fn _max(self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity>;
-        }
-
-        impl<'a, C: sea_orm::ConnectionTrait> GroupBySelectorExt<'a, C>
-            for caustics::GroupByQueryBuilder<'a, C, Entity>
-        {
-            fn _count(mut self) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                self = self.count("_count");
-                self
-            }
-
-            fn _avg(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.avg(AvgSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_avg"));
-                        },)*
-                    }
-                }
-                self
-            }
-
-            fn _sum(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.sum(SumSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_sum"));
-                        },)*
-                    }
-                }
-                self
-            }
-
-            fn _min(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.min(MinSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_min"));
-                        },)*
-                    }
-                }
-                self
-            }
-
-            fn _max(mut self, fields: Vec<ScalarField>) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                for f in fields {
-                    match f {
-                        #(ScalarField::#group_by_field_variants => {
-                            self = self.max(MaxSelect::#group_by_field_variants, concat!(stringify!(#group_by_field_variants), "_max"));
-                        },)*
-                    }
-                }
-                self
-            }
-        }
+        // GroupBySelectorExt trait removed - use select! syntax instead
 
         // Extend GroupByQueryBuilder with typed aggregate selectors via a local trait
         pub trait GroupByAggExt<'a, C: sea_orm::ConnectionTrait> {
-            fn sum(self, field: SumSelect, alias: &'static str) -> Self;
-            fn avg(self, field: AvgSelect, alias: &'static str) -> Self;
-            fn min(self, field: MinSelect, alias: &'static str) -> Self;
-            fn max(self, field: MaxSelect, alias: &'static str) -> Self;
+            fn sum<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
+            fn avg<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
+            fn min<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
+            fn max<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
         }
 
         impl<'a, C: sea_orm::ConnectionTrait> GroupByAggExt<'a, C> for caustics::GroupByQueryBuilder<'a, C, Entity> {
-            fn sum(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias)); self }
-            fn avg(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias)); self }
-            fn min(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias)); self }
-            fn max(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias)); self }
+            fn sum<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_simple_expr())), alias)); self }
+            fn avg<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_simple_expr())), alias)); self }
+            fn min<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_simple_expr())), alias)); self }
+            fn max<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_simple_expr())), alias)); self }
         }
 
-        // Typed group-by order by aggregate outputs
-        #[derive(Debug, Clone)]
-        pub enum GroupByAggOrderParam {
-            Count(caustics::SortOrder),
-            Sum(SumSelect, caustics::SortOrder),
-            Avg(AvgSelect, caustics::SortOrder),
-            Min(MinSelect, caustics::SortOrder),
-            Max(MaxSelect, caustics::SortOrder),
-        }
+        // GroupByAggOrderParam enum removed - use select! syntax instead
 
         // Typed aggregate HAVING helpers
         pub trait GroupByHavingAggExt<'a, C: sea_orm::ConnectionTrait> {
-            fn having_sum_gt<V: Into<sea_orm::Value>>(self, field: SumSelect, value: V) -> Self;
-            fn having_sum_gte<V: Into<sea_orm::Value>>(self, field: SumSelect, value: V) -> Self;
-            fn having_sum_lt<V: Into<sea_orm::Value>>(self, field: SumSelect, value: V) -> Self;
-            fn having_sum_lte<V: Into<sea_orm::Value>>(self, field: SumSelect, value: V) -> Self;
-            fn having_sum_eq<V: Into<sea_orm::Value>>(self, field: SumSelect, value: V) -> Self;
-            fn having_sum_ne<V: Into<sea_orm::Value>>(self, field: SumSelect, value: V) -> Self;
+            fn having_sum_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_sum_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_sum_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_sum_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_sum_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_sum_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
 
-            fn having_avg_gt<V: Into<sea_orm::Value>>(self, field: AvgSelect, value: V) -> Self;
-            fn having_avg_gte<V: Into<sea_orm::Value>>(self, field: AvgSelect, value: V) -> Self;
-            fn having_avg_lt<V: Into<sea_orm::Value>>(self, field: AvgSelect, value: V) -> Self;
-            fn having_avg_lte<V: Into<sea_orm::Value>>(self, field: AvgSelect, value: V) -> Self;
-            fn having_avg_eq<V: Into<sea_orm::Value>>(self, field: AvgSelect, value: V) -> Self;
-            fn having_avg_ne<V: Into<sea_orm::Value>>(self, field: AvgSelect, value: V) -> Self;
+            fn having_avg_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_avg_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_avg_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_avg_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_avg_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_avg_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
 
-            fn having_min_gt<V: Into<sea_orm::Value>>(self, field: MinSelect, value: V) -> Self;
-            fn having_min_gte<V: Into<sea_orm::Value>>(self, field: MinSelect, value: V) -> Self;
-            fn having_min_lt<V: Into<sea_orm::Value>>(self, field: MinSelect, value: V) -> Self;
-            fn having_min_lte<V: Into<sea_orm::Value>>(self, field: MinSelect, value: V) -> Self;
-            fn having_min_eq<V: Into<sea_orm::Value>>(self, field: MinSelect, value: V) -> Self;
-            fn having_min_ne<V: Into<sea_orm::Value>>(self, field: MinSelect, value: V) -> Self;
+            fn having_min_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_min_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_min_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_min_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_min_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_min_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
 
-            fn having_max_gt<V: Into<sea_orm::Value>>(self, field: MaxSelect, value: V) -> Self;
-            fn having_max_gte<V: Into<sea_orm::Value>>(self, field: MaxSelect, value: V) -> Self;
-            fn having_max_lt<V: Into<sea_orm::Value>>(self, field: MaxSelect, value: V) -> Self;
-            fn having_max_lte<V: Into<sea_orm::Value>>(self, field: MaxSelect, value: V) -> Self;
-            fn having_max_eq<V: Into<sea_orm::Value>>(self, field: MaxSelect, value: V) -> Self;
-            fn having_max_ne<V: Into<sea_orm::Value>>(self, field: MaxSelect, value: V) -> Self;
+            fn having_max_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_max_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_max_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_max_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_max_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
+            fn having_max_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(self, field: F, value: V) -> Self;
         }
 
         impl<'a, C: sea_orm::ConnectionTrait> GroupByHavingAggExt<'a, C> for caustics::GroupByQueryBuilder<'a, C, Entity> {
-            fn having_sum_gt<V: Into<sea_orm::Value>>(mut self, field: SumSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
-            fn having_sum_gte<V: Into<sea_orm::Value>>(mut self, field: SumSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
-            fn having_sum_lt<V: Into<sea_orm::Value>>(mut self, field: SumSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
-            fn having_sum_lte<V: Into<sea_orm::Value>>(mut self, field: SumSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
-            fn having_sum_eq<V: Into<sea_orm::Value>>(mut self, field: SumSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
-            fn having_sum_ne<V: Into<sea_orm::Value>>(mut self, field: SumSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
+            fn having_sum_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
+            fn having_sum_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
+            fn having_sum_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
+            fn having_sum_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
+            fn having_sum_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
+            fn having_sum_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::sum(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
 
-            fn having_avg_gt<V: Into<sea_orm::Value>>(mut self, field: AvgSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
-            fn having_avg_gte<V: Into<sea_orm::Value>>(mut self, field: AvgSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
-            fn having_avg_lt<V: Into<sea_orm::Value>>(mut self, field: AvgSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
-            fn having_avg_lte<V: Into<sea_orm::Value>>(mut self, field: AvgSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
-            fn having_avg_eq<V: Into<sea_orm::Value>>(mut self, field: AvgSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
-            fn having_avg_ne<V: Into<sea_orm::Value>>(mut self, field: AvgSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
+            fn having_avg_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
+            fn having_avg_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
+            fn having_avg_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
+            fn having_avg_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
+            fn having_avg_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
+            fn having_avg_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::avg(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
 
-            fn having_min_gt<V: Into<sea_orm::Value>>(mut self, field: MinSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
-            fn having_min_gte<V: Into<sea_orm::Value>>(mut self, field: MinSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
-            fn having_min_lt<V: Into<sea_orm::Value>>(mut self, field: MinSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
-            fn having_min_lte<V: Into<sea_orm::Value>>(mut self, field: MinSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
-            fn having_min_eq<V: Into<sea_orm::Value>>(mut self, field: MinSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
-            fn having_min_ne<V: Into<sea_orm::Value>>(mut self, field: MinSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
+            fn having_min_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
+            fn having_min_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
+            fn having_min_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
+            fn having_min_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
+            fn having_min_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
+            fn having_min_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::min(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
 
-            fn having_max_gt<V: Into<sea_orm::Value>>(mut self, field: MaxSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
-            fn having_max_gte<V: Into<sea_orm::Value>>(mut self, field: MaxSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
-            fn having_max_lt<V: Into<sea_orm::Value>>(mut self, field: MaxSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
-            fn having_max_lte<V: Into<sea_orm::Value>>(mut self, field: MaxSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
-            fn having_max_eq<V: Into<sea_orm::Value>>(mut self, field: MaxSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
-            fn having_max_ne<V: Into<sea_orm::Value>>(mut self, field: MaxSelect, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
+            fn having_max_gt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gt(value.into()); self.having.push(cond); self }
+            fn having_max_gte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).gte(value.into()); self.having.push(cond); self }
+            fn having_max_lt<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lt(value.into()); self.having.push(cond); self }
+            fn having_max_lte<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).lte(value.into()); self.having.push(cond); self }
+            fn having_max_eq<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).eq(value.into()); self.having.push(cond); self }
+            fn having_max_ne<F: caustics::FieldSelection<Entity>, V: Into<sea_orm::Value>>(mut self, field: F, value: V) -> Self { let e = sea_orm::sea_query::SimpleExpr::FunctionCall(sea_orm::sea_query::Func::max(field.to_simple_expr())); let cond = sea_orm::sea_query::Expr::expr(e).ne(value.into()); self.having.push(cond); self }
         }
 
         // Add typed aggregate selection for non-group aggregate queries via a trait
         pub trait AggregateAggExt<'a, C: sea_orm::ConnectionTrait> {
-            fn sum(self, field: SumSelect, alias: &'static str) -> Self;
-            fn avg(self, field: AvgSelect, alias: &'static str) -> Self;
-            fn min(self, field: MinSelect, alias: &'static str) -> Self;
-            fn max(self, field: MaxSelect, alias: &'static str) -> Self;
+            fn sum<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
+            fn avg<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
+            fn min<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
+            fn max<F: caustics::FieldSelection<Entity>>(self, field: F, alias: &'static str) -> Self;
         }
 
         impl<'a, C: sea_orm::ConnectionTrait> AggregateAggExt<'a, C> for caustics::AggregateQueryBuilder<'a, C, Entity> {
-            fn sum(mut self, field: SumSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_expr())), alias, "sum")); self }
-            fn avg(mut self, field: AvgSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_expr())), alias, "avg")); self }
-            fn min(mut self, field: MinSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_expr())), alias, "min")); self }
-            fn max(mut self, field: MaxSelect, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_expr())), alias, "max")); self }
+            fn sum<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::sum(field.to_simple_expr())), alias, "sum")); self }
+            fn avg<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::avg(field.to_simple_expr())), alias, "avg")); self }
+            fn min<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::min(field.to_simple_expr())), alias, "min")); self }
+            fn max<F: caustics::FieldSelection<Entity>>(mut self, field: F, alias: &'static str) -> Self { self.aggregates.push((sea_query::SimpleExpr::FunctionCall(sea_query::Func::max(field.to_simple_expr())), alias, "max")); self }
         }
 
 
@@ -5211,39 +5070,7 @@ pub fn generate_entity(
                 builder.order_by_pairs(pairs)
             }
 
-            pub fn group_by_order_by_aggregates(
-                &self,
-                builder: caustics::GroupByQueryBuilder<'a, C, Entity>,
-                order: Vec<GroupByAggOrderParam>,
-            ) -> caustics::GroupByQueryBuilder<'a, C, Entity> {
-                use sea_orm::sea_query::{Expr, Func, SimpleExpr};
-                let mut pairs: Vec<(SimpleExpr, sea_orm::Order)> = Vec::with_capacity(order.len());
-                for o in order {
-                    match o {
-                        GroupByAggOrderParam::Count(dir) => {
-                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
-                            pairs.push((Expr::cust("COUNT(*)"), ord));
-                        }
-                        GroupByAggOrderParam::Sum(field, dir) => {
-                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
-                            pairs.push((SimpleExpr::FunctionCall(Func::sum(field.to_expr())), ord));
-                        }
-                        GroupByAggOrderParam::Avg(field, dir) => {
-                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
-                            pairs.push((SimpleExpr::FunctionCall(Func::avg(field.to_expr())), ord));
-                        }
-                        GroupByAggOrderParam::Min(field, dir) => {
-                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
-                            pairs.push((SimpleExpr::FunctionCall(Func::min(field.to_expr())), ord));
-                        }
-                        GroupByAggOrderParam::Max(field, dir) => {
-                            let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
-                            pairs.push((SimpleExpr::FunctionCall(Func::max(field.to_expr())), ord));
-                        }
-                    }
-                }
-                builder.order_by_pairs(pairs)
-            }
+            // group_by_order_by_aggregates method removed - use select! syntax instead
 
 
 
@@ -5515,5 +5342,5 @@ pub fn generate_entity(
         }
     };
 
-    Ok(TokenStream::from(expanded))
+    Ok(expanded)
 }

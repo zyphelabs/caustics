@@ -3,6 +3,7 @@ use crate::entity::types::{Relation, RelationKind};
 use heck::ToSnakeCase;
 use syn::DeriveInput;
 
+#[allow(clippy::cmp_owned)]
 pub fn extract_relations(
     relation_ast: &DeriveInput,
     model_fields: &[&syn::Field],
@@ -79,7 +80,7 @@ pub fn extract_relations(
 
                                                 // Find the corresponding field in the model to get its type
                                                 if let Some(field) = model_fields.iter().find(|f| {
-                                                    f.ident.as_ref().unwrap().to_string() == snake_case_name
+                                                    *f.ident.as_ref().unwrap() == snake_case_name
                                                 }) {
                                                     foreign_key_type = Some(field.ty.clone());
                                                 }

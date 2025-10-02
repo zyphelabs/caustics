@@ -16,6 +16,7 @@ pub struct UpsertQueryBuilder<
     T: MergeInto<ActiveModel>,
 > {
     pub condition: sea_orm::Condition,
+    #[allow(clippy::type_complexity)]
     pub create: (
         ActiveModel,
         Vec<DeferredLookup>,

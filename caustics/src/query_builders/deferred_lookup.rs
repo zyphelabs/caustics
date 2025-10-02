@@ -5,6 +5,7 @@ use std::any::Any;
 pub struct DeferredLookup {
     pub unique_param: Box<dyn Any + Send>,
     pub assign: fn(&mut (dyn Any + 'static), i32),
+    #[allow(clippy::type_complexity)]
     pub resolve_on_conn: Box<
         dyn for<'a> Fn(
                 &'a DatabaseConnection,
@@ -13,6 +14,7 @@ pub struct DeferredLookup {
                 Box<dyn std::future::Future<Output = Result<i32, sea_orm::DbErr>> + Send + 'a>,
             > + Send,
     >,
+    #[allow(clippy::type_complexity)]
     pub resolve_on_txn: Box<
         dyn for<'a> Fn(
                 &'a DatabaseTransaction,

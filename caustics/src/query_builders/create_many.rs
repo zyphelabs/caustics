@@ -11,6 +11,7 @@ where
     ActiveModel:
         sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
 {
+    #[allow(clippy::type_complexity)]
     pub items: Vec<(
         ActiveModel,
         Vec<DeferredLookup>,

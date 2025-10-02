@@ -417,14 +417,13 @@ let result = client
 ### Aggregates
 
 ```rust
-// Aggregates with typed selectors
 let agg = client
     .user()
     .aggregate(vec![user::age::is_not_null()])
     .count()
-    .avg(user::AvgSelect::Age, "age_avg")
-    .min(user::MinSelect::Age, "age_min")
-    .max(user::MaxSelect::Age, "age_max")
+    .avg(user::select!(age), "age_avg")
+    .min(user::select!(age), "age_min")
+    .max(user::select!(age), "age_max")
     .exec()
     .await?;
 

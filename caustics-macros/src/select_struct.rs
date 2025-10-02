@@ -77,13 +77,13 @@ impl Parse for FieldType {
         if input.peek(Ident) {
             let ident: Ident = input.parse()?;
             
-            if ident.to_string() == "Vec" {
+            if ident == "Vec" {
                 // Parse Vec<...> syntax
                 input.parse::<Token![<]>()?;
                 let inner_type = FieldType::parse(input)?;
                 input.parse::<Token![>]>()?;
                 Ok(FieldType::Vec(Box::new(inner_type)))
-            } else if ident.to_string() == "Option" {
+            } else if ident == "Option" {
                 // Parse Option<...> syntax
                 input.parse::<Token![<]>()?;
                 let inner_type = FieldType::parse(input)?;
@@ -392,15 +392,8 @@ fn generate_field_mapping_for_type(field_type: &FieldType) -> TokenStream2 {
         }
         FieldType::Nested(nested) => {
             let nested_name = &nested.name;
-            // Special handling for count fields
-            if nested_name.to_string().contains("Count") {
-                quote! {
-                    #nested_name::from(item)
-                }
-            } else {
-                quote! {
-                    #nested_name::from(item)
-                }
+            quote! {
+                #nested_name::from(item)
             }
         }
     }

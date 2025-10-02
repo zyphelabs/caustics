@@ -159,8 +159,7 @@ where
         if let Some((cursor_expr, cursor_value)) = &self.cursor {
             // Determine effective order to derive comparison operator
             let first_order = self
-                .pending_order_bys
-                .get(0)
+                .pending_order_bys.first()
                 .map(|(_, ord)| ord.clone())
                 .unwrap_or(sea_orm::Order::Asc);
             let effective_order = if self.reverse_order {
@@ -196,7 +195,7 @@ where
         if !self.pending_order_bys.is_empty() {
             // Apply NULLS ordering for the primary order expression if requested
             if let Some(n) = self.pending_nulls {
-                if let Some((first_expr, _)) = self.pending_order_bys.get(0) {
+                if let Some((first_expr, _)) = self.pending_order_bys.first() {
                     let nulls_expr = Expr::expr(first_expr.clone()).is_null();
                     match n {
                         NullsOrder::First => {

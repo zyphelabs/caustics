@@ -4,6 +4,7 @@ use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+#[allow(clippy::cmp_owned)]
 pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Field]) -> TokenStream {
     let mut submodules = Vec::new();
 

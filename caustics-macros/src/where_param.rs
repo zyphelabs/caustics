@@ -343,7 +343,7 @@ pub fn generate_where_param_logic(
 
     // Generate a function that processes all WhereParams together, properly handling QueryMode
     let where_params_to_condition_fn =
-        generate_where_params_to_condition_function(&fields, relations);
+        generate_where_params_to_condition_function(fields, relations);
 
     let where_match_arms: Vec<proc_macro2::TokenStream> = vec![where_params_to_condition_fn];
     (where_field_variants, where_match_arms, field_ops)
@@ -369,11 +369,11 @@ fn generate_where_params_to_condition_function(
         match field_type {
             FieldType::String => {
                 field_handlers.push(generate_string_field_handler(&pascal_name, false));
-                mode_handlers.push(generate_mode_handler(&pascal_name, &name));
+                mode_handlers.push(generate_mode_handler(&pascal_name, name));
             }
             FieldType::OptionString => {
                 field_handlers.push(generate_string_field_handler(&pascal_name, true));
-                mode_handlers.push(generate_mode_handler(&pascal_name, &name));
+                mode_handlers.push(generate_mode_handler(&pascal_name, name));
             }
             FieldType::Integer => {
                 field_handlers.push(generate_numeric_field_handler(&pascal_name, false));

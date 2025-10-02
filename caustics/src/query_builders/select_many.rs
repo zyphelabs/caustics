@@ -80,8 +80,7 @@ where
         // Apply cursor filtering if provided (copied from ManyQueryBuilder)
         if let Some((cursor_expr, cursor_value)) = &self.cursor {
             let first_order = self
-                .pending_order_bys
-                .get(0)
+                .pending_order_bys.first()
                 .map(|(_, ord)| ord.clone())
                 .unwrap_or(sea_orm::Order::Asc);
             let effective_order = if self.reverse_order {
@@ -112,7 +111,7 @@ where
         // Apply orderings
         if !self.pending_order_bys.is_empty() {
             if let Some(n) = self.pending_nulls {
-                if let Some((first_expr, _)) = self.pending_order_bys.get(0) {
+                if let Some((first_expr, _)) = self.pending_order_bys.first() {
                     let nulls_expr = Expr::expr(first_expr.clone()).is_null();
                     match n {
                         NullsOrder::First => {
@@ -254,7 +253,7 @@ where
                             } else {
                                 rel.foreign_key_field_name
                             };
-                            if let Some(_) = s.get_i32(needed_key) {
+                            if s.get_i32(needed_key).is_some() {
                             } else {
                                 continue;
                             }

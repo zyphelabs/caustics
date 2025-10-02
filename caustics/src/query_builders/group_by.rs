@@ -98,49 +98,49 @@ where
         self
     }
 
-    pub fn min<Col: sea_orm::IntoSimpleExpr>(
+    pub fn min<F: crate::FieldSelection<Entity>>(
         mut self,
-        col: Col,
+        field: F,
         alias: &'static str,
     ) -> Self {
         self.aggregates.push((
-            SimpleExpr::FunctionCall(Func::min(col.into_simple_expr())),
+            SimpleExpr::FunctionCall(Func::min(field.to_simple_expr())),
             alias,
         ));
         self
     }
 
-    pub fn max<Col: sea_orm::IntoSimpleExpr>(
+    pub fn max<F: crate::FieldSelection<Entity>>(
         mut self,
-        col: Col,
+        field: F,
         alias: &'static str,
     ) -> Self {
         self.aggregates.push((
-            SimpleExpr::FunctionCall(Func::max(col.into_simple_expr())),
+            SimpleExpr::FunctionCall(Func::max(field.to_simple_expr())),
             alias,
         ));
         self
     }
 
-    pub fn sum<Col: sea_orm::IntoSimpleExpr>(
+    pub fn sum<F: crate::FieldSelection<Entity>>(
         mut self,
-        col: Col,
+        field: F,
         alias: &'static str,
     ) -> Self {
         self.aggregates.push((
-            SimpleExpr::FunctionCall(Func::sum(col.into_simple_expr())),
+            SimpleExpr::FunctionCall(Func::sum(field.to_simple_expr())),
             alias,
         ));
         self
     }
 
-    pub fn avg<Col: sea_orm::IntoSimpleExpr>(
+    pub fn avg<F: crate::FieldSelection<Entity>>(
         mut self,
-        col: Col,
+        field: F,
         alias: &'static str,
     ) -> Self {
         self.aggregates.push((
-            SimpleExpr::FunctionCall(Func::avg(col.into_simple_expr())),
+            SimpleExpr::FunctionCall(Func::avg(field.to_simple_expr())),
             alias,
         ));
         self

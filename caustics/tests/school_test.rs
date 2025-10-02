@@ -1,4 +1,5 @@
 #![feature(decl_macro)]
+#![allow(unused_imports)]
 
 include!(concat!(env!("OUT_DIR"), "/caustics_client_school_test.rs"));
 

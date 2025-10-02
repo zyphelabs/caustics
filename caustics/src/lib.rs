@@ -31,7 +31,7 @@ pub mod hooks {
 
     static QUERY_HOOKS: RwLock<Vec<Arc<dyn QueryHook>>> = RwLock::new(Vec::new());
     thread_local! { static TX_HOOKS: std::cell::RefCell<Vec<Arc<dyn QueryHook>>> = std::cell::RefCell::new(Vec::new()); }
-    thread_local! { static TX_CORR_ID: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None); }
+    thread_local! { static TX_CORR_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
     // Global hooks API
