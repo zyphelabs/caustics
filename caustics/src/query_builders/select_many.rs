@@ -58,8 +58,17 @@ where
 
     // order_nulls deprecated in favor of tuple-based API via IntoOrderSpec
 
-    /// Execute and return selected rows
-    pub async fn exec(self) -> Result<Vec<Selected>, sea_orm::DbErr> {
+    /// Execute and return selected rows with type inference
+    pub async fn exec<T>(self) -> Result<Vec<T>, sea_orm::DbErr>
+    where
+        T: From<Selected>,
+    {
+        let results = self.exec_internal().await?;
+        Ok(results.into_iter().map(T::from).collect())
+    }
+
+    /// Internal implementation for exec
+    async fn exec_internal(self) -> Result<Vec<Selected>, sea_orm::DbErr> {
         if self.skip_is_negative {
             return Err(crate::types::CausticsError::QueryValidation {
                 message: "skip must be >= 0".to_string(),
@@ -284,11 +293,21 @@ where
         }
     }
 
+    /// Execute and return custom selection types
+    pub async fn exec_custom<CustomType>(self) -> Result<Vec<CustomType>, sea_orm::DbErr>
+    where
+        CustomType: From<Selected>,
+    {
+        let results = self.exec().await?;
+        Ok(results.into_iter().map(CustomType::from).collect())
+    }
+
     /// Add a relation to fetch with the selection
     pub fn with<T: Into<RelationFilter>>(mut self, relation: T) -> Self {
         self.relations_to_fetch.push(relation.into());
         self
     }
+
 }
 
 impl<'a, C, Entity, Selected> SelectManyQueryBuilder<'a, C, Entity, Selected>

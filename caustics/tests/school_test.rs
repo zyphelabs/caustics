@@ -509,6 +509,7 @@ mod caustics_school_tests {
     use super::helpers::setup_test_db;
     use super::*;
     use caustics::QueryError;
+    use caustics_macros::select_struct;
     use chrono::{DateTime, FixedOffset, TimeZone};
     // legacy import removed
 
@@ -592,8 +593,20 @@ mod caustics_school_tests {
             .exec()
             .await
             .unwrap();
+        
+        select_struct! {
+            StudentWithEnrollments from student::Selected {
+                first_name: String,
+                last_name: String,
+                enrollments: Vec<EnrollmentData from enrollment::Selected {
+                    id: i32,
+                    enrollment_date: DateTime<FixedOffset>,
+                    status: String
+                }>
+            }
+        }
 
-        let rows = client
+        let students_with_enrollments: Vec<StudentWithEnrollments> = client
             .student()
             .find_many(vec![])
             .take(1)
@@ -602,15 +615,13 @@ mod caustics_school_tests {
             .exec()
             .await
             .unwrap();
-        assert!(!rows.is_empty());
-        assert!(rows[0].first_name.is_some());
-        assert!(rows[0].last_name.is_some());
-        // Verify that only selected fields are populated
-        assert!(
-            rows[0].email.is_none(),
-            "email should not be populated when not selected"
-        );
-        let _ = &rows[0].enrollments;
+        
+        // Verify the mapping worked correctly
+        assert!(!students_with_enrollments.is_empty());
+        let student = &students_with_enrollments[0];
+        assert!(!student.first_name.is_empty());
+        assert!(!student.last_name.is_empty());
+        let _ = &student.enrollments;
     }
 
     #[tokio::test]
@@ -952,6 +963,7 @@ mod caustics_school_tests {
 mod caustics_school_advanced_tests {
     use super::helpers::setup_test_db;
     use super::*;
+    use caustics_macros::select_struct;
     // legacy imports removed
     use chrono::{DateTime, FixedOffset, TimeZone};
 
@@ -1157,8 +1169,17 @@ mod caustics_school_advanced_tests {
     async fn test_select_parity_with_include_belongs_to() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
+        
+        select_struct! {
+            TeacherWithDepartment from teacher::Selected {
+                first_name: String,
+                department: DepartmentData from department::Selected {
+                    name: String
+                }
+            }
+        }
 
-        let row = client
+        let teacher: Option<TeacherWithDepartment> = client
             .teacher()
             .find_first(vec![])
             .select(teacher::select!(first_name))
@@ -1166,8 +1187,8 @@ mod caustics_school_advanced_tests {
             .exec()
             .await
             .unwrap();
-        if let Some(t) = row {
-            assert!(t.first_name.is_some());
+        if let Some(t) = teacher {
+            assert!(!t.first_name.is_empty());
             let _ = &t.department;
         }
     }
@@ -1397,9 +1418,23 @@ mod caustics_school_advanced_tests {
             .exec()
             .await
             .unwrap();
+        
+        select_struct! {
+            StudentWithNestedRelations from student::Selected {
+                first_name: String,
+                enrollments: Vec<EnrollmentWithCourseAndTeacher from enrollment::Selected {
+                    course: CourseWithTeacherName from course::Selected {
+                        name: String,
+                        teacher: TeacherName from teacher::Selected {
+                            first_name: String
+                        }
+                    }
+                }>
+            }
+        }
 
         // Select nested include: student -> enrollments -> course(select) -> teacher(select first_name)
-        let selected = client
+        let student: StudentWithNestedRelations = client
             .student()
             .find_unique(student::id::equals(student_row.id))
             .select(student::select!(first_name))
@@ -1411,11 +1446,10 @@ mod caustics_school_advanced_tests {
             .unwrap()
             .unwrap();
 
-        assert!(selected.first_name.is_some());
-        let enrollments = selected.enrollments.as_ref().unwrap();
-        assert!(!enrollments.is_empty());
-        let course_rel = enrollments[0].course.as_ref().unwrap();
-        let teacher_rel = course_rel.teacher.as_ref().unwrap();
+        assert!(!student.first_name.is_empty());
+        assert!(!student.enrollments.is_empty());
+        let course_rel = &student.enrollments[0].course;
+        let teacher_rel = &course_rel.teacher;
         // We don't assert specific selected fields deep down; just presence
         let _ = teacher_rel;
     }
@@ -1507,8 +1541,24 @@ mod caustics_school_advanced_tests {
             .await
             .unwrap();
 
+        
+        select_struct! {
+            StudentWithEnrollmentsAndCourses from student::Selected {
+                first_name: String,
+                last_name: String,
+                enrollments: Vec<EnrollmentWithCourse from enrollment::Selected {
+                    course: CourseWithTeacher from course::Selected {
+                        name: String,
+                        teacher: TeacherData from teacher::Selected {
+                            first_name: String
+                        }
+                    }
+                }>
+            }
+        }
+
         // Deep nested include using only include(|rel| ...) closures at every level
-        let selected = client
+        let student_with_enrollments: StudentWithEnrollmentsAndCourses = client
             .student()
             .find_unique(student::id::equals(student_row.id))
             .select(student::select!(first_name, last_name))
@@ -1525,14 +1575,13 @@ mod caustics_school_advanced_tests {
             .unwrap()
             .unwrap();
 
-        assert!(selected.first_name.is_some());
-        assert!(selected.last_name.is_some());
-        let enrollments = selected.enrollments.as_ref().unwrap();
-        assert!(!enrollments.is_empty());
-        let course_rel = enrollments[0].course.as_ref().unwrap();
-        assert_eq!(course_rel.name.as_ref().unwrap(), "Deep Course");
-        let teacher_rel = course_rel.teacher.as_ref().unwrap();
-        assert_eq!(teacher_rel.first_name.as_ref().unwrap(), "Deep");
+        // Verify the mapping worked correctly
+        assert!(!student_with_enrollments.first_name.is_empty());
+        assert!(!student_with_enrollments.last_name.is_empty());
+        assert!(!student_with_enrollments.enrollments.is_empty());
+        let course_data = &student_with_enrollments.enrollments[0].course;
+        assert_eq!(course_data.name, "Deep Course");
+        assert_eq!(course_data.teacher.first_name, "Deep");
     }
 
     #[tokio::test]

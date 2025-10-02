@@ -148,6 +148,7 @@ mod query_builder_tests {
     use super::user::DistinctFieldsExt;
     use super::user::ManyCursorExt;
     use caustics::{QueryError, SortOrder};
+    use caustics_macros::select_struct;
     use chrono::{DateTime, FixedOffset, TimeZone};
     use serde_json;
     // Bring typed aggregate extension traits into scope
@@ -3708,11 +3709,20 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
+        
+        select_struct!(UserWithSelectedPosts from user::Selected {
+            id: i32,
+            name: String,
+            posts: Vec<PostTitle from post::Selected {
+                title: String
+            }>
+        });
 
-        // Test field selection functionality
-        let user_with_selected_posts = client
+        // Test field selection functionality with automatic conversion!
+        let user_with_selected_posts: UserWithSelectedPosts = client
             .user()
             .find_unique(user::id::equals(user.id))
+            .select(user::select!(id, name))
             .with(user::posts::include(|posts| {
                 posts.select(post::select!(title))
             }))
@@ -3725,13 +3735,8 @@ mod query_builder_tests {
         assert_eq!(user_with_selected_posts.name, "Field Selection Test");
 
         // Verify the post is included
-        if let Some(posts) = user_with_selected_posts.posts {
-            assert_eq!(posts.len(), 1);
-            assert_eq!(posts[0].title, "Field Selection Post");
-            assert_eq!(posts[0].content, None);
-        } else {
-            panic!("Posts should be included");
-        }
+        assert_eq!(user_with_selected_posts.posts.len(), 1);
+        assert_eq!(user_with_selected_posts.posts[0].title, "Field Selection Post");
     }
 
     #[tokio::test]
@@ -3846,7 +3851,16 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        let selected = client
+        // Define structs for user with post count using select_struct!
+        // Using explicit syntax (recommended)
+        select_struct!(UserWithPostCount from user::Selected {
+            name: String,
+            _count: PostCount from user::Counts {
+                posts: i32
+            }
+        });
+
+        let user_with_post_count: UserWithPostCount = client
             .user()
             .find_unique(user::id::equals(user.id))
             .select(user::select!(name))
@@ -3856,8 +3870,6 @@ mod query_builder_tests {
             .unwrap()
             .unwrap();
 
-        assert!(selected._count.is_some());
-        let counts = selected._count.unwrap();
-        assert_eq!(counts.posts, Some(2));
+        assert_eq!(user_with_post_count._count.posts, 2);
     }
 }

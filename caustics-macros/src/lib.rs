@@ -11,6 +11,7 @@ mod common;
 mod entity;
 mod errors;
 mod primary_key;
+mod select_struct;
 mod validation;
 mod where_param;
 
@@ -204,4 +205,9 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
 pub fn caustics_derive(_input: TokenStream) -> TokenStream {
     // Return empty token stream since this is just a marker
     TokenStream::new()
+}
+
+#[proc_macro]
+pub fn select_struct(input: TokenStream) -> TokenStream {
+    select_struct::select_struct(input)
 }

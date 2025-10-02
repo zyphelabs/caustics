@@ -29,7 +29,19 @@ where
         self
     }
 
-    pub async fn exec(self) -> Result<Option<Selected>, sea_orm::DbErr> {
+    /// Execute and return selected row with type inference
+    pub async fn exec<T>(self) -> Result<Option<T>, sea_orm::DbErr>
+    where
+        T: From<Selected>,
+    {
+        match self.exec_internal().await? {
+            Some(selected) => Ok(Some(T::from(selected))),
+            None => Ok(None),
+        }
+    }
+
+    /// Internal implementation for exec
+    async fn exec_internal(self) -> Result<Option<Selected>, sea_orm::DbErr> {
         // Ensure required key columns for any requested relations are added implicitly via Selected::column_for_alias
         let query = self.query.clone();
         let mut selected = self.selected_fields.clone();
@@ -156,10 +168,22 @@ where
         }
     }
 
+    /// Execute and return custom selection types
+    pub async fn exec_custom<CustomType>(self) -> Result<Option<CustomType>, sea_orm::DbErr>
+    where
+        CustomType: From<Selected>,
+    {
+        match self.exec().await? {
+            Some(selected) => Ok(Some(CustomType::from(selected))),
+            None => Ok(None),
+        }
+    }
+
     pub fn with<T: Into<RelationFilter>>(mut self, relation: T) -> Self {
         self.relations_to_fetch.push(relation.into());
         self
     }
+
 }
 
 impl<'a, C, Entity, Selected>
