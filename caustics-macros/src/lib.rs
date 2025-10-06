@@ -1,7 +1,6 @@
 #![crate_type = "proc-macro"]
 #![allow(dead_code)]
 #![allow(unused_variables)]
-
 // Enable decl_macro feature when select feature is enabled
 #![cfg_attr(feature = "select", feature(decl_macro))]
 

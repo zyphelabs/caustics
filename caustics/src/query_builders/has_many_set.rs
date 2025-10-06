@@ -1,19 +1,21 @@
 use crate::types::SetParamInfo;
-use crate::{FromModel, HasRelationMetadata, MergeInto};
+use crate::{EntityMetadataProvider, FromModel, HasRelationMetadata, MergeInto};
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, TransactionTrait};
 
 /// Query builder for updates that include has_many set operations
-pub struct HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+pub struct HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
 where
     C: ConnectionTrait + TransactionTrait,
     Entity: sea_orm::EntityTrait,
     ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
     T: MergeInto<ActiveModel> + std::fmt::Debug,
+    P: EntityMetadataProvider,
 {
     pub condition: sea_orm::Condition,
     pub changes: Vec<T>,
     pub conn: &'a C,
+    pub metadata_provider: &'a P,
     #[allow(clippy::type_complexity)]
     pub entity_id_resolver: Option<
         Box<
@@ -31,8 +33,8 @@ where
     pub _phantom: std::marker::PhantomData<(Entity, ActiveModel, ModelWithRelations)>,
 }
 
-impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
-    HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
+    HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
 where
     C: ConnectionTrait + TransactionTrait,
     Entity: sea_orm::EntityTrait,
@@ -42,6 +44,7 @@ where
         + 'static,
     T: MergeInto<ActiveModel> + std::fmt::Debug + SetParamInfo,
     <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+    P: EntityMetadataProvider,
 {
     /// Execute the update with has_many set operations
     pub async fn exec(mut self) -> Result<ModelWithRelations, sea_orm::DbErr> {
@@ -95,12 +98,8 @@ where
         }
 
         if !has_many_set_changes.is_empty() {
-            self.process_has_many_set_operations_in_txn(
-                has_many_set_changes,
-                entity_id,
-                &txn,
-            )
-            .await?;
+            self.process_has_many_set_operations_in_txn(has_many_set_changes, entity_id, &txn)
+                .await?;
         }
 
         // Then execute regular update within the same transaction
@@ -152,7 +151,7 @@ where
                 relation_metadata.target_entity_name
             {
                 // We have a target entity name, so we need to resolve the actual primary key from entity metadata
-                crate::get_entity_metadata(target_entity_name)
+                self.metadata_provider.get_entity_metadata(target_entity_name)
                     .map(|metadata| metadata.primary_key_field.to_string())
                     .ok_or_else(|| {
                         sea_orm::DbErr::Custom(format!(
@@ -414,7 +413,10 @@ where
                         db_backend,
                         format!(
                             "DELETE FROM {} WHERE {} = ? AND {} NOT IN ({})",
-                            target_table_name, foreign_key_column, target_primary_key_column, placeholders
+                            target_table_name,
+                            foreign_key_column,
+                            target_primary_key_column,
+                            placeholders
                         ),
                         {
                             let mut values = vec![current_entity_id.clone()];

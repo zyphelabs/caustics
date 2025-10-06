@@ -1,111 +1,9 @@
 #![cfg_attr(feature = "select", feature(decl_macro))]
-#![allow(unused_imports)]
-
-include!(concat!(env!("OUT_DIR"), "/caustics_client_blog_test.rs"));
-
-use caustics_macros::caustics;
-use uuid::Uuid;
-
-#[caustics(namespace = "blog")]
-pub mod user {
-    use caustics_macros::Caustics;
-    use sea_orm::entity::prelude::*;
-    use sea_orm::ActiveValue::Set;
-
-    #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "users")]
-    pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false)]
-        pub id: Uuid,
-        #[sea_orm(unique)]
-        pub email: String,
-        pub name: String,
-        #[sea_orm(nullable)]
-        pub age: Option<i32>,
-        pub created_at: DateTime<FixedOffset>,
-        pub updated_at: DateTime<FixedOffset>,
-        #[sea_orm(nullable)]
-        pub deleted_at: Option<DateTime<FixedOffset>>,
-    }
-
-    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {
-        #[sea_orm(
-            has_many = "super::post::Entity",
-            from = "Column::Id",
-            to = "super::post::Column::UserId"
-        )]
-        Posts,
-    }
-
-    // Add Related trait implementation
-    impl Related<super::user::Entity> for Entity {
-        fn to() -> RelationDef {
-            Relation::Posts.def()
-        }
-    }
-
-}
-
-#[caustics(namespace = "blog")]
-pub mod post {
-    use caustics_macros::Caustics;
-    use sea_orm::entity::prelude::*;
-    use sea_orm::ActiveValue::Set;
-
-    #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "posts")]
-    pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false)]
-        pub id: Uuid,
-        pub title: String,
-        #[sea_orm(nullable)]
-        pub content: Option<String>,
-        #[sea_orm(created_at)]
-        pub created_at: DateTime<FixedOffset>,
-        #[sea_orm(updated_at)]
-        pub updated_at: DateTime<FixedOffset>,
-        #[sea_orm(column_name = "user_id")]
-        pub user_id: Uuid,
-        #[sea_orm(column_name = "reviewer_user_id", nullable)]
-        pub reviewer_user_id: Option<Uuid>,
-        #[sea_orm(column_name = "customData", nullable)]
-        pub custom_data: Option<serde_json::Value>,
-    }
-
-    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {
-        #[sea_orm(
-            belongs_to = "super::user::Entity",
-            from = "Column::UserId",
-            to = "super::user::Column::Id",
-            on_update = "NoAction",
-            on_delete = "NoAction"
-        )]
-        User,
-        #[sea_orm(
-            belongs_to = "super::user::Entity",
-            from = "Column::ReviewerUserId",
-            to = "super::user::Column::Id",
-            on_update = "NoAction",
-            on_delete = "NoAction"
-        )]
-        Reviewer,
-    }
-
-    // Add Related trait implementation
-    impl Related<super::user::Entity> for Entity {
-        fn to() -> RelationDef {
-            Relation::User.def()
-        }
-    }
-
-}
 
 pub mod helpers {
     use sea_orm::{Database, DatabaseConnection, Schema};
 
-    use super::{post, user};
+    use blog::entities::{post, user};
 
     pub async fn setup_test_db() -> DatabaseConnection {
         use sea_orm::ConnectionTrait;
@@ -135,13 +33,11 @@ pub mod helpers {
 mod client_tests {
     use super::helpers::setup_test_db;
 
-    use super::*;
-
     #[tokio::test]
     async fn test_caustics_client() {
         // Setup
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Test client creation
         assert!(client.db().ping().await.is_ok());
@@ -151,24 +47,23 @@ mod client_tests {
 mod query_builder_tests {
     use std::str::FromStr;
 
-    use super::user::DistinctFieldsExt;
-    use super::user::ManyCursorExt;
+    use blog::entities::user::DistinctFieldsExt;
+    use uuid::Uuid;
+
+    use blog::entities::user::ManyCursorExt;
     use caustics::{QueryError, SortOrder};
+    #[cfg(feature = "select")]
     use caustics_macros::select_struct;
     use chrono::{DateTime, FixedOffset, TimeZone};
-    // Bring typed aggregate extension traits into scope
-    use super::user::{
-        AggregateAggExt as UserAggregateAggExt, GroupByHavingAggExt as UserGroupByHavingAggExt,
-    };
 
-    use super::helpers::setup_test_db;
+    use super::helpers::*;
 
-    use super::*;
+    use blog::entities::*;
 
     #[tokio::test]
     async fn test_find_operations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Find unique
         let user = client
@@ -201,7 +96,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_create_operations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create user with unique email
         let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
@@ -217,7 +112,6 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        
 
         let found_user = client
             .user()
@@ -245,17 +139,10 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        
 
-        
         // First, let's see if any posts exist at all
-        let _all_posts = client
-            .post()
-            .find_many(vec![])
-            .exec()
-            .await
-            .unwrap();
-        
+        let _all_posts = client.post().find_many(vec![]).exec().await.unwrap();
+
         // Try finding by title first to see if queries work
         let _found_post_by_title = client
             .post()
@@ -263,10 +150,10 @@ mod query_builder_tests {
             .exec()
             .await
             .unwrap();
-        
+
         // Try to find by UUID using a different approach
         let post_id_uuid = post.id;
-        
+
         let found_post_opt = client
             .post()
             .find_first(vec![post::id::equals(post_id_uuid)])
@@ -286,7 +173,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_update_operations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create user with unique email
         let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
@@ -320,7 +207,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_pagination_and_sorting() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create users
         for i in 0..5 {
@@ -357,8 +244,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_order_nulls_first_and_last_many() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
@@ -453,8 +340,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_cursor_pagination_basic() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Seed deterministic users with ascending ages
         let now = chrono::FixedOffset::east_opt(0)
@@ -510,8 +397,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_distinct_compiles_and_runs() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
@@ -554,8 +441,8 @@ mod query_builder_tests {
         use chrono::{DateTime, FixedOffset};
         use std::str::FromStr;
 
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Count on empty table
         let total0 = client.user().count(vec![]).exec().await.unwrap();
@@ -629,7 +516,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_delete_operations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create user with unique email
         let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
@@ -667,7 +554,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_delete_many_returns_count() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create three users
         let now = chrono::FixedOffset::east_opt(0)
@@ -706,7 +593,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_upsert_operations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Upsert user
         let user = client
@@ -752,7 +639,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_transaction_commit() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
         let email_for_check = email.clone();
@@ -809,7 +696,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_transaction_rollback() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         let email = format!("rollback_{}@example.com", chrono::Utc::now().timestamp());
         let email_for_check = email.clone();
@@ -851,7 +738,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_relations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create users
         let author = client
@@ -958,7 +845,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_batch_insert_operations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create multiple users in a batch
         let timestamp = chrono::Utc::now().timestamp();
@@ -996,7 +883,7 @@ mod query_builder_tests {
         use std::str::FromStr;
 
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Seed users
         let u1 = client
@@ -1069,7 +956,7 @@ mod query_builder_tests {
         use std::str::FromStr;
 
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Seed users
         let u1 = client
@@ -1132,7 +1019,7 @@ mod query_builder_tests {
         use std::str::FromStr;
 
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // First upserts will insert (tuple style, fluent)
         let (_ins1, _ins2) = client
@@ -1198,8 +1085,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_string_operators() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -1299,8 +1186,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_comparison_operators() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -1407,8 +1294,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_logical_operators() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -1547,8 +1434,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_basic_functionality() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -1585,8 +1472,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_collection_operators_readme_examples() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -1703,8 +1590,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_null_operators() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -1924,7 +1811,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_json_field_operations() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create a user for the posts
         let user = client
@@ -2234,8 +2121,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_atomic_operations() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -2311,8 +2198,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_atomic_operations_simple() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -2356,8 +2243,8 @@ mod query_builder_tests {
     async fn test_advanced_relation_operations() {
         let _ = env_logger::try_init();
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -2460,8 +2347,8 @@ mod query_builder_tests {
     async fn test_complex_relation_filtering_with_subqueries() {
         let _ = env_logger::try_init();
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -2811,7 +2698,7 @@ mod query_builder_tests {
         use sea_orm::FromQueryResult;
         use std::sync::{Arc, Mutex};
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
 
         #[derive(Debug, FromQueryResult)]
         struct OneRow {
@@ -2899,13 +2786,11 @@ mod query_builder_tests {
             name: String,
         }
         let users: Vec<U> = client
-            ._query_raw::<U>(
-                caustics::raw!(
-                    "SELECT id, name FROM {} WHERE id = {} ORDER BY id",
-                    caustics::ident!("users"),
-                    user.id
-                )
-            )
+            ._query_raw::<U>(caustics::raw!(
+                "SELECT id, name FROM {} WHERE id = {} ORDER BY id",
+                caustics::ident!("users"),
+                user.id
+            ))
             .exec()
             .await
             .unwrap();
@@ -2947,8 +2832,8 @@ mod query_builder_tests {
 
     #[tokio::test]
     async fn test_has_many_set_operation_structure() {
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create a user
         let user = client
@@ -3025,15 +2910,14 @@ mod query_builder_tests {
             .await;
 
         // For now, this should work (it just delegates to regular update)
-        if let Err(_e) = &updated_user {
-        }
+        if let Err(_e) = &updated_user {}
         assert!(updated_user.is_ok());
     }
 
     #[tokio::test]
     async fn test_has_many_set_operation_functionality() {
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create a user
         let user = client
@@ -3136,8 +3020,7 @@ mod query_builder_tests {
             .exec()
             .await;
 
-        if let Err(_e) = &updated_user {
-        }
+        if let Err(_e) = &updated_user {}
         assert!(updated_user.is_ok());
 
         // Verify the result
@@ -3161,8 +3044,8 @@ mod query_builder_tests {
 
     #[tokio::test]
     async fn test_agnostic_implementation_compiles() {
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create a user
         let user = client
@@ -3241,10 +3124,11 @@ mod query_builder_tests {
     #[tokio::test]
     #[cfg(feature = "select")]
     async fn test_aggregate_and_group_by_smoke() {
+        use blog::entities::user::{AggregateAggExt, GroupByHavingAggExt};
         use chrono::TimeZone;
 
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -3317,9 +3201,11 @@ mod query_builder_tests {
     #[cfg(feature = "select")]
     async fn test_aggregate_typed_and_group_by_typed() {
         use chrono::TimeZone;
+        // Bring typed aggregate extension traits into scope
+        use blog::entities::user::AggregateAggExt;
 
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 2, 0, 0, 0)
@@ -3394,8 +3280,8 @@ mod query_builder_tests {
     async fn test_distinct_on_basic() {
         use chrono::TimeZone;
 
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 3, 0, 0, 0)
@@ -3441,8 +3327,8 @@ mod query_builder_tests {
 
     #[tokio::test]
     async fn test_dynamic_foreign_key_column_extraction() {
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create a user
         let user = client
@@ -3541,7 +3427,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_create_many_users() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
         use chrono::{DateTime, FixedOffset};
 
         let ts = chrono::Utc::now().timestamp();
@@ -3577,7 +3463,7 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_update_many_users() {
         let db = setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let client = blog::CausticsClient::new(db.clone());
         use chrono::{DateTime, FixedOffset};
 
         // seed two users with deleted_at null and different ages
@@ -3636,8 +3522,8 @@ mod query_builder_tests {
     #[cfg(feature = "select")]
     async fn test_nested_select_functionality() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create test data
         let now = chrono::FixedOffset::east_opt(0)
@@ -3699,8 +3585,8 @@ mod query_builder_tests {
     #[cfg(feature = "select")]
     async fn test_field_selection_optimization() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         // Create test data
         let now = chrono::FixedOffset::east_opt(0)
@@ -3772,8 +3658,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_relation_counts_on_has_many_include() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
@@ -3835,9 +3721,10 @@ mod query_builder_tests {
     #[tokio::test]
     #[cfg(feature = "select")]
     async fn test_relation_counts_on_selected_has_many_include() {
+        use caustics_macros::select_struct;
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
 
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
@@ -3907,8 +3794,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_advanced_ordering_with_nulls() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -3992,9 +3879,10 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        let ages_nulls_first_asc: Vec<Option<i32>> = users_nulls_first_asc.iter().map(|u| u.age).collect();
+        let ages_nulls_first_asc: Vec<Option<i32>> =
+            users_nulls_first_asc.iter().map(|u| u.age).collect();
         assert_eq!(ages_nulls_first_asc.len(), 5);
-        
+
         // First two should be None (nulls first), then 20, 25, 30
         assert_eq!(ages_nulls_first_asc[0], None);
         assert_eq!(ages_nulls_first_asc[1], None);
@@ -4006,17 +3894,15 @@ mod query_builder_tests {
         let users_nulls_last_asc = client
             .user()
             .find_many(vec![])
-            .order_by((
-                user::age::order(SortOrder::Asc),
-                caustics::NullsOrder::Last,
-            ))
+            .order_by((user::age::order(SortOrder::Asc), caustics::NullsOrder::Last))
             .exec()
             .await
             .unwrap();
 
-        let ages_nulls_last_asc: Vec<Option<i32>> = users_nulls_last_asc.iter().map(|u| u.age).collect();
+        let ages_nulls_last_asc: Vec<Option<i32>> =
+            users_nulls_last_asc.iter().map(|u| u.age).collect();
         assert_eq!(ages_nulls_last_asc.len(), 5);
-        
+
         // First should be 20, 25, 30, then None, None (nulls last)
         assert_eq!(ages_nulls_last_asc[0], Some(20));
         assert_eq!(ages_nulls_last_asc[1], Some(25));
@@ -4036,9 +3922,10 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        let ages_nulls_first_desc: Vec<Option<i32>> = users_nulls_first_desc.iter().map(|u| u.age).collect();
+        let ages_nulls_first_desc: Vec<Option<i32>> =
+            users_nulls_first_desc.iter().map(|u| u.age).collect();
         assert_eq!(ages_nulls_first_desc.len(), 5);
-        
+
         // First two should be None (nulls first), then 30, 25, 20
         assert_eq!(ages_nulls_first_desc[0], None);
         assert_eq!(ages_nulls_first_desc[1], None);
@@ -4058,9 +3945,10 @@ mod query_builder_tests {
             .await
             .unwrap();
 
-        let ages_nulls_last_desc: Vec<Option<i32>> = users_nulls_last_desc.iter().map(|u| u.age).collect();
+        let ages_nulls_last_desc: Vec<Option<i32>> =
+            users_nulls_last_desc.iter().map(|u| u.age).collect();
         assert_eq!(ages_nulls_last_desc.len(), 5);
-        
+
         // First should be 30, 25, 20, then None, None (nulls last)
         assert_eq!(ages_nulls_last_desc[0], Some(30));
         assert_eq!(ages_nulls_last_desc[1], Some(25));
@@ -4072,15 +3960,18 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_partial_updates_with_type_safety() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
             .unwrap();
 
         // Create initial user with all fields populated
-        let email = format!("partial_test_{}@example.com", chrono::Utc::now().timestamp());
+        let email = format!(
+            "partial_test_{}@example.com",
+            chrono::Utc::now().timestamp()
+        );
         let original_user = client
             .user()
             .create(
@@ -4088,10 +3979,7 @@ mod query_builder_tests {
                 "Original Name".to_string(),
                 now,
                 now,
-                vec![
-                    user::age::set(Some(25)), 
-                    user::deleted_at::set(None)
-                ],
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
             )
             .exec()
             .await
@@ -4108,9 +3996,7 @@ mod query_builder_tests {
             .user()
             .update(
                 user::id::equals(original_user.id),
-                vec![
-                    user::name::set("Updated Name".to_string()),
-                ]
+                vec![user::name::set("Updated Name".to_string())],
             )
             .exec()
             .await
@@ -4130,7 +4016,7 @@ mod query_builder_tests {
                 vec![
                     user::name::set("Final Name".to_string()),
                     user::age::set(Some(30)),
-                ]
+                ],
             )
             .exec()
             .await
@@ -4147,9 +4033,7 @@ mod query_builder_tests {
             .user()
             .update(
                 user::id::equals(original_user.id),
-                vec![
-                    user::age::set(None),
-                ]
+                vec![user::age::set(None)],
             )
             .exec()
             .await
@@ -4170,9 +4054,7 @@ mod query_builder_tests {
             .user()
             .update(
                 user::id::equals(original_user.id),
-                vec![
-                    user::deleted_at::set(Some(deleted_at)),
-                ]
+                vec![user::deleted_at::set(Some(deleted_at))],
             )
             .exec()
             .await
@@ -4202,8 +4084,8 @@ mod query_builder_tests {
     #[tokio::test]
     async fn test_relation_ordering() {
         use chrono::TimeZone;
-        let db = helpers::setup_test_db().await;
-        let client = CausticsClient::new(db.clone());
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
         let now = chrono::FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
@@ -4257,7 +4139,9 @@ mod query_builder_tests {
                 now,
                 now,
                 user::id::equals(user1.id),
-                vec![post::content::set(Some("Alice's first content".to_string()))],
+                vec![post::content::set(Some(
+                    "Alice's first content".to_string(),
+                ))],
             )
             .exec()
             .await
@@ -4276,7 +4160,9 @@ mod query_builder_tests {
                     .with_ymd_and_hms(2024, 1, 2, 0, 0, 0)
                     .unwrap(),
                 user::id::equals(user1.id),
-                vec![post::content::set(Some("Alice's second content".to_string()))],
+                vec![post::content::set(Some(
+                    "Alice's second content".to_string(),
+                ))],
             )
             .exec()
             .await

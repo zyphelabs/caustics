@@ -642,7 +642,6 @@ pub struct RelationFilter {
     pub distinct: bool,
 }
 
-
 /// Central PCR-like include builder that accumulates generic include state
 #[derive(Debug, Clone, Default)]
 pub struct IncludeBuilderCore {
@@ -997,8 +996,7 @@ pub trait EntityTypeRegistry {
     fn get_primary_key_type(&self, entity_name: &str) -> Option<&str>;
 
     /// Get the foreign key type for a given entity and field
-    fn get_foreign_key_type(&self, entity_name: &str, field_name: &str)
-        -> Option<&str>;
+    fn get_foreign_key_type(&self, entity_name: &str, field_name: &str) -> Option<&str>;
 
     /// Convert a key for a specific entity's primary key (returns Any for dynamic dispatch)
     fn convert_key_for_primary_key(
@@ -1230,7 +1228,7 @@ where
     fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output;
 }
 
-impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
     BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
     for crate::query_builders::HasManySetUpdateQueryBuilder<
         'a,
@@ -1239,6 +1237,7 @@ impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
         ActiveModel,
         ModelWithRelations,
         T,
+        P,
     >
 where
     C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
@@ -1248,6 +1247,7 @@ where
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
     T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
     <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+    P: crate::EntityMetadataProvider,
 {
     type Output = ModelWithRelations;
     fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {

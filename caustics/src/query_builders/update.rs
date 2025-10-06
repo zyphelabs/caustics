@@ -25,13 +25,14 @@ pub enum UnifiedUpdateQueryBuilder<
     ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send,
     ModelWithRelations: FromModel<<Entity as EntityTrait>::Model>,
     T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
+    P: crate::EntityMetadataProvider,
 > {
     Scalar(UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>),
-    Relations(HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>),
+    Relations(HasManySetUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>),
 }
 
-impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
-    UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
+    UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
 where
     C: ConnectionTrait + sea_orm::TransactionTrait,
     Entity: EntityTrait,
@@ -41,6 +42,7 @@ where
         + 'static,
     T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
     <Entity as EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+    P: crate::EntityMetadataProvider,
 {
     pub async fn exec(self) -> Result<ModelWithRelations, sea_orm::DbErr> {
         match self {

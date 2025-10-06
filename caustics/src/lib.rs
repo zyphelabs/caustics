@@ -1,10 +1,9 @@
-// Include generated code with composite registry
-include!(concat!(env!("OUT_DIR"), "/caustics_client.rs"));
-
+pub mod entity_metadata;
 pub mod key_types;
 pub mod query_builders;
 pub mod types;
 
+pub use entity_metadata::*;
 pub use key_types::*;
 pub use query_builders::*;
 pub use types::*;
@@ -297,7 +296,6 @@ pub use query_builders::DeferredLookup;
 pub use types::ApplyNestedIncludes;
 pub use types::{EntityFetcher, EntityRegistry};
 
-
 // Global typed selection macro that returns a SelectionSpec marker
 // Global select_typed! macro no longer exposed
 
@@ -330,6 +328,29 @@ macro_rules! in_params {
     ($slice:expr) => {{
         $crate::raw::in_list_params($slice)
     }};
+}
+
+// Raw SQL support (typed bindings and results)
+#[derive(Clone, Debug)]
+pub struct Raw {
+    pub sql: String,
+    pub params: Vec<sea_orm::Value>,
+}
+
+impl Raw {
+    pub fn new<S: Into<String>>(sql: S, params: Vec<sea_orm::Value>) -> Self {
+        Self {
+            sql: sql.into(),
+            params,
+        }
+    }
+    pub fn push_param<T: Into<sea_orm::Value>>(&mut self, v: T) {
+        self.params.push(v.into());
+    }
+    pub fn with_params(mut self, mut extra: Vec<sea_orm::Value>) -> Self {
+        self.params.append(&mut extra);
+        self
+    }
 }
 
 #[macro_export]

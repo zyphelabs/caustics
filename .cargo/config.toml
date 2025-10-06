@@ -1,2 +1,0 @@
-[alias]
-prisma = "run --features=postgresql,mocking --manifest-path prisma-cli/Cargo.toml --"

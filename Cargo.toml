@@ -1,10 +1,9 @@
 [workspace]
 members = [
     "caustics",
-    "caustics-macros"
-]
-exclude = [
-    "prisma-cli",
-    "caustics-example"
+    "caustics-macros",
+    "caustics-build",
+    "examples/blog",
+    "examples/school"
 ]
 resolver = "2" 

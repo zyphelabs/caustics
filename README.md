@@ -4,6 +4,49 @@ A Prisma-like DSL for SeaORM that provides a type-safe and ergonomic way to buil
 
 > Caustics are the shimmering patterns of light that form when sunlight passes through water and reflects off the sea bed. Similarly, this crate bends and focuses SeaORM's query interface into a more ergonomic shape, offering an alternative to SeaORM's native DSL with a familiar Prisma-like syntax deduced by reflection on SeaORM's datamodel.
 
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+- [Installation](#installation)
+- [Feature Usage](#feature-usage)
+- [Quick Start](#quick-start)
+- [Define Entities](#define-entities)
+- [Basic Operations](#basic-operations)
+- [Relations and Includes](#relations-and-includes)
+- [Filtering](#filtering)
+- [Pagination and Sorting](#pagination-and-sorting)
+- [Advanced Features](#advanced-features)
+- [Testing](#testing)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
+
+## Prerequisites
+
+- Rust 1.70+ (stable or nightly)
+- SeaORM-compatible database (PostgreSQL, MySQL, SQLite)
+- Basic familiarity with SeaORM and Rust async/await
+
+## Getting Started
+
+### Building the Project
+
+To build and test the Caustics project:
+
+```bash
+# Build the project
+cargo build
+
+# Run tests (stable Rust)
+cargo test
+
+# Run tests with nightly features
+cargo +nightly test --all-features
+
+# Build examples
+cargo build --examples
+```
+
 ## Installation
 
 Add this to your `Cargo.toml`:
@@ -39,9 +82,21 @@ When the "select" feature is enabled, you can use the convenient `entity::select
 ```rust
 use caustics_client::CausticsClient;
 use caustics_macros::{caustics, select_struct};
+use sea_orm::{Database, DatabaseConnection};
 
-// Given an existing SeaORM DatabaseConnection `db`
-let client = CausticsClient::new(db.clone());
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Connect to your database
+    let db: DatabaseConnection = Database::connect("your_database_url").await?;
+    
+    // Create a Caustics client
+    let client = CausticsClient::new(db);
+    
+    // Now you can use the client for type-safe database operations
+    // See the examples below for more details
+    
+    Ok(())
+}
 ```
 
 ## Define Entities
@@ -556,6 +611,8 @@ let rows: Vec<Row> = client
     .exec()
     .await?;
 ```
+
+
 
 ## Acknowledgments
 

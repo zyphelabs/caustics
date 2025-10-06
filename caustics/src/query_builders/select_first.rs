@@ -84,7 +84,6 @@ where
             }
         }
 
-
         let mut select = query.select_only();
         for (expr, alias) in &selected {
             select = select.expr_as(expr.clone(), alias.as_str());

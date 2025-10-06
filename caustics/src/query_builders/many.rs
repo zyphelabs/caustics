@@ -111,7 +111,6 @@ where
         self
     }
 
-
     /// Return distinct rows (across all selected columns)
     pub fn distinct_all(mut self) -> Self {
         self.query = self.query.distinct();

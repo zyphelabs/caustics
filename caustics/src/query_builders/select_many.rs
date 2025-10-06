@@ -56,7 +56,6 @@ where
         self
     }
 
-
     /// Execute and return selected rows with type inference
     pub async fn exec<T>(self) -> Result<Vec<T>, sea_orm::DbErr>
     where

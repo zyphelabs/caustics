@@ -46,9 +46,12 @@ pub fn generate_entity(
     // Create centralized entity name context using extracted metadata
     // This avoids fragile string manipulation by using the actual extracted information
     // The entity name should be derived from the module name, not the struct name
-    let module_name = full_mod_path.segments.last()
+    let module_name = full_mod_path
+        .segments
+        .last()
         .expect("Invalid module path - this should not happen in valid code")
-        .ident.to_string();
+        .ident
+        .to_string();
     let entity_name = module_name.to_pascal_case();
     let entity_context = EntityNameContext::from_metadata(&entity_name, &current_table_name);
 
@@ -650,25 +653,25 @@ pub fn generate_entity(
                     .map(|aliases| aliases.iter().map(|s| s.as_str()).collect::<Vec<_>>())
                     .unwrap_or_default();
 
-                // Compute required fields: selected fields + defensive fields (computed at build time)
-                let required_fields = {
-                    let mut fields = std::collections::HashSet::<&str>::new();
-                    // Add selected fields
-                    fields.extend(selected_fields.iter().map(|s| *s));
-                    // Add defensive fields for relation traversal
-                    // Get target entity metadata to find primary key field
-                    let target_entity_name = stringify!(#target);
-                    let entity_name = target_entity_name.split('_').map(|s| {
-                        let mut chars = s.chars();
-                        match chars.next() {
-                            None => String::new(),
-                            Some(first) => first.to_uppercase().chain(chars).collect(),
-                        }
-                    }).collect::<String>();
-                    // Always include primary key for relation traversal
-                    fields.insert(#current_primary_key);
-                    // Add foreign key field for this relation
-                    fields.insert(#foreign_key_column_str);
+                                // Compute required fields: selected fields + defensive fields (computed at build time)
+                                let required_fields = {
+                                    let mut fields = std::collections::HashSet::<&str>::new();
+                                    // Add selected fields
+                                    fields.extend(selected_fields.iter().map(|s| *s));
+                                    // Add defensive fields for relation traversal
+                                    // Get target entity metadata to find primary key field
+                                    let target_entity_name = stringify!(#target);
+                                    let entity_name = target_entity_name.split('_').map(|s| {
+                                        let mut chars = s.chars();
+                                        match chars.next() {
+                                            None => String::new(),
+                                            Some(first) => first.to_uppercase().chain(chars).collect(),
+                                        }
+                                    }).collect::<String>();
+                                    // Always include primary key for relation traversal
+                                    fields.insert(#current_primary_key);
+                                    // Add foreign key field for this relation
+                                    fields.insert(#foreign_key_column_str);
                     // Add all foreign key fields for nested relation traversal
                     // (Metadata system handles this dynamically)
 
@@ -734,7 +737,13 @@ pub fn generate_entity(
             let is_nullable_fk = rel.foreign_key_field.as_ref().is_some_and(|fk_field_name| {
                 fields
                     .iter()
-                    .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
+                    .find(|f| {
+                        f.ident
+                            .as_ref()
+                            .expect("Field has no identifier")
+                            .to_string()
+                            == *fk_field_name
+                    })
                     .is_some_and(|field| is_option(&field.ty))
             });
 
@@ -765,13 +774,21 @@ pub fn generate_entity(
                                     // Add defensive fields for relation traversal
                                     // Get target entity metadata to find primary key field
                                     let target_entity_name = stringify!(#target);
-                                    let entity_name = target_entity_name.split('_').map(|s| {
-                                        let mut chars = s.chars();
-                                        match chars.next() {
-                                            None => String::new(),
-                                            Some(first) => first.to_uppercase().chain(chars).collect(),
-                                        }
-                                    }).collect::<String>();
+                                    // Clean up the entity name by removing namespace and extra spaces
+                                    let entity_name = target_entity_name
+                                        .split("::")
+                                        .last()
+                                        .unwrap_or(target_entity_name)
+                                        .trim()
+                                        .split('_')
+                                        .map(|s| {
+                                            let mut chars = s.chars();
+                                            match chars.next() {
+                                                None => String::new(),
+                                                Some(first) => first.to_uppercase().chain(chars).collect(),
+                                            }
+                                        })
+                                        .collect::<String>();
                                     // Add primary key field dynamically
                                     fields.insert(#target_primary_key);
                                     // Add foreign key field for this relation
@@ -779,15 +796,14 @@ pub fn generate_entity(
                                     // Add all foreign key fields for nested relation traversal
                                     // (Metadata system handles this dynamically)
 
-                                    // Add dynamic foreign key field detection for nested relations
-                                    // Examine target entity's available columns and include any that end with "_id"
-                                    use sea_orm::Iterable;
-                                    let target_columns = #target::Column::iter();
-                                    for column in target_columns {
-                                        let column_name = format!("{:?}", column).to_lowercase();
-                                        if column_name.ends_with("_id") {
-                                            fields.insert(Box::leak(column_name.into_boxed_str()));
+                                    // Add all foreign key fields for nested relation traversal
+                                    // Use the generated client's registry to get foreign key fields
+                                    if let Some(metadata) = crate::get_entity_metadata(&entity_name) {
+                                        for fk_field in metadata.foreign_key_fields {
+                                            fields.insert(Box::leak(std::string::ToString::to_string(fk_field).into_boxed_str()));
                                         }
+                                    } else {
+                                        panic!("No metadata found for entity '{}'", entity_name);
                                     }
 
                                     fields
@@ -870,13 +886,21 @@ pub fn generate_entity(
                                         // Add defensive fields for relation traversal
                                         // Get target entity metadata to find primary key field
                                         let target_entity_name = stringify!(#target);
-                                        let entity_name = target_entity_name.split('_').map(|s| {
-                                            let mut chars = s.chars();
-                                            match chars.next() {
-                                                None => String::new(),
-                                                Some(first) => first.to_uppercase().chain(chars).collect(),
-                                            }
-                                        }).collect::<String>();
+                                        // Clean up the entity name by removing namespace and extra spaces
+                                        let entity_name = target_entity_name
+                                            .split("::")
+                                            .last()
+                                            .unwrap_or(target_entity_name)
+                                            .trim()
+                                            .split('_')
+                                            .map(|s| {
+                                                let mut chars = s.chars();
+                                                match chars.next() {
+                                                    None => String::new(),
+                                                    Some(first) => first.to_uppercase().chain(chars).collect(),
+                                                }
+                                            })
+                                            .collect::<String>();
                                         // Add primary key field dynamically
                                         fields.insert(#target_primary_key);
                                         // Add foreign key field for this relation
@@ -884,14 +908,21 @@ pub fn generate_entity(
                                         // Add all foreign key fields for nested relation traversal
                                         // (Metadata system handles this dynamically)
 
-                                        // Add dynamic foreign key field detection for nested relations
-                                        // Examine target entity's available columns and include any that end with "_id"
-                                        use sea_orm::Iterable;
-                                        let target_columns = #target::Column::iter();
-                                        for column in target_columns {
-                                            let column_name = format!("{:?}", column).to_lowercase();
-                                            if column_name.ends_with("_id") {
-                                                fields.insert(Box::leak(column_name.into_boxed_str()));
+                                        // Add all foreign key fields for nested relation traversal
+                                        // Use the generated client's registry to get foreign key fields
+                                        if let Some(metadata) = crate::get_entity_metadata(&entity_name) {
+                                            for fk_field in metadata.foreign_key_fields {
+                                                fields.insert(Box::leak(std::string::ToString::to_string(fk_field).into_boxed_str()));
+                                            }
+                                        } else {
+                                            // Fallback: include all "_id" fields if registry is not available
+                                            use sea_orm::Iterable;
+                                            let target_columns = #target::Column::iter();
+                                            for column in target_columns {
+                                                let column_name = format!("{:?}", column).to_lowercase();
+                                                if column_name.ends_with("_id") {
+                                                    fields.insert(Box::leak(column_name.into_boxed_str()));
+                                                }
                                             }
                                         }
 
@@ -1012,7 +1043,9 @@ pub fn generate_entity(
     let required_fields: Vec<_> = fields
         .iter()
         .filter(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
             !primary_key_fields.contains(field)
@@ -1092,11 +1125,17 @@ pub fn generate_entity(
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be in the Create struct
-                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
-                    if let Some(field) = fields
-                        .iter()
-                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                    {
+                    let fk_field_name = relation
+                        .foreign_key_field
+                        .as_ref()
+                        .expect("Foreign key field not specified");
+                    if let Some(field) = fields.iter().find(|f| {
+                        f.ident
+                            .as_ref()
+                            .expect("Field has no identifier")
+                            .to_string()
+                            == *fk_field_name
+                    }) {
                         !is_option(&field.ty)
                     } else {
                         false
@@ -1122,11 +1161,17 @@ pub fn generate_entity(
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be function arguments
-                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
-                    if let Some(field) = fields
-                        .iter()
-                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                    {
+                    let fk_field_name = relation
+                        .foreign_key_field
+                        .as_ref()
+                        .expect("Foreign key field not specified");
+                    if let Some(field) = fields.iter().find(|f| {
+                        f.ident
+                            .as_ref()
+                            .expect("Field has no identifier")
+                            .to_string()
+                            == *fk_field_name
+                    }) {
                         !is_option(&field.ty)
                     } else {
                         false
@@ -1152,11 +1197,17 @@ pub fn generate_entity(
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be initializers
-                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
-                    if let Some(field) = fields
-                        .iter()
-                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                    {
+                    let fk_field_name = relation
+                        .foreign_key_field
+                        .as_ref()
+                        .expect("Foreign key field not specified");
+                    if let Some(field) = fields.iter().find(|f| {
+                        f.ident
+                            .as_ref()
+                            .expect("Field has no identifier")
+                            .to_string()
+                            == *fk_field_name
+                    }) {
                         !is_option(&field.ty)
                     } else {
                         false
@@ -1173,10 +1224,19 @@ pub fn generate_entity(
     let unique_field_names: Vec<_> = unique_fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
-            syn::LitStr::new(&field_name, field.ident.as_ref().expect("Field has no identifier").span())
+            syn::LitStr::new(
+                &field_name,
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .span(),
+            )
         })
         .collect();
 
@@ -1184,7 +1244,9 @@ pub fn generate_entity(
     let unique_field_idents: Vec<_> = unique_fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
             // Convert to PascalCase for SeaORM Column enum
@@ -1195,7 +1257,14 @@ pub fn generate_entity(
                 .to_uppercase()
                 .collect::<String>()
                 + &field_name[1..];
-            syn::Ident::new(&pascal_case, field.ident.as_ref().expect("Field has no identifier").span())
+            syn::Ident::new(
+                &pascal_case,
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .span(),
+            )
         })
         .collect();
 
@@ -1385,11 +1454,17 @@ pub fn generate_entity(
                 && relation.foreign_key_field.is_some()
                 && {
                     // Only optional relations can be disconnected (set to None)
-                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
-                    if let Some(field) = fields
-                        .iter()
-                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                    {
+                    let fk_field_name = relation
+                        .foreign_key_field
+                        .as_ref()
+                        .expect("Foreign key field not specified");
+                    if let Some(field) = fields.iter().find(|f| {
+                        f.ident
+                            .as_ref()
+                            .expect("Field has no identifier")
+                            .to_string()
+                            == *fk_field_name
+                    }) {
                         is_option(&field.ty)
                     } else {
                         false
@@ -1940,7 +2015,12 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .to_string()
+                    .to_pascal_case()
             );
             quote! {
                 OrderByParam::#pascal_name(order) => {
@@ -1960,7 +2040,12 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .to_string()
+                    .to_pascal_case()
             );
             quote! { #pascal_name }
         })
@@ -1970,7 +2055,14 @@ pub fn generate_entity(
     let snake_field_fn_idents = fields
         .iter()
         .map(|field| {
-            let snake = format_ident!("{}", field.ident.as_ref().expect("Field has no identifier").to_string());
+            let snake = format_ident!(
+                "{}",
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .to_string()
+            );
             snake
         })
         .collect::<Vec<_>>();
@@ -1984,7 +2076,12 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .to_string()
+                    .to_pascal_case()
             );
             quote! {
                 GroupByOrderByParam::#pascal_name(order) => {
@@ -2004,7 +2101,12 @@ pub fn generate_entity(
         .map(|field| {
             let pascal_name = format_ident!(
                 "{}",
-                field.ident.as_ref().expect("Field has no identifier").to_string().to_pascal_case()
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .to_string()
+                    .to_pascal_case()
             );
             quote! { #pascal_name }
         })
@@ -2466,10 +2568,13 @@ pub fn generate_entity(
                 RelationKind::BelongsTo => {
                     // Check if this is an optional relation by looking at the foreign key field
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
-                        if let Some(field) = fields
-                            .iter()
-                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                        {
+                        if let Some(field) = fields.iter().find(|f| {
+                            f.ident
+                                .as_ref()
+                                .expect("Field has no identifier")
+                                .to_string()
+                                == *fk_field_name
+                        }) {
                             is_option(&field.ty)
                         } else {
                             false
@@ -2504,10 +2609,13 @@ pub fn generate_entity(
                 RelationKind::BelongsTo => {
                     // Check if this is an optional relation by looking at the foreign key field
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
-                        if let Some(field) = fields
-                            .iter()
-                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                        {
+                        if let Some(field) = fields.iter().find(|f| {
+                            f.ident
+                                .as_ref()
+                                .expect("Field has no identifier")
+                                .to_string()
+                                == *fk_field_name
+                        }) {
                             is_option(&field.ty)
                         } else {
                             false
@@ -2677,10 +2785,13 @@ pub fn generate_entity(
                 RelationKind::BelongsTo => {
                     // Check if this is an optional relation by looking at the foreign key field
                     let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
-                        if let Some(field) = fields
-                            .iter()
-                            .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                        {
+                        if let Some(field) = fields.iter().find(|f| {
+                            f.ident
+                                .as_ref()
+                                .expect("Field has no identifier")
+                                .to_string()
+                                == *fk_field_name
+                        }) {
                             is_option(&field.ty)
                         } else {
                             false
@@ -2734,16 +2845,27 @@ pub fn generate_entity(
     let selected_all_field_names: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
-            syn::LitStr::new(&field_name, field.ident.as_ref().expect("Field has no identifier").span())
+            syn::LitStr::new(
+                &field_name,
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .span(),
+            )
         })
         .collect();
     let selected_all_field_idents: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
             let pascal_case = field_name
@@ -2756,7 +2878,14 @@ pub fn generate_entity(
                     }
                 })
                 .collect::<String>();
-            syn::Ident::new(&pascal_case, field.ident.as_ref().expect("Field has no identifier").span())
+            syn::Ident::new(
+                &pascal_case,
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .span(),
+            )
         })
         .collect();
 
@@ -3249,7 +3378,7 @@ pub fn generate_entity(
                         Box::new(None::<Vec<Selected>>) as Box<dyn std::any::Any + Send>
                     } else {
                         // Regular relation fetching
-                        fetcher
+                        let result = fetcher
                             .fetch_by_foreign_key_with_selection(
                                 conn,
                                 foreign_key_value.clone(),
@@ -3258,7 +3387,8 @@ pub fn generate_entity(
                                 filter.relation,
                                 filter,
                             )
-                            .await?
+                            .await?;
+                        result
                     };
 
 
@@ -3274,8 +3404,6 @@ pub fn generate_entity(
 
                     // Apply nested includes recursively, if any
                     if !filter.nested_includes.is_empty() {
-                        for (i, nested) in filter.nested_includes.iter().enumerate() {
-                        }
                         match filter.relation {
                             #(
                                 #relation_names_snake_lits => { #relation_nested_apply_blocks },
@@ -4110,11 +4238,17 @@ pub fn generate_entity(
                 && relation.foreign_key_field.is_some()
                 && {
                     // Only optional relations can be disconnected (set to None)
-                    let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
-                    if let Some(field) = fields
-                        .iter()
-                        .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
-                    {
+                    let fk_field_name = relation
+                        .foreign_key_field
+                        .as_ref()
+                        .expect("Foreign key field not specified");
+                    if let Some(field) = fields.iter().find(|f| {
+                        f.ident
+                            .as_ref()
+                            .expect("Field has no identifier")
+                            .to_string()
+                            == *fk_field_name
+                    }) {
                         is_option(&field.ty)
                     } else {
                         false
@@ -4153,7 +4287,9 @@ pub fn generate_entity(
         .iter()
         .filter(|field| !primary_key_fields.contains(field))
         .filter(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
             !foreign_key_fields.contains(&field_name)
@@ -4407,17 +4543,28 @@ pub fn generate_entity(
     let all_field_names: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
-            syn::LitStr::new(&field_name, field.ident.as_ref().expect("Field has no identifier").span())
+            syn::LitStr::new(
+                &field_name,
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .span(),
+            )
         })
         .collect();
     // Generate all field identifiers for column access (PascalCase for SeaORM)
     let all_field_idents: Vec<_> = fields
         .iter()
         .map(|field| {
-            let field_name = field.ident.as_ref()
+            let field_name = field
+                .ident
+                .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
             // Convert snake_case to PascalCase
@@ -4431,7 +4578,14 @@ pub fn generate_entity(
                     }
                 })
                 .collect::<String>();
-            syn::Ident::new(&pascal_case, field.ident.as_ref().expect("Field has no identifier").span())
+            syn::Ident::new(
+                &pascal_case,
+                field
+                    .ident
+                    .as_ref()
+                    .expect("Field has no identifier")
+                    .span(),
+            )
         })
         .collect();
     // Generate snake_case field idents for macro checks
@@ -4567,6 +4721,43 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Conditionally generate select-related code only when the feature is enabled
+    #[cfg(feature = "select")]
+    let select_macro_code = quote! {
+        // Per-entity select! macro (nightly `pub macro` path invocation support)
+        // Usage: `entity::select!(field_a, field_b)`
+        // Build-time name check inline with match on valid names
+        // NOTE: This uses experimental `pub macro` syntax which requires nightly Rust.
+        // The select feature is therefore only available on nightly.
+        pub macro select($($field:ident),* $(,)?) {{
+            #[allow(unused_imports)]
+            macro_rules! __check_field_ident {
+                #( ( #all_field_idents_snake ) => {}; )*
+                ( $other:ident ) => { compile_error!(concat!("unknown field: ", stringify!($other))); };
+            }
+            $( __check_field_ident!($field); )*
+            struct __CausticsSelectMarker;
+            impl caustics::SelectionSpec for __CausticsSelectMarker {
+                type Entity = Entity;
+                type Data = Selected;
+                fn collect_aliases(self) -> Vec<String> { vec![ $( stringify!($field).to_string() ),* ] }
+                fn to_single_column_expr(self) -> sea_orm::sea_query::SimpleExpr {
+                    use sea_orm::IntoSimpleExpr;
+                    let aliases = self.collect_aliases();
+                    if aliases.len() != 1 {
+                        panic!("Aggregate functions require exactly one field, got: {:?}", aliases);
+                    }
+                    let field_name = &aliases[0];
+                    Selected::column_for_alias(field_name).unwrap_or_else(|| panic!("Unknown field: {}", field_name))
+                }
+            }
+            __CausticsSelectMarker
+        }}
+    };
+
+    #[cfg(not(feature = "select"))]
+    let select_macro_code = quote! {};
+
     let expanded = quote! {
         #[allow(clippy::cmp_owned)]
         #[allow(clippy::type_complexity)]
@@ -4592,15 +4783,7 @@ pub fn generate_entity(
             database_backend: sea_orm::DatabaseBackend,
         }
 
-        #[cfg(test)]
-        pub fn get_registry<'a>() -> &'a super::CompositeEntityRegistry {
-            #[cfg(test)]
-            { super::get_registry() }
-        }
-
-        #[cfg(not(test))]
         pub fn get_registry<'a>() -> &'a crate::CompositeEntityRegistry {
-            #[cfg(not(test))]
             { crate::get_registry() }
         }
 
@@ -4647,36 +4830,8 @@ pub fn generate_entity(
             }
         }
 
-        // Per-entity select! macro (nightly `pub macro` path invocation support)
-        // Usage: `entity::select!(field_a, field_b)`
-        // Build-time name check inline with match on valid names
-        // NOTE: This uses experimental `pub macro` syntax which requires nightly Rust.
-        // The select feature is therefore only available on nightly.
-        #[cfg(feature = "select")]
-        pub macro select($($field:ident),* $(,)?) {{
-            #[allow(unused_imports)]
-            macro_rules! __check_field_ident {
-                #( ( #all_field_idents_snake ) => {}; )*
-                ( $other:ident ) => { compile_error!(concat!("unknown field: ", stringify!($other))); };
-            }
-            $( __check_field_ident!($field); )*
-            struct __CausticsSelectMarker;
-            impl caustics::SelectionSpec for __CausticsSelectMarker {
-                type Entity = Entity;
-                type Data = Selected;
-                fn collect_aliases(self) -> Vec<String> { vec![ $( stringify!($field).to_string() ),* ] }
-                fn to_single_column_expr(self) -> sea_orm::sea_query::SimpleExpr {
-                    use sea_orm::IntoSimpleExpr;
-                    let aliases = self.collect_aliases();
-                    if aliases.len() != 1 {
-                        panic!("Aggregate functions require exactly one field, got: {:?}", aliases);
-                    }
-                    let field_name = &aliases[0];
-                    Selected::column_for_alias(field_name).unwrap_or_else(|| panic!("Unknown field: {}", field_name))
-                }
-            }
-            __CausticsSelectMarker
-        }}
+        // Select macro code (conditionally generated based on feature flag)
+        #select_macro_code
 
 
 
@@ -5470,13 +5625,14 @@ pub fn generate_entity(
                 }
             }
 
-            pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam>
+            pub fn update(&self, condition: UniqueWhereParam, changes: Vec<SetParam>) -> caustics::UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam, crate::CompositeEntityRegistry>
             where
                 C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
                 ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model>
                     + caustics::HasRelationMetadata<ModelWithRelations>
                     + 'static,
             {
+                let metadata_provider = get_registry();
                 let cond: Condition = condition.into();
                 let cond_arc = Arc::new(cond.clone());
                 let resolver: Box<
@@ -5520,6 +5676,7 @@ pub fn generate_entity(
                         condition: cond,
                         changes,
                         conn: self.conn,
+                        metadata_provider: &*metadata_provider,
                         entity_id_resolver: Some(resolver),
                         _phantom: std::marker::PhantomData,
                     })

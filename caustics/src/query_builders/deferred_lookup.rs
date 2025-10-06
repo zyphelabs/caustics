@@ -16,7 +16,8 @@ pub struct DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send + Sync,
+            > + Send
+            + Sync,
     >,
     #[allow(clippy::type_complexity)]
     pub resolve_on_txn: Box<
@@ -29,7 +30,8 @@ pub struct DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send + Sync,
+            > + Send
+            + Sync,
     >,
 }
 
@@ -46,7 +48,8 @@ impl DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send + Sync
+            > + Send
+            + Sync
             + 'static,
         resolve_on_txn: impl for<'a> Fn(
                 &'a DatabaseTransaction,
@@ -57,7 +60,8 @@ impl DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send + Sync
+            > + Send
+            + Sync
             + 'static,
     ) -> Self {
         Self {

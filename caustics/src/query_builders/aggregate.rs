@@ -52,16 +52,20 @@ where
             if let Some(first_col) = <Entity as EntityTrait>::Column::iter().next() {
                 let expr = first_col.into_simple_expr();
                 if self.selections.min {
-                    select = select.expr_as(SimpleExpr::FunctionCall(Func::min(expr.clone())), "min");
+                    select =
+                        select.expr_as(SimpleExpr::FunctionCall(Func::min(expr.clone())), "min");
                 }
                 if self.selections.max {
-                    select = select.expr_as(SimpleExpr::FunctionCall(Func::max(expr.clone())), "max");
+                    select =
+                        select.expr_as(SimpleExpr::FunctionCall(Func::max(expr.clone())), "max");
                 }
                 if self.selections.sum {
-                    select = select.expr_as(SimpleExpr::FunctionCall(Func::sum(expr.clone())), "sum");
+                    select =
+                        select.expr_as(SimpleExpr::FunctionCall(Func::sum(expr.clone())), "sum");
                 }
                 if self.selections.avg {
-                    select = select.expr_as(SimpleExpr::FunctionCall(Func::avg(expr.clone())), "avg");
+                    select =
+                        select.expr_as(SimpleExpr::FunctionCall(Func::avg(expr.clone())), "avg");
                 }
             }
         }

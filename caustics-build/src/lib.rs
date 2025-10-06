@@ -4,11 +4,8 @@
 #![allow(clippy::possible_missing_else)]
 
 use quote::{format_ident, quote, ToTokens};
-use std::env;
 use std::fs;
-use std::path::Path;
 use syn::{parse_file, Attribute, Item, Meta, Type};
-use walkdir::WalkDir;
 
 // Helper function to convert PascalCase to snake_case
 fn to_snake_case(s: &str) -> String {
@@ -113,30 +110,31 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
                     "u32" => std::any::TypeId::of::<u32>(),
                     "u64" => std::any::TypeId::of::<u64>(),
                     "usize" => std::any::TypeId::of::<usize>(),
-                    
+
                     // Floating point types
                     "f32" => std::any::TypeId::of::<f32>(),
                     "f64" => std::any::TypeId::of::<f64>(),
-                    
+
                     // String and text types
                     "String" => std::any::TypeId::of::<String>(),
                     "str" => std::any::TypeId::of::<str>(),
-                    
+
                     // Boolean type
                     "bool" => std::any::TypeId::of::<bool>(),
-                    
+
                     // UUID type
                     "Uuid" => std::any::TypeId::of::<uuid::Uuid>(),
-                    
+
                     // DateTime types
                     "DateTime" => std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>(),
                     "NaiveDateTime" => std::any::TypeId::of::<chrono::NaiveDateTime>(),
                     "NaiveDate" => std::any::TypeId::of::<chrono::NaiveDate>(),
                     "NaiveTime" => std::any::TypeId::of::<chrono::NaiveTime>(),
-                    
+
                     // JSON type
                     "Value" => std::any::TypeId::of::<serde_json::Value>(),
-                    
+                    "Json" => std::any::TypeId::of::<serde_json::Value>(),
+
                     // Option types - handle Option<T> by extracting the inner type
                     "Option" => {
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
@@ -148,7 +146,7 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
                         // If we can't extract the inner type, panic
                         panic!("Cannot extract inner type from Option<{}>. Please ensure the inner type is supported.", segment.ident);
                     }
-                    
+
                     // For unknown types, panic to make it clear what's not supported
                     _ => {
                         panic!("Unsupported type: {}. Please add support for this type or use a supported type.", segment.ident);
@@ -165,10 +163,63 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
     }
 }
 
+/// Find the type of a field in a struct by looking through the struct definition
+fn find_field_type_in_struct(file: &syn::File, entity_name: &str, field_name: &str) -> Option<String> {
+    // Look for the Model struct within the module that matches the entity name
+    for item in &file.items {
+        if let Item::Mod(module) = item {
+            // Check if this module matches our entity
+            if module.ident.to_string().to_lowercase() == entity_name.to_lowercase() {
+                if let Some((_, items)) = &module.content {
+                    for module_item in items {
+                        if let Item::Struct(struct_item) = module_item {
+                            // Look for the Model struct
+                            if struct_item.ident.to_string() == "Model" {
+                                for field in &struct_item.fields {
+                                    if let Some(ident) = &field.ident {
+                                        // Check if the field name matches directly
+                                        if ident.to_string() == field_name {
+                                            return Some(type_id_to_string(get_type_id_from_ty(&field.ty)));
+                                        }
+                                        
+                                        // Also check if the field has a column_name attribute that matches
+                                        for attr in &field.attrs {
+                                            if attr.path().is_ident("sea_orm") {
+                                                let attr_str = attr.to_token_stream().to_string();
+                                                if attr_str.contains("column_name") {
+                                                    if let Some(start) = attr_str.find("column_name") {
+                                                        if let Some(equals) = attr_str[start..].find('=') {
+                                                            let after_equals = &attr_str[start + equals + 1..];
+                                                            if let Some(quote_start) = after_equals.find('"') {
+                                                                if let Some(quote_end) = after_equals[quote_start + 1..].find('"') {
+                                                                    let column_name = &after_equals[quote_start + 1..quote_start + 1 + quote_end];
+                                                                    if column_name == field_name {
+                                                                        return Some(type_id_to_string(get_type_id_from_ty(&field.ty)));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn extract_entity_metadata(
     file_path: &str,
     entity_name: &str,
-    module_path: &str,
+    _module_path: &str,
+    module_name: &str,
 ) -> Option<EntityMetadata> {
     let content = match fs::read_to_string(file_path) {
         Ok(c) => c,
@@ -193,7 +244,7 @@ fn extract_entity_metadata(
     for item in &file.items {
         if let Item::Mod(module) = item {
             // Only process the module that matches our entity
-            if module.ident.to_string() != *module_path {
+            if module.ident.to_string() != *module_name {
                 continue;
             }
             if let Some((_, items)) = &module.content {
@@ -246,12 +297,8 @@ fn extract_entity_metadata(
                                             primary_key_type = Some(field_type_id);
                                         }
 
-                                        // Check if field ends with _id (foreign key pattern)
-                                        if field_name_str.ends_with("_id") {
-                                            foreign_key_fields.push(field_name_str.clone());
-                                            foreign_key_types
-                                                .push((field_name_str.clone(), type_id_to_string(field_type_id)));
-                                        }
+                                        // Foreign key detection is now handled by parsing Relation enum annotations
+                                        // This ensures we only detect actual foreign keys, not just fields ending with _id
                                     }
                                 }
                             }
@@ -266,7 +313,7 @@ fn extract_entity_metadata(
     for item in &file.items {
         if let Item::Mod(module) = item {
             // Only process the module that matches our entity
-            if module.ident.to_string() != *module_path {
+            if module.ident.to_string() != *module_name {
                 continue;
             }
             if let Some((_, items)) = &module.content {
@@ -373,7 +420,8 @@ fn extract_entity_metadata(
                                                             column_str.split("::").nth(1)
                                                         {
                                                             // Convert PascalCase to snake_case for database field names
-                                                            let snake_case_name = to_snake_case(field_name);
+                                                            let snake_case_name =
+                                                                to_snake_case(field_name);
                                                             foreign_key_field =
                                                                 Some(snake_case_name);
                                                         }
@@ -385,6 +433,20 @@ fn extract_entity_metadata(
                                 }
 
                                 if !target_entity.is_empty() {
+                                    // Only collect foreign key fields from belongs_to relations, not has_many relations
+                                    // In has_many relations, the 'from' field refers to the primary key of the current entity
+                                    // In belongs_to relations, the 'from' field refers to the foreign key in the current entity
+                                    if relation_kind == "BelongsTo" {
+                                        if let Some(ref fk_field) = foreign_key_field {
+                                            foreign_key_fields.push(fk_field.clone());
+                                            
+                                            // Find the type of this foreign key field by looking at the struct fields
+                                            if let Some(field_type) = find_field_type_in_struct(&file, &entity_name, fk_field) {
+                                                foreign_key_types.push((fk_field.clone(), field_type));
+                                            }
+                                        }
+                                    }
+                                    
                                     relations.push(RelationMetadata {
                                         name: relation_name,
                                         target_entity,
@@ -445,390 +507,31 @@ fn resolve_target_table_names(entities_metadata: &mut Vec<EntityMetadata>) {
     }
 }
 
-fn main() {
-    // Debug: Print current working directory
-
-    // Main client (for tests/) - include entities from tests/ only, metadata-only
-    generate_client_for_dir("tests", "caustics_client.rs");
-
-    // Test client (for src/ and tests/) - also generate per-namespace files
-    generate_client_for_dir_multi(&["src", "tests"], "caustics_client_test.rs");
-    generate_per_namespace_files(&["src", "tests"]);
-}
-
-fn generate_client_for_dir(dir: &str, out_file: &str) {
-
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let out_path = Path::new(&out_dir).join(out_file);
-
-    let mut entities = Vec::new();
-
-    for entry in WalkDir::new(dir) {
-        let entry = entry.unwrap();
-        if entry.path().extension().is_some_and(|ext| ext == "rs") {
-            let content = match fs::read_to_string(entry.path()) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let file = match parse_file(&content) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-
-            for item in file.items {
-                if let Item::Mod(module) = &item {
-                    let module_name = module.ident.to_string();
-                    if let Some((_, items)) = &module.content {
-                        let has_caustics_attr = has_caustics_attribute(&module.attrs);
-                        let mut model_found = false;
-                        let mut relation_found = false;
-
-                        for item in items {
-                            if let Item::Struct(struct_item) = item {
-                                if struct_item.ident == "Model" {
-                                    model_found = true;
-                                    if has_caustics_attr || has_caustics_derive(&struct_item.attrs)
-                                    {
-                                        let entity_name = to_pascal_case(&module_name);
-                                        let module_path = module_name.clone();
-                                        let source_file =
-                                            entry.path().to_string_lossy().to_string();
-                                        entities.push((entity_name, module_path, source_file));
-                                    }
-                                }
-                            } else if let Item::Enum(enum_item) = item {
-                                if enum_item.ident == "Relation" {
-                                    relation_found = true;
-                                }
-                            }
-                        }
-
-                        // If we found both Model and Relation in a caustics module, ensure the entity is added
-                        if has_caustics_attr && model_found && relation_found {
-                            let entity_name = to_pascal_case(&module_name);
-                            let module_path = module_name.clone();
-                            if !entities.iter().any(|(name, _, _)| name == &entity_name) {
-                                let source_file = entry.path().to_string_lossy().to_string();
-                                entities.push((entity_name, module_path, source_file));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Also include entities from tests directory for metadata
-    for entry in WalkDir::new("tests") {
-        let entry = entry.unwrap();
-        if entry.path().extension().is_some_and(|ext| ext == "rs") {
-            let content = match fs::read_to_string(entry.path()) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let file = match parse_file(&content) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-
-            for item in file.items {
-                if let Item::Mod(module) = &item {
-                    let module_name = module.ident.to_string();
-                    if let Some((_, items)) = &module.content {
-                        let has_caustics_attr = has_caustics_attribute(&module.attrs);
-                        let mut model_found = false;
-                        let mut relation_found = false;
-
-                        for item in items {
-                            if let Item::Struct(struct_item) = item {
-                                if struct_item.ident == "Model" {
-                                    model_found = true;
-                                    if has_caustics_attr || has_caustics_derive(&struct_item.attrs)
-                                    {
-                                        let entity_name = to_pascal_case(&module_name);
-                                        let module_path = module_name.clone();
-                                        let source_file =
-                                            entry.path().to_string_lossy().to_string();
-                                        entities.push((entity_name, module_path, source_file));
-                                    }
-                                }
-                            } else if let Item::Enum(enum_item) = item {
-                                if enum_item.ident == "Relation" {
-                                    relation_found = true;
-                                }
-                            }
-                        }
-
-                        // If we found both Model and Relation in a caustics module, ensure the entity is added
-                        if has_caustics_attr && model_found && relation_found {
-                            let entity_name = to_pascal_case(&module_name);
-                            let module_path = module_name.clone();
-                            if !entities.iter().any(|(name, _, _)| name == &entity_name) {
-                                let source_file = entry.path().to_string_lossy().to_string();
-                                entities.push((entity_name, module_path, source_file));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Extract metadata for all entities
-    let mut entities_metadata = Vec::new();
-    for (entity_name, module_path, source_file) in &entities {
-        let _file_path = format!("{}/{}.rs", dir, module_path);
-        if let Some(metadata) = extract_entity_metadata(source_file, entity_name, module_path) {
-            entities_metadata.push(metadata);
-        }
-    }
-
-    // Resolve target table names for relations
-    resolve_target_table_names(&mut entities_metadata);
-
-    // Generate only the entity metadata registry for the global client
-    let client_code = generate_metadata_only_client(&entities_metadata);
-    fs::write(out_path, client_code).unwrap();
-}
-
-fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
-    for _dir in dirs {
-    }
-
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let out_path = Path::new(&out_dir).join(out_file);
-
-    let mut entities = Vec::new();
-
-    for dir in dirs {
-        for entry in WalkDir::new(dir) {
-            let entry = entry.unwrap();
-            if entry.path().extension().is_some_and(|ext| ext == "rs") {
-                let content = match fs::read_to_string(entry.path()) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                let file = match parse_file(&content) {
-                    Ok(f) => f,
-                    Err(_) => continue,
-                };
-
-                for item in file.items {
-                    if let Item::Mod(module) = &item {
-                        let module_name = module.ident.to_string();
-                        if let Some((_, items)) = &module.content {
-                            let has_caustics_attr = has_caustics_attribute(&module.attrs);
-                            let mut model_found = false;
-                            let mut relation_found = false;
-
-                            for item in items {
-                                if let Item::Struct(struct_item) = item {
-                                    if struct_item.ident == "Model" {
-                                        model_found = true;
-                                        if has_caustics_attr
-                                            || has_caustics_derive(&struct_item.attrs)
-                                        {
-                                            let entity_name = to_pascal_case(&module_name);
-                                            let module_path = module_name.clone();
-                                            let source_file =
-                                                entry.path().to_string_lossy().to_string();
-                                            entities.push((entity_name, module_path, source_file));
-                                        }
-                                    }
-                                } else if let Item::Enum(enum_item) = item {
-                                    if enum_item.ident == "Relation" {
-                                        relation_found = true;
-                                    }
-                                }
-                            }
-
-                            // If we found both Model and Relation in a caustics module, ensure the entity is added
-                            if has_caustics_attr && model_found && relation_found {
-                                let entity_name = to_pascal_case(&module_name);
-                                let module_path = module_name.clone();
-                                if !entities.iter().any(|(name, _, _)| name == &entity_name) {
-                                    let source_file = entry.path().to_string_lossy().to_string();
-                                    entities.push((entity_name, module_path, source_file));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Extract metadata for all entities
-    let mut entities_metadata = Vec::new();
-    for (entity_name, module_path, source_file) in &entities {
-        // Try to find the file in any of the directories
-        let mut file_path = String::new();
-        for dir in dirs {
-            let test_path = format!("{}/{}.rs", dir, module_path);
-            if std::path::Path::new(&test_path).exists() {
-                file_path = test_path;
-                break;
-            }
-        }
-
-        if !file_path.is_empty() {
-            if let Some(metadata) = extract_entity_metadata(source_file, entity_name, module_path) {
-                entities_metadata.push(metadata);
-            }
-        }
-    }
-
-    // Resolve target table names for relations
-    resolve_target_table_names(&mut entities_metadata);
-
-    // Convert entities to the format expected by generate_client_code
-    let entities_for_codegen: Vec<(String, String)> = entities
-        .iter()
-        .map(|(name, path, _)| (name.clone(), path.clone()))
-        .collect();
-    // Determine if this is a test client based on the output file name
-    let is_test = out_file.contains("_test");
-    let client_code = generate_client_code(&entities_for_codegen, &entities_metadata, is_test);
-    fs::write(out_path, client_code).unwrap();
-}
-
-fn generate_per_namespace_files(dirs: &[&str]) {
-    for _dir in dirs {
-    }
-
-    let out_dir = env::var("OUT_DIR").unwrap();
-
-    // Group entities by namespace (entity_name, module_path, source_file)
-    let mut namespace_entities: std::collections::HashMap<String, Vec<(String, String, String)>> =
-        std::collections::HashMap::new();
-
-    for dir in dirs {
-        for entry in WalkDir::new(dir) {
-            let entry = entry.unwrap();
-            if entry.path().extension().is_some_and(|ext| ext == "rs") {
-                let content = match fs::read_to_string(entry.path()) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                let file = match parse_file(&content) {
-                    Ok(f) => f,
-                    Err(_) => continue,
-                };
-
-                for item in file.items {
-                    if let Item::Mod(module) = &item {
-                        let module_name = module.ident.to_string();
-                        if let Some((_, items)) = &module.content {
-                            let namespace = extract_namespace_from_attrs(&module.attrs);
-                            let has_caustics_attr = has_caustics_attribute(&module.attrs);
-                            let mut model_found = false;
-                            let mut relation_found = false;
-
-                            for item in items {
-                                if let Item::Struct(struct_item) = item {
-                                    if struct_item.ident == "Model" {
-                                        model_found = true;
-                                        if has_caustics_attr
-                                            || has_caustics_derive(&struct_item.attrs)
-                                        {
-                                            let entity_name = to_pascal_case(&module_name);
-                                            let module_path = module_name.clone();
-                                            let source_file =
-                                                entry.path().to_string_lossy().to_string();
-                                            namespace_entities
-                                                .entry(namespace.clone())
-                                                .or_default()
-                                                .push((
-                                                    entity_name.clone(),
-                                                    module_path,
-                                                    source_file.clone(),
-                                                ));
-                                        }
-                                    }
-                                } else if let Item::Enum(enum_item) = item {
-                                    if enum_item.ident == "Relation" {
-                                        relation_found = true;
-                                    }
-                                }
-                            }
-
-                            // If we found both Model and Relation in a caustics module, ensure the entity is added
-                            if has_caustics_attr && model_found && relation_found {
-                                let entity_name = to_pascal_case(&module_name);
-                                let module_path = module_name.clone();
-                                let entities =
-                                    namespace_entities.entry(namespace.clone()).or_default();
-                                if !entities.iter().any(|(name, _, _)| name == &entity_name) {
-                                    let source_file = entry.path().to_string_lossy().to_string();
-                                    entities.push((entity_name, module_path, source_file));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Generate a separate file for each namespace
-    for (namespace, entities) in namespace_entities {
-        if !entities.is_empty() {
-            // Check if we're in a test directory by looking at the current directory
-            let is_test = dirs.contains(&"tests");
-            let out_file = if is_test {
-                format!("caustics_client_{}_test.rs", namespace)
-            } else {
-                format!("caustics_client_{}.rs", namespace)
-            };
-            let out_path = Path::new(&out_dir).join(out_file);
-            // Extract metadata for entities in this namespace
-            let mut entities_metadata = Vec::new();
-            for (entity_name, module_path, source_file) in &entities {
-                if let Some(metadata) =
-                    extract_entity_metadata(source_file, entity_name, module_path)
-                {
-                    entities_metadata.push(metadata);
-                }
-            }
-
-            // Resolve target table names for relations
-            resolve_target_table_names(&mut entities_metadata);
-
-            // Convert entities to the format expected by generate_client_code
-            let entities_for_codegen: Vec<(String, String)> = entities
-                .iter()
-                .map(|(name, path, _)| (name.clone(), path.clone()))
-                .collect();
-            let client_code = generate_client_code(&entities_for_codegen, &entities_metadata, true);
-            fs::write(out_path, client_code).unwrap();
-        }
-    }
-}
-
-fn extract_namespace_from_attrs(attrs: &[Attribute]) -> String {
-    for attr in attrs {
-        if attr.path().is_ident("caustics") {
-            // Convert the attribute to a string and parse it manually
-            let attr_str = quote! { #attr }.to_string();
-            if attr_str.contains("namespace") {
-                // Extract namespace from the attribute string
-                if let Some(start) = attr_str.find("namespace = ") {
-                    let after_namespace = &attr_str[start + 12..];
-                    if let Some(end) = after_namespace.find('"') {
-                        let after_quote = &after_namespace[end + 1..];
-                        if let Some(end_quote) = after_quote.find('"') {
-                            return after_quote[..end_quote].to_string();
-                        }
-                    }
-                }
-            }
-        }
-    }
-    "default".to_string()
-}
-
 fn has_caustics_attribute(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| attr.path().is_ident("caustics"))
+}
+
+fn extract_namespace_from_caustics_attribute(attrs: &[Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("caustics") {
+            // Parse the attribute content to extract namespace
+            let attr_str = attr.to_token_stream().to_string();
+
+            // Look for namespace = "value" pattern
+            if let Some(start) = attr_str.find("namespace") {
+                if let Some(eq) = attr_str[start..].find('=') {
+                    let after = &attr_str[start + eq + 1..];
+                    let first_quote = after.find('"');
+                    let second_quote =
+                        first_quote.and_then(|i| after[i + 1..].find('"').map(|j| i + 1 + j));
+                    if let (Some(i), Some(j)) = (first_quote, second_quote) {
+                        return Some(after[i + 1..j].to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn has_caustics_derive(attrs: &[Attribute]) -> bool {
@@ -861,190 +564,22 @@ fn to_pascal_case(s: &str) -> String {
     out
 }
 
-fn generate_metadata_only_client(entities_metadata: &[EntityMetadata]) -> String {
-    // Generate entity metadata
-    let entity_metadata_items: Vec<_> = entities_metadata
-        .iter()
-        .map(|metadata| {
-            let entity_name = &metadata.name;
-            let foreign_key_fields = &metadata.foreign_key_fields;
-            let relations = &metadata.relations;
-
-            let fk_fields_lit = foreign_key_fields
-                .iter()
-                .map(|f| quote! { #f })
-                .collect::<Vec<_>>();
-            let relations_lit = relations
-                .iter()
-                .map(|rel| {
-                    let rel_name = &rel.name;
-                    let target_entity = &rel.target_entity;
-                    let target_table_name = &rel.target_table_name;
-                    let fk_field = &rel.foreign_key_field;
-                    let relation_kind = &rel.relation_kind;
-                    let fk_field_expr = if let Some(fk) = fk_field {
-                        quote! { Some(#fk) }
-                    } else {
-                        quote! { None }
-                    };
-                    quote! {
-                        EntityRelationMetadata {
-                            name: #rel_name,
-                            target_entity: #target_entity,
-                            target_table_name: #target_table_name,
-                            foreign_key_field: #fk_field_expr,
-                            relation_kind: #relation_kind,
-                        }
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            let primary_key_field_lit =
-                syn::LitStr::new(&metadata.primary_key_field, proc_macro2::Span::call_site());
-            let primary_key_type_lit = &metadata.primary_key_type;
-            let foreign_key_types_lit = metadata
-                .foreign_key_types
-                .iter()
-                .map(|(field, type_id)| {
-                    quote! { (#field, #type_id) }
-                })
-                .collect::<Vec<_>>();
-
-            let table_name_lit = &metadata.table_name;
-            quote! {
-                EntityMetadata {
-                    name: #entity_name,
-                    table_name: #table_name_lit,
-                    primary_key_field: #primary_key_field_lit,
-                    foreign_key_fields: &[#(#fk_fields_lit),*],
-                    relations: &[#(#relations_lit),*],
-                    primary_key_type: #primary_key_type_lit,
-                    foreign_key_types: &[#(#foreign_key_types_lit),*],
-                }
-            }
-        })
-        .collect();
-
-    let client_code = quote! {
-        // Raw SQL support (typed bindings and results)
-        #[derive(Clone, Debug)]
-        pub struct Raw {
-            pub sql: String,
-            pub params: Vec<sea_orm::Value>,
-        }
-
-        impl Raw {
-            pub fn new<S: Into<String>>(sql: S, params: Vec<sea_orm::Value>) -> Self {
-                Self { sql: sql.into(), params }
-            }
-            pub fn push_param<T: Into<sea_orm::Value>>(&mut self, v: T) { self.params.push(v.into()); }
-            pub fn with_params(mut self, mut extra: Vec<sea_orm::Value>) -> Self {
-                self.params.append(&mut extra);
-                self
-            }
-        }
-
-        // Entity metadata for dynamic foreign key field detection
-        #[derive(Debug, Clone)]
-        pub struct EntityMetadata {
-            pub name: &'static str,
-            pub table_name: &'static str,
-            pub primary_key_field: &'static str,
-            pub foreign_key_fields: &'static [&'static str],
-            pub relations: &'static [EntityRelationMetadata],
-            pub primary_key_type: &'static str,
-            pub foreign_key_types: &'static [(&'static str, &'static str)],
-        }
-
-        #[derive(Debug, Clone)]
-        pub struct EntityRelationMetadata {
-            pub name: &'static str,
-            pub target_entity: &'static str,
-            pub target_table_name: &'static str,
-            pub foreign_key_field: Option<&'static str>,
-            pub relation_kind: &'static str,
-        }
-
-        // Static entity metadata registry
-        static ENTITY_METADATA: &[EntityMetadata] = &[
-            #(#entity_metadata_items),*
-        ];
-
-        // Helper function to get entity metadata with namespace-aware resolution
-        pub fn get_entity_metadata(entity_name: &str) -> Option<&'static EntityMetadata> {
-            // Try exact match first
-            if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == entity_name) {
-                return Some(meta);
-            }
-
-            // Try namespace-aware resolution
-            // 1. Try with namespace prefix (e.g., "blog::Post" -> "Post")
-            else if let Some(colon_pos) = entity_name.rfind("::") {
-                let name_without_namespace = &entity_name[colon_pos + 2..];
-                if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == name_without_namespace) {
-                    return Some(meta);
-                }
-            }
-
-            // 2. Try PascalCase variations
-            let pascal_case = to_pascal_case(entity_name);
-            if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == pascal_case) {
-                return Some(meta);
-            }
-
-            // 3. Try snake_case to PascalCase conversion
-            let snake_case = entity_name.to_lowercase();
-            let snake_to_pascal = to_pascal_case(&snake_case);
-            if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == snake_to_pascal) {
-                return Some(meta);
-            }
-
-            None
-        }
-
-        // Helper function to convert to PascalCase
-        fn to_pascal_case(s: &str) -> String {
-            let mut out = String::new();
-            let mut capitalize = true;
-            for c in s.chars() {
-                if c == '_' {
-                    capitalize = true;
-                } else if capitalize {
-                    out.push(c.to_ascii_uppercase());
-                    capitalize = false;
-                } else {
-                    out.push(c);
-                }
-            }
-            out
-        }
-
-
-    };
-
-    client_code.to_string()
-}
-
 fn generate_client_code(
-    entities: &[(String, String)],
+    entities: &[(String, String, Option<String>)],
     entities_metadata: &[EntityMetadata],
-    is_test: bool,
+    _include_registry: bool,
 ) -> String {
     let entity_methods: Vec<_> = entities
         .iter()
-        .map(|(name, module_path)| {
+        .map(|(name, _module_path, _namespace)| {
             let method_name = format_ident!("{}", name.to_lowercase());
-            let module_ident = format_ident!("{}", module_path);
-            let module_tokens = if is_test {
-                // In integration tests, this file is included inside the per-file module (e.g., blog_test),
-                // so entity modules live under self::, not crate::
-                quote! { self::#module_ident }
-            } else {
-                quote! { #module_ident }
-            };
+            let entity_name = name.to_lowercase();
+            let entity_client_alias = format_ident!("{}EntityClient", entity_name);
+
+            // Use imported EntityClient with alias instead of fully qualified path
             quote! {
-                pub fn #method_name(&self) -> #module_tokens::EntityClient<'_, DatabaseConnection> {
-                    #module_tokens::EntityClient::new(&*self.db, self.database_backend)
+                pub fn #method_name(&self) -> #entity_client_alias<'_, DatabaseConnection> {
+                    #entity_client_alias::new(&*self.db, self.database_backend)
                 }
             }
         })
@@ -1052,17 +587,15 @@ fn generate_client_code(
 
     let tx_entity_methods: Vec<_> = entities
         .iter()
-        .map(|(name, module_path)| {
+        .map(|(name, _module_path, _namespace)| {
             let method_name = format_ident!("{}", name.to_lowercase());
-            let module_ident = format_ident!("{}", module_path);
-            let module_tokens = if is_test {
-                quote! { self::#module_ident }
-            } else {
-                quote! { #module_ident }
-            };
+            let entity_name = name.to_lowercase();
+            let entity_client_alias = format_ident!("{}EntityClient", entity_name);
+
+            // Use imported EntityClient with alias instead of fully qualified path
             quote! {
-                pub fn #method_name(&self) -> #module_tokens::EntityClient<'_, DatabaseTransaction> {
-                    #module_tokens::EntityClient::new(&*self.tx, self.database_backend)
+                pub fn #method_name(&self) -> #entity_client_alias<'_, DatabaseTransaction> {
+                    #entity_client_alias::new(&*self.tx, self.database_backend)
                 }
             }
         })
@@ -1071,21 +604,19 @@ fn generate_client_code(
     // Generate the composite registry
     let registry_match_arms: Vec<_> = entities
         .iter()
-        .map(|(name, module_path)| {
+        .map(|(name, _module_path, _namespace)| {
             let entity_name_lower = name.to_lowercase();
-            let module_ident = format_ident!("{}", module_path);
-            let module_tokens = if is_test {
-                quote! { self::#module_ident }
-            } else {
-                quote! { #module_ident }
-            };
+            let entity_name = name.to_lowercase();
+            let entity_fetcher_alias = format_ident!("{}EntityFetcherImpl", entity_name);
+
+            // Use imported EntityFetcherImpl with alias instead of fully qualified path
             quote! {
-                #entity_name_lower => Some(&#module_tokens::EntityFetcherImpl),
+                #entity_name_lower => Some(&#entity_fetcher_alias),
             }
         })
         .collect();
 
-    // Determine import statements and prefixes based on is_test
+    // Import statements and prefixes (no longer conditional)
     let (
         imports,
         registry_trait,
@@ -1095,91 +626,29 @@ fn generate_client_code(
         batch_result,
         from_model,
         merge_into,
-    ) = if is_test {
-        (
-            quote! {
-                use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
-                use caustics::{EntityRegistry, EntityFetcher};
-            },
-            quote! { EntityRegistry<C> },
-            quote! { EntityFetcher },
-            quote! { caustics::BatchContainer },
-            quote! { caustics::BatchQuery },
-            quote! { caustics::BatchResult },
-            quote! { caustics::FromModel },
-            quote! { caustics::MergeInto },
-        )
-    } else {
-        (
-            quote! {
-                use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
-            },
-            quote! { crate::EntityRegistry<C> },
-            quote! { crate::EntityFetcher },
-            quote! { crate::BatchContainer },
-            quote! { crate::BatchQuery },
-            quote! { crate::BatchResult },
-            quote! { crate::FromModel },
-            quote! { crate::MergeInto },
-        )
-    };
-
-    let hooks_mod = if is_test {
-        quote! { caustics::hooks }
-    } else {
-        quote! { crate::hooks }
-    };
-
-    let entity_prelude_uses: Vec<_> = entities
-        .iter()
-        .map(|(_, module_path)| {
-            let module_ident = format_ident!("{}", module_path);
-            quote! { pub use self::#module_ident::prelude::*; }
-        })
-        .collect();
-
-    let (prelude_use, prelude_block) = if is_test {
-        (
-            quote! { #[allow(unused_imports)] use self::prelude::*; },
-            quote! { #[allow(ambiguous_glob_reexports)] pub mod prelude {} },
-        )
-    } else {
-        (
-            quote! { #[allow(unused_imports)] use self::prelude::*; },
-            quote! {
-                #[allow(ambiguous_glob_reexports)]
-                pub mod prelude {
-                    #(#entity_prelude_uses)*
-                }
-            },
-        )
-    };
-
-    let raw_block = if is_test {
+    ) = (
         quote! {
-            // Use the library Raw type in tests to avoid duplicate types
-            pub use caustics::Raw;
-        }
-    } else {
-        quote! {
-            // Raw SQL support (typed bindings and results)
-            #[derive(Clone, Debug)]
-            pub struct Raw {
-                pub sql: String,
-                pub params: Vec<sea_orm::Value>,
-            }
+            use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+        },
+        quote! { caustics::EntityRegistry<C> },
+        quote! { caustics::EntityFetcher },
+        quote! { caustics::BatchContainer },
+        quote! { caustics::BatchQuery },
+        quote! { caustics::BatchResult },
+        quote! { caustics::FromModel },
+        quote! { caustics::MergeInto },
+    );
 
-            impl Raw {
-                pub fn new<S: Into<String>>(sql: S, params: Vec<sea_orm::Value>) -> Self {
-                    Self { sql: sql.into(), params }
-                }
-                pub fn push_param<T: Into<sea_orm::Value>>(&mut self, v: T) { self.params.push(v.into()); }
-                pub fn with_params(mut self, mut extra: Vec<sea_orm::Value>) -> Self {
-                    self.params.append(&mut extra);
-                    self
-                }
-            }
-        }
+    let hooks_mod = quote! { caustics::hooks };
+
+    let _entity_prelude_uses: Vec<proc_macro2::TokenStream> = Vec::new();
+
+    let (prelude_use, prelude_block) = (quote! {}, quote! {});
+
+    let raw_block = quote! {
+        // Raw SQL support (typed bindings and results)
+        // Use the Raw type from the main caustics crate
+        pub use caustics::Raw;
     };
 
     // Generate entity metadata
@@ -1208,7 +677,7 @@ fn generate_client_code(
                         quote! { None }
                     };
                     quote! {
-                        EntityRelationMetadata {
+                        caustics::EntityRelationMetadata {
                             name: #rel_name,
                             target_entity: #target_entity,
                             target_table_name: #target_table_name,
@@ -1232,7 +701,7 @@ fn generate_client_code(
 
             let table_name_lit = &metadata.table_name;
             quote! {
-                EntityMetadata {
+                caustics::EntityMetadata {
                     name: #entity_name,
                     table_name: #table_name_lit,
                     primary_key_field: #primary_key_field_lit,
@@ -1245,40 +714,48 @@ fn generate_client_code(
         })
         .collect();
 
+    // Generate import statements for entities with aliases to avoid conflicts
+    let entity_imports: Vec<proc_macro2::TokenStream> = entities
+        .iter()
+        .map(|(name, module_path, _namespace)| {
+            let entity_name = name.to_lowercase();
+            let entity_ident = format_ident!("{}", entity_name);
+            let path_parts: Vec<&str> = module_path.split("::").collect();
+
+            // Build the import path: crate::module_path::entity_name
+            let mut import_path = quote! { crate };
+            for part in &path_parts {
+                let part_ident = format_ident!("{}", part);
+                import_path = quote! { #import_path::#part_ident };
+            }
+            import_path = quote! { #import_path::#entity_ident };
+
+            let entity_client_alias = format_ident!("{}EntityClient", entity_name);
+            let entity_fetcher_alias = format_ident!("{}EntityFetcherImpl", entity_name);
+            quote! {
+                use #import_path::{EntityClient as #entity_client_alias, EntityFetcherImpl as #entity_fetcher_alias};
+            }
+        })
+        .collect();
+
     let client_code = quote! {
         #imports
+        // Import entity clients and fetchers
+        #(#entity_imports)*
+
         // Bring all extension traits into scope automatically (generated)
         #prelude_use
         // Arc is used directly to avoid conflicts with test imports
 
-        // Entity metadata for dynamic foreign key field detection
-        #[derive(Debug, Clone)]
-        pub struct EntityMetadata {
-            pub name: &'static str,
-            pub table_name: &'static str,
-            pub primary_key_field: &'static str,
-            pub foreign_key_fields: &'static [&'static str],
-            pub relations: &'static [EntityRelationMetadata],
-            pub primary_key_type: &'static str,
-            pub foreign_key_types: &'static [(&'static str, &'static str)],
-        }
-
-        #[derive(Debug, Clone)]
-        pub struct EntityRelationMetadata {
-            pub name: &'static str,
-            pub target_entity: &'static str,
-            pub target_table_name: &'static str,
-            pub foreign_key_field: Option<&'static str>,
-            pub relation_kind: &'static str,
-        }
+        // Use caustics::EntityMetadata instead of defining our own
 
         // Static entity metadata registry
-        static ENTITY_METADATA: &[EntityMetadata] = &[
+        static ENTITY_METADATA: &[caustics::EntityMetadata] = &[
             #(#entity_metadata_items),*
         ];
 
         // Helper function to get entity metadata with namespace-aware resolution
-        pub fn get_entity_metadata(entity_name: &str) -> Option<&'static EntityMetadata> {
+        pub fn get_entity_metadata(entity_name: &str) -> Option<&'static caustics::EntityMetadata> {
             // Try exact match first
             if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == entity_name) {
                 return Some(meta);
@@ -1525,6 +1002,13 @@ fn generate_client_code(
             &REGISTRY
         }
 
+        // Implement EntityMetadataProvider for the generated client
+        impl caustics::EntityMetadataProvider for CompositeEntityRegistry {
+            fn get_entity_metadata(&self, entity_name: &str) -> Option<&'static caustics::EntityMetadata> {
+                get_entity_metadata(entity_name)
+            }
+        }
+
         // Helper functions for macro-generated code to use registry-based type conversion
         pub fn __caustics_convert_key_for_primary_key(entity: &str, key: caustics::CausticsKey) -> Box<dyn std::any::Any + Send + Sync> {
             <CompositeEntityRegistry as caustics::EntityTypeRegistry>::convert_key_for_primary_key(&REGISTRY, entity, key)
@@ -1630,7 +1114,7 @@ fn generate_client_code(
         ) -> Result<sea_orm::Value, String> {
             // Convert using the registry
             let converted = __caustics_convert_and_downcast(entity, field, key)?;
-            
+
             // Get the field type to determine how to convert to sea_orm::Value
             let field_type = __caustics_get_field_type(entity, field)
                 .ok_or_else(|| format!("No type information found for field {} in entity {}", field, entity))?;
@@ -1832,7 +1316,7 @@ fn generate_client_code(
             let converted = __caustics_convert_key_for_foreign_key(entity, field, key);
             let field_type = __caustics_get_foreign_key_type(entity, field)
                 .expect("Failed to get field type information");
-            
+
             // Return the appropriate ActiveValue based on field type
             match field_type {
                 "i8" => {
@@ -1881,7 +1365,7 @@ fn generate_client_code(
             let converted = __caustics_convert_key_for_foreign_key(entity, field, key);
             let field_type = __caustics_get_foreign_key_type(entity, field)
                 .expect("Failed to get field type information");
-            
+
             // Return the appropriate ActiveValue with Some() wrapper for optional fields
             match field_type {
                 "i8" => {
@@ -2103,7 +1587,116 @@ fn generate_client_code(
                 }
             }
         }
+
     };
 
     client_code.to_string()
+}
+
+/// Generate client code for external projects (like examples)
+pub fn generate_client_for_external_project(
+    dirs: &[&str],
+    out_file: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    generate_client_for_external_project_with_name(dirs, out_file)
+}
+
+pub fn generate_client_for_external_project_with_name(
+    dirs: &[&str],
+    out_file: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = std::env::var("OUT_DIR")?;
+    let out_path = std::path::Path::new(&out_dir).join(out_file);
+
+    let mut entities: Vec<(String, String, String, String, Option<String>)> = Vec::new(); // (entity_name, module_path, module_name, source_file, namespace)
+
+    for dir in dirs {
+        for entry in walkdir::WalkDir::new(dir) {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|ext| ext == "rs") {
+                let content = std::fs::read_to_string(entry.path())?;
+                let file = syn::parse_file(&content)?;
+
+                for item in file.items {
+                    if let syn::Item::Mod(module) = &item {
+                        let module_name = module.ident.to_string();
+                        if let Some((_, items)) = &module.content {
+                            let has_caustics_attr = has_caustics_attribute(&module.attrs);
+                            let namespace = if has_caustics_attr {
+                                extract_namespace_from_caustics_attribute(&module.attrs)
+                            } else {
+                                None
+                            };
+
+                            for item in items {
+                                if let syn::Item::Struct(struct_item) = item {
+                                    if struct_item.ident == "Model" {
+                                        if has_caustics_attr
+                                            || has_caustics_derive(&struct_item.attrs)
+                                        {
+                                            let entity_name = to_pascal_case(&module_name);
+
+                                            // Construct the full module path from the file structure
+                                            let file_path = entry.path();
+                                            let dir_path = std::path::Path::new(dir);
+                                            let relative_path = file_path
+                                                .strip_prefix(dir_path)
+                                                .unwrap_or(file_path);
+
+                                            // Convert file path to module path
+                                            let path_str = relative_path.to_string_lossy();
+                                            let module_path = if path_str.ends_with(".rs") {
+                                                // Remove .rs extension and convert path separators to ::
+                                                let without_ext = path_str.trim_end_matches(".rs");
+                                                without_ext.replace(std::path::MAIN_SEPARATOR, "::")
+                                            } else {
+                                                module_name.clone()
+                                            };
+                                            let source_file =
+                                                entry.path().to_string_lossy().to_string();
+                                            entities.push((
+                                                entity_name,
+                                                module_path,
+                                                module_name.clone(),
+                                                source_file,
+                                                namespace.clone(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Note: Entity is already added above when Model struct is found with caustics attributes
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Extract metadata for all entities
+    let mut entities_metadata = Vec::new();
+    for (entity_name, module_path, module_name, source_file, _namespace) in &entities {
+        if let Some(metadata) =
+            extract_entity_metadata(source_file, entity_name, module_path, module_name)
+        {
+            entities_metadata.push(metadata);
+        }
+    }
+
+    // Resolve target table names for relations
+    resolve_target_table_names(&mut entities_metadata);
+
+    // Convert entities to the format expected by generate_client_code
+    let entities_for_codegen: Vec<(String, String, Option<String>)> = entities
+        .iter()
+        .map(|(name, path, _module_name, _, namespace)| {
+            (name.clone(), path.clone(), namespace.clone())
+        })
+        .collect();
+
+    let client_code = generate_client_code(&entities_for_codegen, &entities_metadata, true);
+    std::fs::write(out_path, client_code)?;
+
+    Ok(())
 }

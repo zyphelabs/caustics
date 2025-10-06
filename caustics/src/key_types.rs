@@ -41,36 +41,76 @@ pub enum CausticsKey {
 
 impl CausticsKey {
     // Integer type constructors
-    pub fn from_i8(value: i8) -> Self { Self::I8(value) }
-    pub fn from_i16(value: i16) -> Self { Self::I16(value) }
-    pub fn from_i32(value: i32) -> Self { Self::I32(value) }
-    pub fn from_i64(value: i64) -> Self { Self::I64(value) }
-    pub fn from_isize(value: isize) -> Self { Self::ISize(value) }
-    pub fn from_u8(value: u8) -> Self { Self::U8(value) }
-    pub fn from_u16(value: u16) -> Self { Self::U16(value) }
-    pub fn from_u32(value: u32) -> Self { Self::U32(value) }
-    pub fn from_u64(value: u64) -> Self { Self::U64(value) }
-    pub fn from_usize(value: usize) -> Self { Self::USize(value) }
-    
+    pub fn from_i8(value: i8) -> Self {
+        Self::I8(value)
+    }
+    pub fn from_i16(value: i16) -> Self {
+        Self::I16(value)
+    }
+    pub fn from_i32(value: i32) -> Self {
+        Self::I32(value)
+    }
+    pub fn from_i64(value: i64) -> Self {
+        Self::I64(value)
+    }
+    pub fn from_isize(value: isize) -> Self {
+        Self::ISize(value)
+    }
+    pub fn from_u8(value: u8) -> Self {
+        Self::U8(value)
+    }
+    pub fn from_u16(value: u16) -> Self {
+        Self::U16(value)
+    }
+    pub fn from_u32(value: u32) -> Self {
+        Self::U32(value)
+    }
+    pub fn from_u64(value: u64) -> Self {
+        Self::U64(value)
+    }
+    pub fn from_usize(value: usize) -> Self {
+        Self::USize(value)
+    }
+
     // Floating point type constructors
-    pub fn from_f32(value: f32) -> Self { Self::F32(value) }
-    pub fn from_f64(value: f64) -> Self { Self::F64(value) }
-    
+    pub fn from_f32(value: f32) -> Self {
+        Self::F32(value)
+    }
+    pub fn from_f64(value: f64) -> Self {
+        Self::F64(value)
+    }
+
     // String and UUID constructors
-    pub fn from_string(value: String) -> Self { Self::String(value) }
-    pub fn from_uuid(value: Uuid) -> Self { Self::Uuid(value) }
-    
+    pub fn from_string(value: String) -> Self {
+        Self::String(value)
+    }
+    pub fn from_uuid(value: Uuid) -> Self {
+        Self::Uuid(value)
+    }
+
     // Boolean constructor
-    pub fn from_bool(value: bool) -> Self { Self::Bool(value) }
-    
+    pub fn from_bool(value: bool) -> Self {
+        Self::Bool(value)
+    }
+
     // DateTime constructors
-    pub fn from_datetime_utc(value: chrono::DateTime<chrono::Utc>) -> Self { Self::DateTimeUtc(value) }
-    pub fn from_naive_datetime(value: chrono::NaiveDateTime) -> Self { Self::NaiveDateTime(value) }
-    pub fn from_naive_date(value: chrono::NaiveDate) -> Self { Self::NaiveDate(value) }
-    pub fn from_naive_time(value: chrono::NaiveTime) -> Self { Self::NaiveTime(value) }
-    
+    pub fn from_datetime_utc(value: chrono::DateTime<chrono::Utc>) -> Self {
+        Self::DateTimeUtc(value)
+    }
+    pub fn from_naive_datetime(value: chrono::NaiveDateTime) -> Self {
+        Self::NaiveDateTime(value)
+    }
+    pub fn from_naive_date(value: chrono::NaiveDate) -> Self {
+        Self::NaiveDate(value)
+    }
+    pub fn from_naive_time(value: chrono::NaiveTime) -> Self {
+        Self::NaiveTime(value)
+    }
+
     // JSON constructor
-    pub fn from_json(value: serde_json::Value) -> Self { Self::Json(value) }
+    pub fn from_json(value: serde_json::Value) -> Self {
+        Self::Json(value)
+    }
 
     /// Convert to a sea_orm::Value for database operations
     pub fn to_db_value(&self) -> Value {
@@ -248,65 +288,65 @@ impl FromStr for CausticsKey {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Handle wrapped format first: I32(42), String(hello), Uuid(uuid-string), etc.
         if s.starts_with("I8(") && s.ends_with(")") {
-            let value_str = &s[3..s.len()-1];
+            let value_str = &s[3..s.len() - 1];
             if let Ok(value) = value_str.parse::<i8>() {
                 return Ok(Self::I8(value));
             }
         } else if s.starts_with("I16(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<i16>() {
                 return Ok(Self::I16(value));
             }
         } else if s.starts_with("I32(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<i32>() {
                 return Ok(Self::I32(value));
             }
         } else if s.starts_with("I64(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<i64>() {
                 return Ok(Self::I64(value));
             }
         } else if s.starts_with("U8(") && s.ends_with(")") {
-            let value_str = &s[3..s.len()-1];
+            let value_str = &s[3..s.len() - 1];
             if let Ok(value) = value_str.parse::<u8>() {
                 return Ok(Self::U8(value));
             }
         } else if s.starts_with("U16(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<u16>() {
                 return Ok(Self::U16(value));
             }
         } else if s.starts_with("U32(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<u32>() {
                 return Ok(Self::U32(value));
             }
         } else if s.starts_with("U64(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<u64>() {
                 return Ok(Self::U64(value));
             }
         } else if s.starts_with("F32(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<f32>() {
                 return Ok(Self::F32(value));
             }
         } else if s.starts_with("F64(") && s.ends_with(")") {
-            let value_str = &s[4..s.len()-1];
+            let value_str = &s[4..s.len() - 1];
             if let Ok(value) = value_str.parse::<f64>() {
                 return Ok(Self::F64(value));
             }
         } else if s.starts_with("Bool(") && s.ends_with(")") {
-            let value_str = &s[5..s.len()-1];
+            let value_str = &s[5..s.len() - 1];
             if let Ok(value) = value_str.parse::<bool>() {
                 return Ok(Self::Bool(value));
             }
         } else if s.starts_with("String(") && s.ends_with(")") {
-            let value_str = &s[7..s.len()-1];
+            let value_str = &s[7..s.len() - 1];
             return Ok(Self::String(value_str.to_string()));
         } else if s.starts_with("Uuid(") && s.ends_with(")") {
-            let value_str = &s[5..s.len()-1];
+            let value_str = &s[5..s.len() - 1];
             if let Ok(uuid) = Uuid::parse_str(value_str) {
                 return Ok(Self::Uuid(uuid));
             }
@@ -457,33 +497,117 @@ pub fn extract_db_value_as_string(row: &sea_orm::QueryResult, alias: &str) -> Op
     if let Ok(v) = row.try_get::<chrono::NaiveTime>("", alias) {
         return Some(v.to_string());
     }
-    
+
     // If nothing worked, return None
     None
 }
 
 // Conversion traits for easy integration
-impl From<i8> for CausticsKey { fn from(value: i8) -> Self { Self::I8(value) } }
-impl From<i16> for CausticsKey { fn from(value: i16) -> Self { Self::I16(value) } }
-impl From<i32> for CausticsKey { fn from(value: i32) -> Self { Self::I32(value) } }
-impl From<i64> for CausticsKey { fn from(value: i64) -> Self { Self::I64(value) } }
-impl From<isize> for CausticsKey { fn from(value: isize) -> Self { Self::ISize(value) } }
-impl From<u8> for CausticsKey { fn from(value: u8) -> Self { Self::U8(value) } }
-impl From<u16> for CausticsKey { fn from(value: u16) -> Self { Self::U16(value) } }
-impl From<u32> for CausticsKey { fn from(value: u32) -> Self { Self::U32(value) } }
-impl From<u64> for CausticsKey { fn from(value: u64) -> Self { Self::U64(value) } }
-impl From<usize> for CausticsKey { fn from(value: usize) -> Self { Self::USize(value) } }
-impl From<f32> for CausticsKey { fn from(value: f32) -> Self { Self::F32(value) } }
-impl From<f64> for CausticsKey { fn from(value: f64) -> Self { Self::F64(value) } }
-impl From<bool> for CausticsKey { fn from(value: bool) -> Self { Self::Bool(value) } }
-impl From<String> for CausticsKey { fn from(value: String) -> Self { Self::String(value) } }
-impl From<Uuid> for CausticsKey { fn from(value: Uuid) -> Self { Self::Uuid(value) } }
-impl From<&str> for CausticsKey { fn from(value: &str) -> Self { Self::String(value.to_string()) } }
-impl From<chrono::DateTime<chrono::Utc>> for CausticsKey { fn from(value: chrono::DateTime<chrono::Utc>) -> Self { Self::DateTimeUtc(value) } }
-impl From<chrono::NaiveDateTime> for CausticsKey { fn from(value: chrono::NaiveDateTime) -> Self { Self::NaiveDateTime(value) } }
-impl From<chrono::NaiveDate> for CausticsKey { fn from(value: chrono::NaiveDate) -> Self { Self::NaiveDate(value) } }
-impl From<chrono::NaiveTime> for CausticsKey { fn from(value: chrono::NaiveTime) -> Self { Self::NaiveTime(value) } }
-impl From<serde_json::Value> for CausticsKey { fn from(value: serde_json::Value) -> Self { Self::Json(value) } }
+impl From<i8> for CausticsKey {
+    fn from(value: i8) -> Self {
+        Self::I8(value)
+    }
+}
+impl From<i16> for CausticsKey {
+    fn from(value: i16) -> Self {
+        Self::I16(value)
+    }
+}
+impl From<i32> for CausticsKey {
+    fn from(value: i32) -> Self {
+        Self::I32(value)
+    }
+}
+impl From<i64> for CausticsKey {
+    fn from(value: i64) -> Self {
+        Self::I64(value)
+    }
+}
+impl From<isize> for CausticsKey {
+    fn from(value: isize) -> Self {
+        Self::ISize(value)
+    }
+}
+impl From<u8> for CausticsKey {
+    fn from(value: u8) -> Self {
+        Self::U8(value)
+    }
+}
+impl From<u16> for CausticsKey {
+    fn from(value: u16) -> Self {
+        Self::U16(value)
+    }
+}
+impl From<u32> for CausticsKey {
+    fn from(value: u32) -> Self {
+        Self::U32(value)
+    }
+}
+impl From<u64> for CausticsKey {
+    fn from(value: u64) -> Self {
+        Self::U64(value)
+    }
+}
+impl From<usize> for CausticsKey {
+    fn from(value: usize) -> Self {
+        Self::USize(value)
+    }
+}
+impl From<f32> for CausticsKey {
+    fn from(value: f32) -> Self {
+        Self::F32(value)
+    }
+}
+impl From<f64> for CausticsKey {
+    fn from(value: f64) -> Self {
+        Self::F64(value)
+    }
+}
+impl From<bool> for CausticsKey {
+    fn from(value: bool) -> Self {
+        Self::Bool(value)
+    }
+}
+impl From<String> for CausticsKey {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+impl From<Uuid> for CausticsKey {
+    fn from(value: Uuid) -> Self {
+        Self::Uuid(value)
+    }
+}
+impl From<&str> for CausticsKey {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+impl From<chrono::DateTime<chrono::Utc>> for CausticsKey {
+    fn from(value: chrono::DateTime<chrono::Utc>) -> Self {
+        Self::DateTimeUtc(value)
+    }
+}
+impl From<chrono::NaiveDateTime> for CausticsKey {
+    fn from(value: chrono::NaiveDateTime) -> Self {
+        Self::NaiveDateTime(value)
+    }
+}
+impl From<chrono::NaiveDate> for CausticsKey {
+    fn from(value: chrono::NaiveDate) -> Self {
+        Self::NaiveDate(value)
+    }
+}
+impl From<chrono::NaiveTime> for CausticsKey {
+    fn from(value: chrono::NaiveTime) -> Self {
+        Self::NaiveTime(value)
+    }
+}
+impl From<serde_json::Value> for CausticsKey {
+    fn from(value: serde_json::Value) -> Self {
+        Self::Json(value)
+    }
+}
 
 // Try to convert to specific types
 impl TryFrom<CausticsKey> for i8 {
@@ -652,21 +776,126 @@ pub trait KeyConvertible {
         Self: Sized;
 }
 
-impl KeyConvertible for i8 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::I8(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for i16 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::I16(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for i32 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::I32(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for i64 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::I64(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for isize { fn to_caustics_key(self) -> CausticsKey { CausticsKey::ISize(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for u8 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::U8(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for u16 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::U16(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for u32 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::U32(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for u64 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::U64(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for usize { fn to_caustics_key(self) -> CausticsKey { CausticsKey::USize(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for f32 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::F32(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for f64 { fn to_caustics_key(self) -> CausticsKey { CausticsKey::F64(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for bool { fn to_caustics_key(self) -> CausticsKey { CausticsKey::Bool(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for String { fn to_caustics_key(self) -> CausticsKey { CausticsKey::String(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
-impl KeyConvertible for Uuid { fn to_caustics_key(self) -> CausticsKey { CausticsKey::Uuid(self) } fn from_caustics_key(key: CausticsKey) -> Result<Self, String> { key.try_into() } }
+impl KeyConvertible for i8 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::I8(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for i16 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::I16(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for i32 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::I32(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for i64 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::I64(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for isize {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::ISize(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for u8 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::U8(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for u16 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::U16(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for u32 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::U32(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for u64 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::U64(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for usize {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::USize(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for f32 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::F32(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for f64 {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::F64(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for bool {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::Bool(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for String {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::String(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
+impl KeyConvertible for Uuid {
+    fn to_caustics_key(self) -> CausticsKey {
+        CausticsKey::Uuid(self)
+    }
+    fn from_caustics_key(key: CausticsKey) -> Result<Self, String> {
+        key.try_into()
+    }
+}
 
 /// Helper trait for extracting keys from models
 pub trait ExtractKey {
@@ -680,332 +909,338 @@ pub trait SetKey {
 
 /// Unified key conversion function that can convert any CausticsKey to any target type
 /// This replaces the huge, duplicated conversion functions in build.rs
-pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(key: CausticsKey, target_type_str: &str) -> Box<dyn std::any::Any + Send + Sync> {
+pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
+    key: CausticsKey,
+    target_type_str: &str,
+) -> Box<dyn std::any::Any + Send + Sync> {
     match target_type_str {
-        "i8" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value),
-                CausticsKey::I16(value) => Box::new(value as i8),
-                CausticsKey::I32(value) => Box::new(value as i8),
-                CausticsKey::I64(value) => Box::new(value as i8),
-                CausticsKey::ISize(value) => Box::new(value as i8),
-                CausticsKey::U8(value) => Box::new(value as i8),
-                CausticsKey::U16(value) => Box::new(value as i8),
-                CausticsKey::U32(value) => Box::new(value as i8),
-                CausticsKey::U64(value) => Box::new(value as i8),
-                CausticsKey::USize(value) => Box::new(value as i8),
-                CausticsKey::F32(value) => Box::new(value as i8),
-                CausticsKey::F64(value) => Box::new(value as i8),
-                CausticsKey::String(value) => Box::new(value.parse::<i8>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i8 } else { 0i8 }),
-                _ => Box::new(0i8),
-            }
+        "i8" => match key {
+            CausticsKey::I8(value) => Box::new(value),
+            CausticsKey::I16(value) => Box::new(value as i8),
+            CausticsKey::I32(value) => Box::new(value as i8),
+            CausticsKey::I64(value) => Box::new(value as i8),
+            CausticsKey::ISize(value) => Box::new(value as i8),
+            CausticsKey::U8(value) => Box::new(value as i8),
+            CausticsKey::U16(value) => Box::new(value as i8),
+            CausticsKey::U32(value) => Box::new(value as i8),
+            CausticsKey::U64(value) => Box::new(value as i8),
+            CausticsKey::USize(value) => Box::new(value as i8),
+            CausticsKey::F32(value) => Box::new(value as i8),
+            CausticsKey::F64(value) => Box::new(value as i8),
+            CausticsKey::String(value) => Box::new(value.parse::<i8>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i8 } else { 0i8 }),
+            _ => Box::new(0i8),
         },
-        "i16" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as i16),
-                CausticsKey::I16(value) => Box::new(value),
-                CausticsKey::I32(value) => Box::new(value as i16),
-                CausticsKey::I64(value) => Box::new(value as i16),
-                CausticsKey::ISize(value) => Box::new(value as i16),
-                CausticsKey::U8(value) => Box::new(value as i16),
-                CausticsKey::U16(value) => Box::new(value as i16),
-                CausticsKey::U32(value) => Box::new(value as i16),
-                CausticsKey::U64(value) => Box::new(value as i16),
-                CausticsKey::USize(value) => Box::new(value as i16),
-                CausticsKey::F32(value) => Box::new(value as i16),
-                CausticsKey::F64(value) => Box::new(value as i16),
-                CausticsKey::String(value) => Box::new(value.parse::<i16>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i16 } else { 0i16 }),
-                _ => Box::new(0i16),
-            }
+        "i16" => match key {
+            CausticsKey::I8(value) => Box::new(value as i16),
+            CausticsKey::I16(value) => Box::new(value),
+            CausticsKey::I32(value) => Box::new(value as i16),
+            CausticsKey::I64(value) => Box::new(value as i16),
+            CausticsKey::ISize(value) => Box::new(value as i16),
+            CausticsKey::U8(value) => Box::new(value as i16),
+            CausticsKey::U16(value) => Box::new(value as i16),
+            CausticsKey::U32(value) => Box::new(value as i16),
+            CausticsKey::U64(value) => Box::new(value as i16),
+            CausticsKey::USize(value) => Box::new(value as i16),
+            CausticsKey::F32(value) => Box::new(value as i16),
+            CausticsKey::F64(value) => Box::new(value as i16),
+            CausticsKey::String(value) => Box::new(value.parse::<i16>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i16 } else { 0i16 }),
+            _ => Box::new(0i16),
         },
-        "i32" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as i32),
-                CausticsKey::I16(value) => Box::new(value as i32),
-                CausticsKey::I32(value) => Box::new(value),
-                CausticsKey::I64(value) => Box::new(value as i32),
-                CausticsKey::ISize(value) => Box::new(value as i32),
-                CausticsKey::U8(value) => Box::new(value as i32),
-                CausticsKey::U16(value) => Box::new(value as i32),
-                CausticsKey::U32(value) => Box::new(value as i32),
-                CausticsKey::U64(value) => Box::new(value as i32),
-                CausticsKey::USize(value) => Box::new(value as i32),
-                CausticsKey::F32(value) => Box::new(value as i32),
-                CausticsKey::F64(value) => Box::new(value as i32),
-                CausticsKey::String(value) => Box::new(value.parse::<i32>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i32 } else { 0i32 }),
-                _ => Box::new(0i32),
-            }
+        "i32" => match key {
+            CausticsKey::I8(value) => Box::new(value as i32),
+            CausticsKey::I16(value) => Box::new(value as i32),
+            CausticsKey::I32(value) => Box::new(value),
+            CausticsKey::I64(value) => Box::new(value as i32),
+            CausticsKey::ISize(value) => Box::new(value as i32),
+            CausticsKey::U8(value) => Box::new(value as i32),
+            CausticsKey::U16(value) => Box::new(value as i32),
+            CausticsKey::U32(value) => Box::new(value as i32),
+            CausticsKey::U64(value) => Box::new(value as i32),
+            CausticsKey::USize(value) => Box::new(value as i32),
+            CausticsKey::F32(value) => Box::new(value as i32),
+            CausticsKey::F64(value) => Box::new(value as i32),
+            CausticsKey::String(value) => Box::new(value.parse::<i32>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i32 } else { 0i32 }),
+            _ => Box::new(0i32),
         },
-        "i64" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as i64),
-                CausticsKey::I16(value) => Box::new(value as i64),
-                CausticsKey::I32(value) => Box::new(value as i64),
-                CausticsKey::I64(value) => Box::new(value),
-                CausticsKey::ISize(value) => Box::new(value as i64),
-                CausticsKey::U8(value) => Box::new(value as i64),
-                CausticsKey::U16(value) => Box::new(value as i64),
-                CausticsKey::U32(value) => Box::new(value as i64),
-                CausticsKey::U64(value) => Box::new(value as i64),
-                CausticsKey::USize(value) => Box::new(value as i64),
-                CausticsKey::F32(value) => Box::new(value as i64),
-                CausticsKey::F64(value) => Box::new(value as i64),
-                CausticsKey::String(value) => Box::new(value.parse::<i64>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i64 } else { 0i64 }),
-                _ => Box::new(0i64),
-            }
+        "i64" => match key {
+            CausticsKey::I8(value) => Box::new(value as i64),
+            CausticsKey::I16(value) => Box::new(value as i64),
+            CausticsKey::I32(value) => Box::new(value as i64),
+            CausticsKey::I64(value) => Box::new(value),
+            CausticsKey::ISize(value) => Box::new(value as i64),
+            CausticsKey::U8(value) => Box::new(value as i64),
+            CausticsKey::U16(value) => Box::new(value as i64),
+            CausticsKey::U32(value) => Box::new(value as i64),
+            CausticsKey::U64(value) => Box::new(value as i64),
+            CausticsKey::USize(value) => Box::new(value as i64),
+            CausticsKey::F32(value) => Box::new(value as i64),
+            CausticsKey::F64(value) => Box::new(value as i64),
+            CausticsKey::String(value) => Box::new(value.parse::<i64>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i64 } else { 0i64 }),
+            _ => Box::new(0i64),
         },
-        "isize" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as isize),
-                CausticsKey::I16(value) => Box::new(value as isize),
-                CausticsKey::I32(value) => Box::new(value as isize),
-                CausticsKey::I64(value) => Box::new(value as isize),
-                CausticsKey::ISize(value) => Box::new(value),
-                CausticsKey::U8(value) => Box::new(value as isize),
-                CausticsKey::U16(value) => Box::new(value as isize),
-                CausticsKey::U32(value) => Box::new(value as isize),
-                CausticsKey::U64(value) => Box::new(value as isize),
-                CausticsKey::USize(value) => Box::new(value as isize),
-                CausticsKey::F32(value) => Box::new(value as isize),
-                CausticsKey::F64(value) => Box::new(value as isize),
-                CausticsKey::String(value) => Box::new(value.parse::<isize>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1isize } else { 0isize }),
-                _ => Box::new(0isize),
-            }
+        "isize" => match key {
+            CausticsKey::I8(value) => Box::new(value as isize),
+            CausticsKey::I16(value) => Box::new(value as isize),
+            CausticsKey::I32(value) => Box::new(value as isize),
+            CausticsKey::I64(value) => Box::new(value as isize),
+            CausticsKey::ISize(value) => Box::new(value),
+            CausticsKey::U8(value) => Box::new(value as isize),
+            CausticsKey::U16(value) => Box::new(value as isize),
+            CausticsKey::U32(value) => Box::new(value as isize),
+            CausticsKey::U64(value) => Box::new(value as isize),
+            CausticsKey::USize(value) => Box::new(value as isize),
+            CausticsKey::F32(value) => Box::new(value as isize),
+            CausticsKey::F64(value) => Box::new(value as isize),
+            CausticsKey::String(value) => Box::new(value.parse::<isize>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1isize } else { 0isize }),
+            _ => Box::new(0isize),
         },
-        "u8" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u8),
-                CausticsKey::I16(value) => Box::new(value as u8),
-                CausticsKey::I32(value) => Box::new(value as u8),
-                CausticsKey::I64(value) => Box::new(value as u8),
-                CausticsKey::ISize(value) => Box::new(value as u8),
-                CausticsKey::U8(value) => Box::new(value),
-                CausticsKey::U16(value) => Box::new(value as u8),
-                CausticsKey::U32(value) => Box::new(value as u8),
-                CausticsKey::U64(value) => Box::new(value as u8),
-                CausticsKey::USize(value) => Box::new(value as u8),
-                CausticsKey::F32(value) => Box::new(value as u8),
-                CausticsKey::F64(value) => Box::new(value as u8),
-                CausticsKey::String(value) => Box::new(value.parse::<u8>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u8 } else { 0u8 }),
-                _ => Box::new(0u8),
-            }
+        "u8" => match key {
+            CausticsKey::I8(value) => Box::new(value as u8),
+            CausticsKey::I16(value) => Box::new(value as u8),
+            CausticsKey::I32(value) => Box::new(value as u8),
+            CausticsKey::I64(value) => Box::new(value as u8),
+            CausticsKey::ISize(value) => Box::new(value as u8),
+            CausticsKey::U8(value) => Box::new(value),
+            CausticsKey::U16(value) => Box::new(value as u8),
+            CausticsKey::U32(value) => Box::new(value as u8),
+            CausticsKey::U64(value) => Box::new(value as u8),
+            CausticsKey::USize(value) => Box::new(value as u8),
+            CausticsKey::F32(value) => Box::new(value as u8),
+            CausticsKey::F64(value) => Box::new(value as u8),
+            CausticsKey::String(value) => Box::new(value.parse::<u8>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u8 } else { 0u8 }),
+            _ => Box::new(0u8),
         },
-        "u16" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u16),
-                CausticsKey::I16(value) => Box::new(value as u16),
-                CausticsKey::I32(value) => Box::new(value as u16),
-                CausticsKey::I64(value) => Box::new(value as u16),
-                CausticsKey::ISize(value) => Box::new(value as u16),
-                CausticsKey::U8(value) => Box::new(value as u16),
-                CausticsKey::U16(value) => Box::new(value),
-                CausticsKey::U32(value) => Box::new(value as u16),
-                CausticsKey::U64(value) => Box::new(value as u16),
-                CausticsKey::USize(value) => Box::new(value as u16),
-                CausticsKey::F32(value) => Box::new(value as u16),
-                CausticsKey::F64(value) => Box::new(value as u16),
-                CausticsKey::String(value) => Box::new(value.parse::<u16>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u16 } else { 0u16 }),
-                _ => Box::new(0u16),
-            }
+        "u16" => match key {
+            CausticsKey::I8(value) => Box::new(value as u16),
+            CausticsKey::I16(value) => Box::new(value as u16),
+            CausticsKey::I32(value) => Box::new(value as u16),
+            CausticsKey::I64(value) => Box::new(value as u16),
+            CausticsKey::ISize(value) => Box::new(value as u16),
+            CausticsKey::U8(value) => Box::new(value as u16),
+            CausticsKey::U16(value) => Box::new(value),
+            CausticsKey::U32(value) => Box::new(value as u16),
+            CausticsKey::U64(value) => Box::new(value as u16),
+            CausticsKey::USize(value) => Box::new(value as u16),
+            CausticsKey::F32(value) => Box::new(value as u16),
+            CausticsKey::F64(value) => Box::new(value as u16),
+            CausticsKey::String(value) => Box::new(value.parse::<u16>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u16 } else { 0u16 }),
+            _ => Box::new(0u16),
         },
-        "u32" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u32),
-                CausticsKey::I16(value) => Box::new(value as u32),
-                CausticsKey::I32(value) => Box::new(value as u32),
-                CausticsKey::I64(value) => Box::new(value as u32),
-                CausticsKey::ISize(value) => Box::new(value as u32),
-                CausticsKey::U8(value) => Box::new(value as u32),
-                CausticsKey::U16(value) => Box::new(value as u32),
-                CausticsKey::U32(value) => Box::new(value),
-                CausticsKey::U64(value) => Box::new(value as u32),
-                CausticsKey::USize(value) => Box::new(value as u32),
-                CausticsKey::F32(value) => Box::new(value as u32),
-                CausticsKey::F64(value) => Box::new(value as u32),
-                CausticsKey::String(value) => Box::new(value.parse::<u32>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u32 } else { 0u32 }),
-                _ => Box::new(0u32),
-            }
+        "u32" => match key {
+            CausticsKey::I8(value) => Box::new(value as u32),
+            CausticsKey::I16(value) => Box::new(value as u32),
+            CausticsKey::I32(value) => Box::new(value as u32),
+            CausticsKey::I64(value) => Box::new(value as u32),
+            CausticsKey::ISize(value) => Box::new(value as u32),
+            CausticsKey::U8(value) => Box::new(value as u32),
+            CausticsKey::U16(value) => Box::new(value as u32),
+            CausticsKey::U32(value) => Box::new(value),
+            CausticsKey::U64(value) => Box::new(value as u32),
+            CausticsKey::USize(value) => Box::new(value as u32),
+            CausticsKey::F32(value) => Box::new(value as u32),
+            CausticsKey::F64(value) => Box::new(value as u32),
+            CausticsKey::String(value) => Box::new(value.parse::<u32>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u32 } else { 0u32 }),
+            _ => Box::new(0u32),
         },
-        "u64" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u64),
-                CausticsKey::I16(value) => Box::new(value as u64),
-                CausticsKey::I32(value) => Box::new(value as u64),
-                CausticsKey::I64(value) => Box::new(value as u64),
-                CausticsKey::ISize(value) => Box::new(value as u64),
-                CausticsKey::U8(value) => Box::new(value as u64),
-                CausticsKey::U16(value) => Box::new(value as u64),
-                CausticsKey::U32(value) => Box::new(value as u64),
-                CausticsKey::U64(value) => Box::new(value),
-                CausticsKey::USize(value) => Box::new(value as u64),
-                CausticsKey::F32(value) => Box::new(value as u64),
-                CausticsKey::F64(value) => Box::new(value as u64),
-                CausticsKey::String(value) => Box::new(value.parse::<u64>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u64 } else { 0u64 }),
-                _ => Box::new(0u64),
-            }
+        "u64" => match key {
+            CausticsKey::I8(value) => Box::new(value as u64),
+            CausticsKey::I16(value) => Box::new(value as u64),
+            CausticsKey::I32(value) => Box::new(value as u64),
+            CausticsKey::I64(value) => Box::new(value as u64),
+            CausticsKey::ISize(value) => Box::new(value as u64),
+            CausticsKey::U8(value) => Box::new(value as u64),
+            CausticsKey::U16(value) => Box::new(value as u64),
+            CausticsKey::U32(value) => Box::new(value as u64),
+            CausticsKey::U64(value) => Box::new(value),
+            CausticsKey::USize(value) => Box::new(value as u64),
+            CausticsKey::F32(value) => Box::new(value as u64),
+            CausticsKey::F64(value) => Box::new(value as u64),
+            CausticsKey::String(value) => Box::new(value.parse::<u64>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u64 } else { 0u64 }),
+            _ => Box::new(0u64),
         },
-        "usize" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as usize),
-                CausticsKey::I16(value) => Box::new(value as usize),
-                CausticsKey::I32(value) => Box::new(value as usize),
-                CausticsKey::I64(value) => Box::new(value as usize),
-                CausticsKey::ISize(value) => Box::new(value as usize),
-                CausticsKey::U8(value) => Box::new(value as usize),
-                CausticsKey::U16(value) => Box::new(value as usize),
-                CausticsKey::U32(value) => Box::new(value as usize),
-                CausticsKey::U64(value) => Box::new(value as usize),
-                CausticsKey::USize(value) => Box::new(value),
-                CausticsKey::F32(value) => Box::new(value as usize),
-                CausticsKey::F64(value) => Box::new(value as usize),
-                CausticsKey::String(value) => Box::new(value.parse::<usize>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1usize } else { 0usize }),
-                _ => Box::new(0usize),
-            }
+        "usize" => match key {
+            CausticsKey::I8(value) => Box::new(value as usize),
+            CausticsKey::I16(value) => Box::new(value as usize),
+            CausticsKey::I32(value) => Box::new(value as usize),
+            CausticsKey::I64(value) => Box::new(value as usize),
+            CausticsKey::ISize(value) => Box::new(value as usize),
+            CausticsKey::U8(value) => Box::new(value as usize),
+            CausticsKey::U16(value) => Box::new(value as usize),
+            CausticsKey::U32(value) => Box::new(value as usize),
+            CausticsKey::U64(value) => Box::new(value as usize),
+            CausticsKey::USize(value) => Box::new(value),
+            CausticsKey::F32(value) => Box::new(value as usize),
+            CausticsKey::F64(value) => Box::new(value as usize),
+            CausticsKey::String(value) => Box::new(value.parse::<usize>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1usize } else { 0usize }),
+            _ => Box::new(0usize),
         },
-        "f32" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as f32),
-                CausticsKey::I16(value) => Box::new(value as f32),
-                CausticsKey::I32(value) => Box::new(value as f32),
-                CausticsKey::I64(value) => Box::new(value as f32),
-                CausticsKey::ISize(value) => Box::new(value as f32),
-                CausticsKey::U8(value) => Box::new(value as f32),
-                CausticsKey::U16(value) => Box::new(value as f32),
-                CausticsKey::U32(value) => Box::new(value as f32),
-                CausticsKey::U64(value) => Box::new(value as f32),
-                CausticsKey::USize(value) => Box::new(value as f32),
-                CausticsKey::F32(value) => Box::new(value),
-                CausticsKey::F64(value) => Box::new(value as f32),
-                CausticsKey::String(value) => Box::new(value.parse::<f32>().unwrap_or(0.0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1.0f32 } else { 0.0f32 }),
-                _ => Box::new(0.0f32),
-            }
+        "f32" => match key {
+            CausticsKey::I8(value) => Box::new(value as f32),
+            CausticsKey::I16(value) => Box::new(value as f32),
+            CausticsKey::I32(value) => Box::new(value as f32),
+            CausticsKey::I64(value) => Box::new(value as f32),
+            CausticsKey::ISize(value) => Box::new(value as f32),
+            CausticsKey::U8(value) => Box::new(value as f32),
+            CausticsKey::U16(value) => Box::new(value as f32),
+            CausticsKey::U32(value) => Box::new(value as f32),
+            CausticsKey::U64(value) => Box::new(value as f32),
+            CausticsKey::USize(value) => Box::new(value as f32),
+            CausticsKey::F32(value) => Box::new(value),
+            CausticsKey::F64(value) => Box::new(value as f32),
+            CausticsKey::String(value) => Box::new(value.parse::<f32>().unwrap_or(0.0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1.0f32 } else { 0.0f32 }),
+            _ => Box::new(0.0f32),
         },
-        "f64" => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as f64),
-                CausticsKey::I16(value) => Box::new(value as f64),
-                CausticsKey::I32(value) => Box::new(value as f64),
-                CausticsKey::I64(value) => Box::new(value as f64),
-                CausticsKey::ISize(value) => Box::new(value as f64),
-                CausticsKey::U8(value) => Box::new(value as f64),
-                CausticsKey::U16(value) => Box::new(value as f64),
-                CausticsKey::U32(value) => Box::new(value as f64),
-                CausticsKey::U64(value) => Box::new(value as f64),
-                CausticsKey::USize(value) => Box::new(value as f64),
-                CausticsKey::F32(value) => Box::new(value as f64),
-                CausticsKey::F64(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<f64>().unwrap_or(0.0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1.0f64 } else { 0.0f64 }),
-                _ => Box::new(0.0f64),
-            }
+        "f64" => match key {
+            CausticsKey::I8(value) => Box::new(value as f64),
+            CausticsKey::I16(value) => Box::new(value as f64),
+            CausticsKey::I32(value) => Box::new(value as f64),
+            CausticsKey::I64(value) => Box::new(value as f64),
+            CausticsKey::ISize(value) => Box::new(value as f64),
+            CausticsKey::U8(value) => Box::new(value as f64),
+            CausticsKey::U16(value) => Box::new(value as f64),
+            CausticsKey::U32(value) => Box::new(value as f64),
+            CausticsKey::U64(value) => Box::new(value as f64),
+            CausticsKey::USize(value) => Box::new(value as f64),
+            CausticsKey::F32(value) => Box::new(value as f64),
+            CausticsKey::F64(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(value.parse::<f64>().unwrap_or(0.0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1.0f64 } else { 0.0f64 }),
+            _ => Box::new(0.0f64),
         },
-        "String" | "str" => {
-            match key {
-                CausticsKey::String(value) => Box::new(value),
-                CausticsKey::I8(value) => Box::new(value.to_string()),
-                CausticsKey::I16(value) => Box::new(value.to_string()),
-                CausticsKey::I32(value) => Box::new(value.to_string()),
-                CausticsKey::I64(value) => Box::new(value.to_string()),
-                CausticsKey::ISize(value) => Box::new(value.to_string()),
-                CausticsKey::U8(value) => Box::new(value.to_string()),
-                CausticsKey::U16(value) => Box::new(value.to_string()),
-                CausticsKey::U32(value) => Box::new(value.to_string()),
-                CausticsKey::U64(value) => Box::new(value.to_string()),
-                CausticsKey::USize(value) => Box::new(value.to_string()),
-                CausticsKey::F32(value) => Box::new(value.to_string()),
-                CausticsKey::F64(value) => Box::new(value.to_string()),
-                CausticsKey::Bool(value) => Box::new(value.to_string()),
-                CausticsKey::Uuid(value) => Box::new(value.to_string()),
-                CausticsKey::DateTimeUtc(value) => Box::new(value.to_rfc3339()),
-                CausticsKey::NaiveDateTime(value) => Box::new(value.format("%Y-%m-%d %H:%M:%S").to_string()),
-                CausticsKey::NaiveDate(value) => Box::new(value.format("%Y-%m-%d").to_string()),
-                CausticsKey::NaiveTime(value) => Box::new(value.format("%H:%M:%S").to_string()),
-                CausticsKey::Json(value) => Box::new(value.to_string()),
+        "String" | "str" => match key {
+            CausticsKey::String(value) => Box::new(value),
+            CausticsKey::I8(value) => Box::new(value.to_string()),
+            CausticsKey::I16(value) => Box::new(value.to_string()),
+            CausticsKey::I32(value) => Box::new(value.to_string()),
+            CausticsKey::I64(value) => Box::new(value.to_string()),
+            CausticsKey::ISize(value) => Box::new(value.to_string()),
+            CausticsKey::U8(value) => Box::new(value.to_string()),
+            CausticsKey::U16(value) => Box::new(value.to_string()),
+            CausticsKey::U32(value) => Box::new(value.to_string()),
+            CausticsKey::U64(value) => Box::new(value.to_string()),
+            CausticsKey::USize(value) => Box::new(value.to_string()),
+            CausticsKey::F32(value) => Box::new(value.to_string()),
+            CausticsKey::F64(value) => Box::new(value.to_string()),
+            CausticsKey::Bool(value) => Box::new(value.to_string()),
+            CausticsKey::Uuid(value) => Box::new(value.to_string()),
+            CausticsKey::DateTimeUtc(value) => Box::new(value.to_rfc3339()),
+            CausticsKey::NaiveDateTime(value) => {
+                Box::new(value.format("%Y-%m-%d %H:%M:%S").to_string())
             }
+            CausticsKey::NaiveDate(value) => Box::new(value.format("%Y-%m-%d").to_string()),
+            CausticsKey::NaiveTime(value) => Box::new(value.format("%H:%M:%S").to_string()),
+            CausticsKey::Json(value) => Box::new(value.to_string()),
         },
-        "bool" => {
-            match key {
-                CausticsKey::Bool(value) => Box::new(value),
-                CausticsKey::I8(value) => Box::new(value != 0),
-                CausticsKey::I16(value) => Box::new(value != 0),
-                CausticsKey::I32(value) => Box::new(value != 0),
-                CausticsKey::I64(value) => Box::new(value != 0),
-                CausticsKey::ISize(value) => Box::new(value != 0),
-                CausticsKey::U8(value) => Box::new(value != 0),
-                CausticsKey::U16(value) => Box::new(value != 0),
-                CausticsKey::U32(value) => Box::new(value != 0),
-                CausticsKey::U64(value) => Box::new(value != 0),
-                CausticsKey::USize(value) => Box::new(value != 0),
-                CausticsKey::F32(value) => Box::new(value != 0.0),
-                CausticsKey::F64(value) => Box::new(value != 0.0),
-                CausticsKey::String(value) => Box::new(value.parse::<bool>().unwrap_or(false)),
-                _ => Box::new(false),
-            }
+        "bool" => match key {
+            CausticsKey::Bool(value) => Box::new(value),
+            CausticsKey::I8(value) => Box::new(value != 0),
+            CausticsKey::I16(value) => Box::new(value != 0),
+            CausticsKey::I32(value) => Box::new(value != 0),
+            CausticsKey::I64(value) => Box::new(value != 0),
+            CausticsKey::ISize(value) => Box::new(value != 0),
+            CausticsKey::U8(value) => Box::new(value != 0),
+            CausticsKey::U16(value) => Box::new(value != 0),
+            CausticsKey::U32(value) => Box::new(value != 0),
+            CausticsKey::U64(value) => Box::new(value != 0),
+            CausticsKey::USize(value) => Box::new(value != 0),
+            CausticsKey::F32(value) => Box::new(value != 0.0),
+            CausticsKey::F64(value) => Box::new(value != 0.0),
+            CausticsKey::String(value) => Box::new(value.parse::<bool>().unwrap_or(false)),
+            _ => Box::new(false),
         },
-        "uuid::Uuid" => {
-            match key {
-                CausticsKey::Uuid(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<Uuid>().unwrap_or_else(|_| Uuid::new_v4())),
-                _ => Box::new(Uuid::new_v4()),
+        "uuid::Uuid" => match key {
+            CausticsKey::Uuid(value) => Box::new(value),
+            CausticsKey::String(value) => {
+                Box::new(value.parse::<Uuid>().unwrap_or_else(|_| Uuid::new_v4()))
             }
+            _ => Box::new(Uuid::new_v4()),
         },
-        "chrono::DateTime<chrono::Utc>" => {
-            match key {
-                CausticsKey::DateTimeUtc(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::DateTime<chrono::Utc>>().unwrap_or_else(|_| chrono::Utc::now())),
-                _ => Box::new(chrono::Utc::now()),
-            }
+        "chrono::DateTime<chrono::Utc>" => match key {
+            CausticsKey::DateTimeUtc(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(
+                value
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            ),
+            _ => Box::new(chrono::Utc::now()),
         },
-        "chrono::NaiveDateTime" => {
-            match key {
-                CausticsKey::NaiveDateTime(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::NaiveDateTime>().unwrap_or_else(|_| chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc())),
-                _ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
+        "chrono::NaiveDateTime" => match key {
+            CausticsKey::NaiveDateTime(value) => Box::new(value),
+            CausticsKey::String(value) => {
+                Box::new(value.parse::<chrono::NaiveDateTime>().unwrap_or_else(|_| {
+                    chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()
+                }))
             }
+            _ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
         },
-        "chrono::NaiveDate" => {
-            match key {
-                CausticsKey::NaiveDate(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::NaiveDate>().unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())),
-                _ => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
-            }
+        "chrono::NaiveDate" => match key {
+            CausticsKey::NaiveDate(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(
+                value
+                    .parse::<chrono::NaiveDate>()
+                    .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
+            ),
+            _ => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
         },
-        "chrono::NaiveTime" => {
-            match key {
-                CausticsKey::NaiveTime(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::NaiveTime>().unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap())),
-                _ => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-            }
+        "chrono::NaiveTime" => match key {
+            CausticsKey::NaiveTime(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(
+                value
+                    .parse::<chrono::NaiveTime>()
+                    .unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
+            ),
+            _ => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
         },
-        "serde_json::Value" => {
-            match key {
-                CausticsKey::Json(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(serde_json::from_str::<serde_json::Value>(&value).unwrap_or_else(|_| serde_json::Value::Null)),
-                CausticsKey::I8(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::I16(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::I32(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::I64(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U8(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U16(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U32(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U64(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::F32(value) => Box::new(serde_json::Value::Number(serde_json::Number::from_f64(value as f64).unwrap_or(serde_json::Number::from(0)))),
-                CausticsKey::F64(value) => Box::new(serde_json::Value::Number(serde_json::Number::from_f64(value).unwrap_or(serde_json::Number::from(0)))),
-                CausticsKey::Bool(value) => Box::new(serde_json::Value::Bool(value)),
-                CausticsKey::Uuid(value) => Box::new(serde_json::Value::String(value.to_string())),
-                _ => Box::new(serde_json::Value::Null),
+        "serde_json::Value" => match key {
+            CausticsKey::Json(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(
+                serde_json::from_str::<serde_json::Value>(&value)
+                    .unwrap_or_else(|_| serde_json::Value::Null),
+            ),
+            CausticsKey::I8(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
             }
+            CausticsKey::I16(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::I32(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::I64(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U8(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U16(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U32(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U64(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::F32(value) => Box::new(serde_json::Value::Number(
+                serde_json::Number::from_f64(value as f64).unwrap_or(serde_json::Number::from(0)),
+            )),
+            CausticsKey::F64(value) => Box::new(serde_json::Value::Number(
+                serde_json::Number::from_f64(value).unwrap_or(serde_json::Number::from(0)),
+            )),
+            CausticsKey::Bool(value) => Box::new(serde_json::Value::Bool(value)),
+            CausticsKey::Uuid(value) => Box::new(serde_json::Value::String(value.to_string())),
+            _ => Box::new(serde_json::Value::Null),
         },
         _ => {
             // Unknown type, try to convert to the most appropriate type
@@ -1024,340 +1259,346 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(key: 
     }
 }
 
-pub fn convert_key_to_type<T: 'static + Default + Send + Sync>(key: CausticsKey, target_type_id: std::any::TypeId) -> Box<dyn std::any::Any + Send + Sync> {
+pub fn convert_key_to_type<T: 'static + Default + Send + Sync>(
+    key: CausticsKey,
+    target_type_id: std::any::TypeId,
+) -> Box<dyn std::any::Any + Send + Sync> {
     match target_type_id {
         // Integer types
-        type_id if type_id == std::any::TypeId::of::<i8>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value),
-                CausticsKey::I16(value) => Box::new(value as i8),
-                CausticsKey::I32(value) => Box::new(value as i8),
-                CausticsKey::I64(value) => Box::new(value as i8),
-                CausticsKey::ISize(value) => Box::new(value as i8),
-                CausticsKey::U8(value) => Box::new(value as i8),
-                CausticsKey::U16(value) => Box::new(value as i8),
-                CausticsKey::U32(value) => Box::new(value as i8),
-                CausticsKey::U64(value) => Box::new(value as i8),
-                CausticsKey::USize(value) => Box::new(value as i8),
-                CausticsKey::F32(value) => Box::new(value as i8),
-                CausticsKey::F64(value) => Box::new(value as i8),
-                CausticsKey::String(value) => Box::new(value.parse::<i8>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i8 } else { 0i8 }),
-                _ => Box::new(0i8),
-            }
+        type_id if type_id == std::any::TypeId::of::<i8>() => match key {
+            CausticsKey::I8(value) => Box::new(value),
+            CausticsKey::I16(value) => Box::new(value as i8),
+            CausticsKey::I32(value) => Box::new(value as i8),
+            CausticsKey::I64(value) => Box::new(value as i8),
+            CausticsKey::ISize(value) => Box::new(value as i8),
+            CausticsKey::U8(value) => Box::new(value as i8),
+            CausticsKey::U16(value) => Box::new(value as i8),
+            CausticsKey::U32(value) => Box::new(value as i8),
+            CausticsKey::U64(value) => Box::new(value as i8),
+            CausticsKey::USize(value) => Box::new(value as i8),
+            CausticsKey::F32(value) => Box::new(value as i8),
+            CausticsKey::F64(value) => Box::new(value as i8),
+            CausticsKey::String(value) => Box::new(value.parse::<i8>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i8 } else { 0i8 }),
+            _ => Box::new(0i8),
         },
-        type_id if type_id == std::any::TypeId::of::<i16>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as i16),
-                CausticsKey::I16(value) => Box::new(value),
-                CausticsKey::I32(value) => Box::new(value as i16),
-                CausticsKey::I64(value) => Box::new(value as i16),
-                CausticsKey::ISize(value) => Box::new(value as i16),
-                CausticsKey::U8(value) => Box::new(value as i16),
-                CausticsKey::U16(value) => Box::new(value as i16),
-                CausticsKey::U32(value) => Box::new(value as i16),
-                CausticsKey::U64(value) => Box::new(value as i16),
-                CausticsKey::USize(value) => Box::new(value as i16),
-                CausticsKey::F32(value) => Box::new(value as i16),
-                CausticsKey::F64(value) => Box::new(value as i16),
-                CausticsKey::String(value) => Box::new(value.parse::<i16>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i16 } else { 0i16 }),
-                _ => Box::new(0i16),
-            }
+        type_id if type_id == std::any::TypeId::of::<i16>() => match key {
+            CausticsKey::I8(value) => Box::new(value as i16),
+            CausticsKey::I16(value) => Box::new(value),
+            CausticsKey::I32(value) => Box::new(value as i16),
+            CausticsKey::I64(value) => Box::new(value as i16),
+            CausticsKey::ISize(value) => Box::new(value as i16),
+            CausticsKey::U8(value) => Box::new(value as i16),
+            CausticsKey::U16(value) => Box::new(value as i16),
+            CausticsKey::U32(value) => Box::new(value as i16),
+            CausticsKey::U64(value) => Box::new(value as i16),
+            CausticsKey::USize(value) => Box::new(value as i16),
+            CausticsKey::F32(value) => Box::new(value as i16),
+            CausticsKey::F64(value) => Box::new(value as i16),
+            CausticsKey::String(value) => Box::new(value.parse::<i16>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i16 } else { 0i16 }),
+            _ => Box::new(0i16),
         },
-        type_id if type_id == std::any::TypeId::of::<i32>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as i32),
-                CausticsKey::I16(value) => Box::new(value as i32),
-                CausticsKey::I32(value) => Box::new(value),
-                CausticsKey::I64(value) => Box::new(value as i32),
-                CausticsKey::ISize(value) => Box::new(value as i32),
-                CausticsKey::U8(value) => Box::new(value as i32),
-                CausticsKey::U16(value) => Box::new(value as i32),
-                CausticsKey::U32(value) => Box::new(value as i32),
-                CausticsKey::U64(value) => Box::new(value as i32),
-                CausticsKey::USize(value) => Box::new(value as i32),
-                CausticsKey::F32(value) => Box::new(value as i32),
-                CausticsKey::F64(value) => Box::new(value as i32),
-                CausticsKey::String(value) => Box::new(value.parse::<i32>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i32 } else { 0i32 }),
-                _ => Box::new(0i32),
-            }
+        type_id if type_id == std::any::TypeId::of::<i32>() => match key {
+            CausticsKey::I8(value) => Box::new(value as i32),
+            CausticsKey::I16(value) => Box::new(value as i32),
+            CausticsKey::I32(value) => Box::new(value),
+            CausticsKey::I64(value) => Box::new(value as i32),
+            CausticsKey::ISize(value) => Box::new(value as i32),
+            CausticsKey::U8(value) => Box::new(value as i32),
+            CausticsKey::U16(value) => Box::new(value as i32),
+            CausticsKey::U32(value) => Box::new(value as i32),
+            CausticsKey::U64(value) => Box::new(value as i32),
+            CausticsKey::USize(value) => Box::new(value as i32),
+            CausticsKey::F32(value) => Box::new(value as i32),
+            CausticsKey::F64(value) => Box::new(value as i32),
+            CausticsKey::String(value) => Box::new(value.parse::<i32>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i32 } else { 0i32 }),
+            _ => Box::new(0i32),
         },
-        type_id if type_id == std::any::TypeId::of::<i64>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as i64),
-                CausticsKey::I16(value) => Box::new(value as i64),
-                CausticsKey::I32(value) => Box::new(value as i64),
-                CausticsKey::I64(value) => Box::new(value),
-                CausticsKey::ISize(value) => Box::new(value as i64),
-                CausticsKey::U8(value) => Box::new(value as i64),
-                CausticsKey::U16(value) => Box::new(value as i64),
-                CausticsKey::U32(value) => Box::new(value as i64),
-                CausticsKey::U64(value) => Box::new(value as i64),
-                CausticsKey::USize(value) => Box::new(value as i64),
-                CausticsKey::F32(value) => Box::new(value as i64),
-                CausticsKey::F64(value) => Box::new(value as i64),
-                CausticsKey::String(value) => Box::new(value.parse::<i64>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1i64 } else { 0i64 }),
-                _ => Box::new(0i64),
-            }
+        type_id if type_id == std::any::TypeId::of::<i64>() => match key {
+            CausticsKey::I8(value) => Box::new(value as i64),
+            CausticsKey::I16(value) => Box::new(value as i64),
+            CausticsKey::I32(value) => Box::new(value as i64),
+            CausticsKey::I64(value) => Box::new(value),
+            CausticsKey::ISize(value) => Box::new(value as i64),
+            CausticsKey::U8(value) => Box::new(value as i64),
+            CausticsKey::U16(value) => Box::new(value as i64),
+            CausticsKey::U32(value) => Box::new(value as i64),
+            CausticsKey::U64(value) => Box::new(value as i64),
+            CausticsKey::USize(value) => Box::new(value as i64),
+            CausticsKey::F32(value) => Box::new(value as i64),
+            CausticsKey::F64(value) => Box::new(value as i64),
+            CausticsKey::String(value) => Box::new(value.parse::<i64>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1i64 } else { 0i64 }),
+            _ => Box::new(0i64),
         },
-        type_id if type_id == std::any::TypeId::of::<isize>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as isize),
-                CausticsKey::I16(value) => Box::new(value as isize),
-                CausticsKey::I32(value) => Box::new(value as isize),
-                CausticsKey::I64(value) => Box::new(value as isize),
-                CausticsKey::ISize(value) => Box::new(value),
-                CausticsKey::U8(value) => Box::new(value as isize),
-                CausticsKey::U16(value) => Box::new(value as isize),
-                CausticsKey::U32(value) => Box::new(value as isize),
-                CausticsKey::U64(value) => Box::new(value as isize),
-                CausticsKey::USize(value) => Box::new(value as isize),
-                CausticsKey::F32(value) => Box::new(value as isize),
-                CausticsKey::F64(value) => Box::new(value as isize),
-                CausticsKey::String(value) => Box::new(value.parse::<isize>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1isize } else { 0isize }),
-                _ => Box::new(0isize),
-            }
+        type_id if type_id == std::any::TypeId::of::<isize>() => match key {
+            CausticsKey::I8(value) => Box::new(value as isize),
+            CausticsKey::I16(value) => Box::new(value as isize),
+            CausticsKey::I32(value) => Box::new(value as isize),
+            CausticsKey::I64(value) => Box::new(value as isize),
+            CausticsKey::ISize(value) => Box::new(value),
+            CausticsKey::U8(value) => Box::new(value as isize),
+            CausticsKey::U16(value) => Box::new(value as isize),
+            CausticsKey::U32(value) => Box::new(value as isize),
+            CausticsKey::U64(value) => Box::new(value as isize),
+            CausticsKey::USize(value) => Box::new(value as isize),
+            CausticsKey::F32(value) => Box::new(value as isize),
+            CausticsKey::F64(value) => Box::new(value as isize),
+            CausticsKey::String(value) => Box::new(value.parse::<isize>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1isize } else { 0isize }),
+            _ => Box::new(0isize),
         },
         // Unsigned integer types
-        type_id if type_id == std::any::TypeId::of::<u8>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u8),
-                CausticsKey::I16(value) => Box::new(value as u8),
-                CausticsKey::I32(value) => Box::new(value as u8),
-                CausticsKey::I64(value) => Box::new(value as u8),
-                CausticsKey::ISize(value) => Box::new(value as u8),
-                CausticsKey::U8(value) => Box::new(value),
-                CausticsKey::U16(value) => Box::new(value as u8),
-                CausticsKey::U32(value) => Box::new(value as u8),
-                CausticsKey::U64(value) => Box::new(value as u8),
-                CausticsKey::USize(value) => Box::new(value as u8),
-                CausticsKey::F32(value) => Box::new(value as u8),
-                CausticsKey::F64(value) => Box::new(value as u8),
-                CausticsKey::String(value) => Box::new(value.parse::<u8>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u8 } else { 0u8 }),
-                _ => Box::new(0u8),
-            }
+        type_id if type_id == std::any::TypeId::of::<u8>() => match key {
+            CausticsKey::I8(value) => Box::new(value as u8),
+            CausticsKey::I16(value) => Box::new(value as u8),
+            CausticsKey::I32(value) => Box::new(value as u8),
+            CausticsKey::I64(value) => Box::new(value as u8),
+            CausticsKey::ISize(value) => Box::new(value as u8),
+            CausticsKey::U8(value) => Box::new(value),
+            CausticsKey::U16(value) => Box::new(value as u8),
+            CausticsKey::U32(value) => Box::new(value as u8),
+            CausticsKey::U64(value) => Box::new(value as u8),
+            CausticsKey::USize(value) => Box::new(value as u8),
+            CausticsKey::F32(value) => Box::new(value as u8),
+            CausticsKey::F64(value) => Box::new(value as u8),
+            CausticsKey::String(value) => Box::new(value.parse::<u8>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u8 } else { 0u8 }),
+            _ => Box::new(0u8),
         },
-        type_id if type_id == std::any::TypeId::of::<u16>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u16),
-                CausticsKey::I16(value) => Box::new(value as u16),
-                CausticsKey::I32(value) => Box::new(value as u16),
-                CausticsKey::I64(value) => Box::new(value as u16),
-                CausticsKey::ISize(value) => Box::new(value as u16),
-                CausticsKey::U8(value) => Box::new(value as u16),
-                CausticsKey::U16(value) => Box::new(value),
-                CausticsKey::U32(value) => Box::new(value as u16),
-                CausticsKey::U64(value) => Box::new(value as u16),
-                CausticsKey::USize(value) => Box::new(value as u16),
-                CausticsKey::F32(value) => Box::new(value as u16),
-                CausticsKey::F64(value) => Box::new(value as u16),
-                CausticsKey::String(value) => Box::new(value.parse::<u16>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u16 } else { 0u16 }),
-                _ => Box::new(0u16),
-            }
+        type_id if type_id == std::any::TypeId::of::<u16>() => match key {
+            CausticsKey::I8(value) => Box::new(value as u16),
+            CausticsKey::I16(value) => Box::new(value as u16),
+            CausticsKey::I32(value) => Box::new(value as u16),
+            CausticsKey::I64(value) => Box::new(value as u16),
+            CausticsKey::ISize(value) => Box::new(value as u16),
+            CausticsKey::U8(value) => Box::new(value as u16),
+            CausticsKey::U16(value) => Box::new(value),
+            CausticsKey::U32(value) => Box::new(value as u16),
+            CausticsKey::U64(value) => Box::new(value as u16),
+            CausticsKey::USize(value) => Box::new(value as u16),
+            CausticsKey::F32(value) => Box::new(value as u16),
+            CausticsKey::F64(value) => Box::new(value as u16),
+            CausticsKey::String(value) => Box::new(value.parse::<u16>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u16 } else { 0u16 }),
+            _ => Box::new(0u16),
         },
-        type_id if type_id == std::any::TypeId::of::<u32>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u32),
-                CausticsKey::I16(value) => Box::new(value as u32),
-                CausticsKey::I32(value) => Box::new(value as u32),
-                CausticsKey::I64(value) => Box::new(value as u32),
-                CausticsKey::ISize(value) => Box::new(value as u32),
-                CausticsKey::U8(value) => Box::new(value as u32),
-                CausticsKey::U16(value) => Box::new(value as u32),
-                CausticsKey::U32(value) => Box::new(value),
-                CausticsKey::U64(value) => Box::new(value as u32),
-                CausticsKey::USize(value) => Box::new(value as u32),
-                CausticsKey::F32(value) => Box::new(value as u32),
-                CausticsKey::F64(value) => Box::new(value as u32),
-                CausticsKey::String(value) => Box::new(value.parse::<u32>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u32 } else { 0u32 }),
-                _ => Box::new(0u32),
-            }
+        type_id if type_id == std::any::TypeId::of::<u32>() => match key {
+            CausticsKey::I8(value) => Box::new(value as u32),
+            CausticsKey::I16(value) => Box::new(value as u32),
+            CausticsKey::I32(value) => Box::new(value as u32),
+            CausticsKey::I64(value) => Box::new(value as u32),
+            CausticsKey::ISize(value) => Box::new(value as u32),
+            CausticsKey::U8(value) => Box::new(value as u32),
+            CausticsKey::U16(value) => Box::new(value as u32),
+            CausticsKey::U32(value) => Box::new(value),
+            CausticsKey::U64(value) => Box::new(value as u32),
+            CausticsKey::USize(value) => Box::new(value as u32),
+            CausticsKey::F32(value) => Box::new(value as u32),
+            CausticsKey::F64(value) => Box::new(value as u32),
+            CausticsKey::String(value) => Box::new(value.parse::<u32>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u32 } else { 0u32 }),
+            _ => Box::new(0u32),
         },
-        type_id if type_id == std::any::TypeId::of::<u64>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as u64),
-                CausticsKey::I16(value) => Box::new(value as u64),
-                CausticsKey::I32(value) => Box::new(value as u64),
-                CausticsKey::I64(value) => Box::new(value as u64),
-                CausticsKey::ISize(value) => Box::new(value as u64),
-                CausticsKey::U8(value) => Box::new(value as u64),
-                CausticsKey::U16(value) => Box::new(value as u64),
-                CausticsKey::U32(value) => Box::new(value as u64),
-                CausticsKey::U64(value) => Box::new(value),
-                CausticsKey::USize(value) => Box::new(value as u64),
-                CausticsKey::F32(value) => Box::new(value as u64),
-                CausticsKey::F64(value) => Box::new(value as u64),
-                CausticsKey::String(value) => Box::new(value.parse::<u64>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1u64 } else { 0u64 }),
-                _ => Box::new(0u64),
-            }
+        type_id if type_id == std::any::TypeId::of::<u64>() => match key {
+            CausticsKey::I8(value) => Box::new(value as u64),
+            CausticsKey::I16(value) => Box::new(value as u64),
+            CausticsKey::I32(value) => Box::new(value as u64),
+            CausticsKey::I64(value) => Box::new(value as u64),
+            CausticsKey::ISize(value) => Box::new(value as u64),
+            CausticsKey::U8(value) => Box::new(value as u64),
+            CausticsKey::U16(value) => Box::new(value as u64),
+            CausticsKey::U32(value) => Box::new(value as u64),
+            CausticsKey::U64(value) => Box::new(value),
+            CausticsKey::USize(value) => Box::new(value as u64),
+            CausticsKey::F32(value) => Box::new(value as u64),
+            CausticsKey::F64(value) => Box::new(value as u64),
+            CausticsKey::String(value) => Box::new(value.parse::<u64>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1u64 } else { 0u64 }),
+            _ => Box::new(0u64),
         },
-        type_id if type_id == std::any::TypeId::of::<usize>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as usize),
-                CausticsKey::I16(value) => Box::new(value as usize),
-                CausticsKey::I32(value) => Box::new(value as usize),
-                CausticsKey::I64(value) => Box::new(value as usize),
-                CausticsKey::ISize(value) => Box::new(value as usize),
-                CausticsKey::U8(value) => Box::new(value as usize),
-                CausticsKey::U16(value) => Box::new(value as usize),
-                CausticsKey::U32(value) => Box::new(value as usize),
-                CausticsKey::U64(value) => Box::new(value as usize),
-                CausticsKey::USize(value) => Box::new(value),
-                CausticsKey::F32(value) => Box::new(value as usize),
-                CausticsKey::F64(value) => Box::new(value as usize),
-                CausticsKey::String(value) => Box::new(value.parse::<usize>().unwrap_or(0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1usize } else { 0usize }),
-                _ => Box::new(0usize),
-            }
+        type_id if type_id == std::any::TypeId::of::<usize>() => match key {
+            CausticsKey::I8(value) => Box::new(value as usize),
+            CausticsKey::I16(value) => Box::new(value as usize),
+            CausticsKey::I32(value) => Box::new(value as usize),
+            CausticsKey::I64(value) => Box::new(value as usize),
+            CausticsKey::ISize(value) => Box::new(value as usize),
+            CausticsKey::U8(value) => Box::new(value as usize),
+            CausticsKey::U16(value) => Box::new(value as usize),
+            CausticsKey::U32(value) => Box::new(value as usize),
+            CausticsKey::U64(value) => Box::new(value as usize),
+            CausticsKey::USize(value) => Box::new(value),
+            CausticsKey::F32(value) => Box::new(value as usize),
+            CausticsKey::F64(value) => Box::new(value as usize),
+            CausticsKey::String(value) => Box::new(value.parse::<usize>().unwrap_or(0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1usize } else { 0usize }),
+            _ => Box::new(0usize),
         },
         // Floating point types
-        type_id if type_id == std::any::TypeId::of::<f32>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as f32),
-                CausticsKey::I16(value) => Box::new(value as f32),
-                CausticsKey::I32(value) => Box::new(value as f32),
-                CausticsKey::I64(value) => Box::new(value as f32),
-                CausticsKey::ISize(value) => Box::new(value as f32),
-                CausticsKey::U8(value) => Box::new(value as f32),
-                CausticsKey::U16(value) => Box::new(value as f32),
-                CausticsKey::U32(value) => Box::new(value as f32),
-                CausticsKey::U64(value) => Box::new(value as f32),
-                CausticsKey::USize(value) => Box::new(value as f32),
-                CausticsKey::F32(value) => Box::new(value),
-                CausticsKey::F64(value) => Box::new(value as f32),
-                CausticsKey::String(value) => Box::new(value.parse::<f32>().unwrap_or(0.0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1.0f32 } else { 0.0f32 }),
-                _ => Box::new(0.0f32),
-            }
+        type_id if type_id == std::any::TypeId::of::<f32>() => match key {
+            CausticsKey::I8(value) => Box::new(value as f32),
+            CausticsKey::I16(value) => Box::new(value as f32),
+            CausticsKey::I32(value) => Box::new(value as f32),
+            CausticsKey::I64(value) => Box::new(value as f32),
+            CausticsKey::ISize(value) => Box::new(value as f32),
+            CausticsKey::U8(value) => Box::new(value as f32),
+            CausticsKey::U16(value) => Box::new(value as f32),
+            CausticsKey::U32(value) => Box::new(value as f32),
+            CausticsKey::U64(value) => Box::new(value as f32),
+            CausticsKey::USize(value) => Box::new(value as f32),
+            CausticsKey::F32(value) => Box::new(value),
+            CausticsKey::F64(value) => Box::new(value as f32),
+            CausticsKey::String(value) => Box::new(value.parse::<f32>().unwrap_or(0.0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1.0f32 } else { 0.0f32 }),
+            _ => Box::new(0.0f32),
         },
-        type_id if type_id == std::any::TypeId::of::<f64>() => {
-            match key {
-                CausticsKey::I8(value) => Box::new(value as f64),
-                CausticsKey::I16(value) => Box::new(value as f64),
-                CausticsKey::I32(value) => Box::new(value as f64),
-                CausticsKey::I64(value) => Box::new(value as f64),
-                CausticsKey::ISize(value) => Box::new(value as f64),
-                CausticsKey::U8(value) => Box::new(value as f64),
-                CausticsKey::U16(value) => Box::new(value as f64),
-                CausticsKey::U32(value) => Box::new(value as f64),
-                CausticsKey::U64(value) => Box::new(value as f64),
-                CausticsKey::USize(value) => Box::new(value as f64),
-                CausticsKey::F32(value) => Box::new(value as f64),
-                CausticsKey::F64(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<f64>().unwrap_or(0.0)),
-                CausticsKey::Bool(value) => Box::new(if value { 1.0f64 } else { 0.0f64 }),
-                _ => Box::new(0.0f64),
-            }
+        type_id if type_id == std::any::TypeId::of::<f64>() => match key {
+            CausticsKey::I8(value) => Box::new(value as f64),
+            CausticsKey::I16(value) => Box::new(value as f64),
+            CausticsKey::I32(value) => Box::new(value as f64),
+            CausticsKey::I64(value) => Box::new(value as f64),
+            CausticsKey::ISize(value) => Box::new(value as f64),
+            CausticsKey::U8(value) => Box::new(value as f64),
+            CausticsKey::U16(value) => Box::new(value as f64),
+            CausticsKey::U32(value) => Box::new(value as f64),
+            CausticsKey::U64(value) => Box::new(value as f64),
+            CausticsKey::USize(value) => Box::new(value as f64),
+            CausticsKey::F32(value) => Box::new(value as f64),
+            CausticsKey::F64(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(value.parse::<f64>().unwrap_or(0.0)),
+            CausticsKey::Bool(value) => Box::new(if value { 1.0f64 } else { 0.0f64 }),
+            _ => Box::new(0.0f64),
         },
         // String type
-        type_id if type_id == std::any::TypeId::of::<String>() => {
-            match key {
-                CausticsKey::String(value) => Box::new(value),
-                CausticsKey::I8(value) => Box::new(value.to_string()),
-                CausticsKey::I16(value) => Box::new(value.to_string()),
-                CausticsKey::I32(value) => Box::new(value.to_string()),
-                CausticsKey::I64(value) => Box::new(value.to_string()),
-                CausticsKey::ISize(value) => Box::new(value.to_string()),
-                CausticsKey::U8(value) => Box::new(value.to_string()),
-                CausticsKey::U16(value) => Box::new(value.to_string()),
-                CausticsKey::U32(value) => Box::new(value.to_string()),
-                CausticsKey::U64(value) => Box::new(value.to_string()),
-                CausticsKey::USize(value) => Box::new(value.to_string()),
-                CausticsKey::F32(value) => Box::new(value.to_string()),
-                CausticsKey::F64(value) => Box::new(value.to_string()),
-                CausticsKey::Bool(value) => Box::new(value.to_string()),
-                CausticsKey::Uuid(value) => Box::new(value.to_string()),
-                CausticsKey::DateTimeUtc(value) => Box::new(value.to_rfc3339()),
-                CausticsKey::NaiveDateTime(value) => Box::new(value.to_string()),
-                CausticsKey::NaiveDate(value) => Box::new(value.to_string()),
-                CausticsKey::NaiveTime(value) => Box::new(value.to_string()),
-                CausticsKey::Json(value) => Box::new(value.to_string()),
-            }
+        type_id if type_id == std::any::TypeId::of::<String>() => match key {
+            CausticsKey::String(value) => Box::new(value),
+            CausticsKey::I8(value) => Box::new(value.to_string()),
+            CausticsKey::I16(value) => Box::new(value.to_string()),
+            CausticsKey::I32(value) => Box::new(value.to_string()),
+            CausticsKey::I64(value) => Box::new(value.to_string()),
+            CausticsKey::ISize(value) => Box::new(value.to_string()),
+            CausticsKey::U8(value) => Box::new(value.to_string()),
+            CausticsKey::U16(value) => Box::new(value.to_string()),
+            CausticsKey::U32(value) => Box::new(value.to_string()),
+            CausticsKey::U64(value) => Box::new(value.to_string()),
+            CausticsKey::USize(value) => Box::new(value.to_string()),
+            CausticsKey::F32(value) => Box::new(value.to_string()),
+            CausticsKey::F64(value) => Box::new(value.to_string()),
+            CausticsKey::Bool(value) => Box::new(value.to_string()),
+            CausticsKey::Uuid(value) => Box::new(value.to_string()),
+            CausticsKey::DateTimeUtc(value) => Box::new(value.to_rfc3339()),
+            CausticsKey::NaiveDateTime(value) => Box::new(value.to_string()),
+            CausticsKey::NaiveDate(value) => Box::new(value.to_string()),
+            CausticsKey::NaiveTime(value) => Box::new(value.to_string()),
+            CausticsKey::Json(value) => Box::new(value.to_string()),
         },
         // Boolean type
-        type_id if type_id == std::any::TypeId::of::<bool>() => {
-            match key {
-                CausticsKey::Bool(value) => Box::new(value),
-                CausticsKey::I8(value) => Box::new(value != 0),
-                CausticsKey::I16(value) => Box::new(value != 0),
-                CausticsKey::I32(value) => Box::new(value != 0),
-                CausticsKey::I64(value) => Box::new(value != 0),
-                CausticsKey::ISize(value) => Box::new(value != 0),
-                CausticsKey::U8(value) => Box::new(value != 0),
-                CausticsKey::U16(value) => Box::new(value != 0),
-                CausticsKey::U32(value) => Box::new(value != 0),
-                CausticsKey::U64(value) => Box::new(value != 0),
-                CausticsKey::USize(value) => Box::new(value != 0),
-                CausticsKey::F32(value) => Box::new(value != 0.0),
-                CausticsKey::F64(value) => Box::new(value != 0.0),
-                CausticsKey::String(value) => Box::new(value.parse::<bool>().unwrap_or(false)),
-                _ => Box::new(false),
-            }
+        type_id if type_id == std::any::TypeId::of::<bool>() => match key {
+            CausticsKey::Bool(value) => Box::new(value),
+            CausticsKey::I8(value) => Box::new(value != 0),
+            CausticsKey::I16(value) => Box::new(value != 0),
+            CausticsKey::I32(value) => Box::new(value != 0),
+            CausticsKey::I64(value) => Box::new(value != 0),
+            CausticsKey::ISize(value) => Box::new(value != 0),
+            CausticsKey::U8(value) => Box::new(value != 0),
+            CausticsKey::U16(value) => Box::new(value != 0),
+            CausticsKey::U32(value) => Box::new(value != 0),
+            CausticsKey::U64(value) => Box::new(value != 0),
+            CausticsKey::USize(value) => Box::new(value != 0),
+            CausticsKey::F32(value) => Box::new(value != 0.0),
+            CausticsKey::F64(value) => Box::new(value != 0.0),
+            CausticsKey::String(value) => Box::new(value.parse::<bool>().unwrap_or(false)),
+            _ => Box::new(false),
         },
         // UUID type
-        type_id if type_id == std::any::TypeId::of::<uuid::Uuid>() => {
-            match key {
-                CausticsKey::Uuid(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil())),
-                _ => Box::new(uuid::Uuid::nil()),
+        type_id if type_id == std::any::TypeId::of::<uuid::Uuid>() => match key {
+            CausticsKey::Uuid(value) => Box::new(value),
+            CausticsKey::String(value) => {
+                Box::new(value.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil()))
             }
+            _ => Box::new(uuid::Uuid::nil()),
         },
         // DateTime types
         type_id if type_id == std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>() => {
             match key {
                 CausticsKey::DateTimeUtc(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::DateTime<chrono::Utc>>().unwrap_or_else(|_| chrono::Utc::now())),
+                CausticsKey::String(value) => Box::new(
+                    value
+                        .parse::<chrono::DateTime<chrono::Utc>>()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                ),
                 _ => Box::new(chrono::Utc::now()),
             }
-        },
-        type_id if type_id == std::any::TypeId::of::<chrono::NaiveDateTime>() => {
-            match key {
-                CausticsKey::NaiveDateTime(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::NaiveDateTime>().unwrap_or_else(|_| chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc())),
-                _ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
+        }
+        type_id if type_id == std::any::TypeId::of::<chrono::NaiveDateTime>() => match key {
+            CausticsKey::NaiveDateTime(value) => Box::new(value),
+            CausticsKey::String(value) => {
+                Box::new(value.parse::<chrono::NaiveDateTime>().unwrap_or_else(|_| {
+                    chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()
+                }))
             }
+            _ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
         },
-        type_id if type_id == std::any::TypeId::of::<chrono::NaiveDate>() => {
-            match key {
-                CausticsKey::NaiveDate(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::NaiveDate>().unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())),
-                _ => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
-            }
+        type_id if type_id == std::any::TypeId::of::<chrono::NaiveDate>() => match key {
+            CausticsKey::NaiveDate(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(
+                value
+                    .parse::<chrono::NaiveDate>()
+                    .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
+            ),
+            _ => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
         },
-        type_id if type_id == std::any::TypeId::of::<chrono::NaiveTime>() => {
-            match key {
-                CausticsKey::NaiveTime(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(value.parse::<chrono::NaiveTime>().unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap())),
-                _ => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-            }
+        type_id if type_id == std::any::TypeId::of::<chrono::NaiveTime>() => match key {
+            CausticsKey::NaiveTime(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(
+                value
+                    .parse::<chrono::NaiveTime>()
+                    .unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
+            ),
+            _ => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
         },
         // JSON type
-        type_id if type_id == std::any::TypeId::of::<serde_json::Value>() => {
-            match key {
-                CausticsKey::Json(value) => Box::new(value),
-                CausticsKey::String(value) => Box::new(serde_json::from_str::<serde_json::Value>(&value).unwrap_or_else(|_| serde_json::Value::Null)),
-                CausticsKey::I8(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::I16(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::I32(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::I64(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U8(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U16(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U32(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::U64(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                CausticsKey::F32(value) => Box::new(serde_json::Value::Number(serde_json::Number::from_f64(value as f64).unwrap_or(serde_json::Number::from(0)))),
-                CausticsKey::F64(value) => Box::new(serde_json::Value::Number(serde_json::Number::from_f64(value).unwrap_or(serde_json::Number::from(0)))),
-                CausticsKey::Bool(value) => Box::new(serde_json::Value::Bool(value)),
-                CausticsKey::Uuid(value) => Box::new(serde_json::Value::String(value.to_string())),
-                _ => Box::new(serde_json::Value::Null),
+        type_id if type_id == std::any::TypeId::of::<serde_json::Value>() => match key {
+            CausticsKey::Json(value) => Box::new(value),
+            CausticsKey::String(value) => Box::new(
+                serde_json::from_str::<serde_json::Value>(&value)
+                    .unwrap_or_else(|_| serde_json::Value::Null),
+            ),
+            CausticsKey::I8(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
             }
+            CausticsKey::I16(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::I32(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::I64(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U8(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U16(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U32(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::U64(value) => {
+                Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CausticsKey::F32(value) => Box::new(serde_json::Value::Number(
+                serde_json::Number::from_f64(value as f64).unwrap_or(serde_json::Number::from(0)),
+            )),
+            CausticsKey::F64(value) => Box::new(serde_json::Value::Number(
+                serde_json::Number::from_f64(value).unwrap_or(serde_json::Number::from(0)),
+            )),
+            CausticsKey::Bool(value) => Box::new(serde_json::Value::Bool(value)),
+            CausticsKey::Uuid(value) => Box::new(serde_json::Value::String(value.to_string())),
+            _ => Box::new(serde_json::Value::Null),
         },
         _ => {
             // Unknown type, try to convert to the most appropriate type
@@ -1427,7 +1668,8 @@ mod tests {
         let key = 42i32.to_caustics_key();
         assert_eq!(key, CausticsKey::I32(42));
 
-        let converted: i32 = i32::from_caustics_key(key).expect("Failed to convert CausticsKey to i32");
+        let converted: i32 =
+            i32::from_caustics_key(key).expect("Failed to convert CausticsKey to i32");
         assert_eq!(converted, 42);
     }
 }

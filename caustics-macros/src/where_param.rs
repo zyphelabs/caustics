@@ -154,15 +154,16 @@ pub fn generate_where_param_logic(
 
         // Common comparison operations (for most types except boolean)
         // Skip for primary key fields (handled by generate_primary_key_operations)
-        let comparison_ops = if !is_primary_key && !matches!(
-            field_type,
-            FieldType::Boolean
-                | FieldType::OptionBoolean
-                | FieldType::Json
-                | FieldType::OptionJson
-                | FieldType::Uuid
-                | FieldType::OptionUuid
-        ) {
+        let comparison_ops = if !is_primary_key
+            && !matches!(
+                field_type,
+                FieldType::Boolean
+                    | FieldType::OptionBoolean
+                    | FieldType::Json
+                    | FieldType::OptionJson
+                    | FieldType::Uuid
+                    | FieldType::OptionUuid
+            ) {
             quote! {
             pub fn not_equals<T: Into<#ty>>(value: T) -> WhereParam {
                 WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
@@ -390,8 +391,12 @@ pub fn generate_where_param_logic(
     where_field_variants.push(quote! { RelationCondition(caustics::RelationCondition) });
 
     // Generate a function that processes all WhereParams together, properly handling QueryMode
-    let where_params_to_condition_fn =
-        generate_where_params_to_condition_function(fields, primary_key_fields, relations, entity_name);
+    let where_params_to_condition_fn = generate_where_params_to_condition_function(
+        fields,
+        primary_key_fields,
+        relations,
+        entity_name,
+    );
 
     let where_match_arms: Vec<proc_macro2::TokenStream> = vec![where_params_to_condition_fn];
     (where_field_variants, where_match_arms, field_ops)
@@ -423,48 +428,110 @@ fn generate_where_params_to_condition_function(
         // Generate field operation handler based on type
         match field_type {
             FieldType::String => {
-                field_handlers.push(generate_string_field_handler(&pascal_name, false, is_primary_key));
+                field_handlers.push(generate_string_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                ));
                 mode_handlers.push(generate_mode_handler(&pascal_name, name));
             }
             FieldType::OptionString => {
-                field_handlers.push(generate_string_field_handler(&pascal_name, true, is_primary_key));
+                field_handlers.push(generate_string_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                ));
                 mode_handlers.push(generate_mode_handler(&pascal_name, name));
             }
             FieldType::Integer => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, false, is_primary_key, entity_name));
+                field_handlers.push(generate_numeric_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                    entity_name,
+                ));
             }
             FieldType::OptionInteger => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, true, is_primary_key, entity_name));
+                field_handlers.push(generate_numeric_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                    entity_name,
+                ));
             }
             FieldType::Float => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, false, is_primary_key, entity_name));
+                field_handlers.push(generate_numeric_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                    entity_name,
+                ));
             }
             FieldType::OptionFloat => {
-                field_handlers.push(generate_numeric_field_handler(&pascal_name, true, is_primary_key, entity_name));
+                field_handlers.push(generate_numeric_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                    entity_name,
+                ));
             }
             FieldType::Boolean => {
-                field_handlers.push(generate_boolean_field_handler(&pascal_name, false, is_primary_key));
+                field_handlers.push(generate_boolean_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                ));
             }
             FieldType::OptionBoolean => {
-                field_handlers.push(generate_boolean_field_handler(&pascal_name, true, is_primary_key));
+                field_handlers.push(generate_boolean_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                ));
             }
             FieldType::DateTime => {
-                field_handlers.push(generate_datetime_field_handler(&pascal_name, false, is_primary_key));
+                field_handlers.push(generate_datetime_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                ));
             }
             FieldType::OptionDateTime => {
-                field_handlers.push(generate_datetime_field_handler(&pascal_name, true, is_primary_key));
+                field_handlers.push(generate_datetime_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                ));
             }
             FieldType::Uuid => {
-                field_handlers.push(generate_uuid_field_handler(&pascal_name, false, is_primary_key, entity_name));
+                field_handlers.push(generate_uuid_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                    entity_name,
+                ));
             }
             FieldType::OptionUuid => {
-                field_handlers.push(generate_uuid_field_handler(&pascal_name, true, is_primary_key, entity_name));
+                field_handlers.push(generate_uuid_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                    entity_name,
+                ));
             }
             FieldType::Json => {
-                field_handlers.push(generate_json_field_handler(&pascal_name, false, is_primary_key));
+                field_handlers.push(generate_json_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                ));
             }
             FieldType::OptionJson => {
-                field_handlers.push(generate_json_field_handler(&pascal_name, true, is_primary_key));
+                field_handlers.push(generate_json_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                ));
             }
             FieldType::Other => {
                 field_handlers.push(generate_generic_field_handler(&pascal_name, is_primary_key));
@@ -594,8 +661,8 @@ fn generate_where_params_to_condition_function(
 
     quote! {
         /// Convert CausticsKey to the appropriate type for SeaORM operations
-        fn convert_caustics_key_to_type<T>(key: caustics::CausticsKey) -> T 
-        where 
+        fn convert_caustics_key_to_type<T>(key: caustics::CausticsKey) -> T
+        where
             T: From<String> + From<i32> + From<uuid::Uuid>,
         {
             match key {
@@ -1635,7 +1702,10 @@ fn generate_json_field_handler(
 }
 
 /// Generate generic field handler for unknown types
-fn generate_generic_field_handler(pascal_name: &proc_macro2::Ident, is_primary_key: bool) -> proc_macro2::TokenStream {
+fn generate_generic_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    is_primary_key: bool,
+) -> proc_macro2::TokenStream {
     quote! {
         WhereParam::#pascal_name(op) => match op {
             FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-select = []
+select = ["caustics-macros/select"]
 
 [dependencies]
 caustics-macros = { path = "../caustics-macros" }
