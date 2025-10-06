@@ -1,4 +1,4 @@
-#![feature(decl_macro)]
+#![cfg_attr(feature = "select", feature(decl_macro))]
 #![allow(unused_imports)]
 
 include!(concat!(env!("OUT_DIR"), "/caustics_client_blog_test.rs"));
@@ -3239,6 +3239,7 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_aggregate_and_group_by_smoke() {
         use chrono::TimeZone;
 
@@ -3313,6 +3314,7 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_aggregate_typed_and_group_by_typed() {
         use chrono::TimeZone;
 
@@ -3631,6 +3633,7 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_nested_select_functionality() {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;
@@ -3693,6 +3696,7 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_field_selection_optimization() {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;
@@ -3829,6 +3833,7 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_relation_counts_on_selected_has_many_include() {
         use chrono::TimeZone;
         let db = helpers::setup_test_db().await;

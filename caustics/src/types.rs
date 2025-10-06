@@ -994,11 +994,11 @@ pub trait EntityRegistry<C: sea_orm::ConnectionTrait> {
 /// Trait for entity type information and key conversion
 pub trait EntityTypeRegistry {
     /// Get the primary key type for a given entity
-    fn get_primary_key_type(&self, entity_name: &str) -> Option<std::any::TypeId>;
+    fn get_primary_key_type(&self, entity_name: &str) -> Option<&str>;
 
     /// Get the foreign key type for a given entity and field
     fn get_foreign_key_type(&self, entity_name: &str, field_name: &str)
-        -> Option<std::any::TypeId>;
+        -> Option<&str>;
 
     /// Convert a key for a specific entity's primary key (returns Any for dynamic dispatch)
     fn convert_key_for_primary_key(

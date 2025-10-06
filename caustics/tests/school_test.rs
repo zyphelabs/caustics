@@ -1,4 +1,4 @@
-#![feature(decl_macro)]
+#![cfg_attr(feature = "select", feature(decl_macro))]
 #![allow(unused_imports)]
 
 include!(concat!(env!("OUT_DIR"), "/caustics_client_school_test.rs"));
@@ -567,6 +567,7 @@ mod caustics_school_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_select_parity_with_include_has_many() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
@@ -1165,6 +1166,7 @@ mod caustics_school_advanced_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_select_parity_with_include_belongs_to() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
@@ -1311,6 +1313,7 @@ mod caustics_school_advanced_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_select_nested_include_student_enrollments_course_teacher() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());
@@ -1438,7 +1441,9 @@ mod caustics_school_advanced_tests {
             .find_unique(student::id::equals(student_row.id))
             .select(student::select!(first_name))
             .with(student::enrollments::with(enrollment::course::with(
-                course::teacher::include(|rel| rel.select(teacher::select!(first_name))),
+                course::teacher::include(|rel| {
+                    rel.select(teacher::select!(first_name))
+                }),
             )))
             .exec()
             .await
@@ -1454,6 +1459,7 @@ mod caustics_school_advanced_tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_deep_nested_include_with_closure_api() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());

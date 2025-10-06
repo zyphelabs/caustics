@@ -14,7 +14,25 @@ caustics = { path = "../caustics" }
 caustics-macros = { path = "../caustics-macros" }
 ```
 
-Toolchain requirement: this project requires a fixed nightly toolchain for per-entity macro syntax (`entity::select!(...)`) and the `select_struct!` macro. The workspace pins nightly via `rust-toolchain.toml` (nightly-2025-08-31).
+Toolchain support: this project supports both stable and nightly Rust toolchains. The `select!` macro requires nightly Rust and is gated behind the "select" feature. Use stable Rust for basic functionality, or enable the "select" feature with nightly Rust for enhanced field selection syntax.
+
+## Feature Usage
+
+### Stable Rust (Default)
+```toml
+[dependencies]
+caustics = { path = "../caustics" }
+caustics-macros = { path = "../caustics-macros" }
+```
+
+### Nightly Rust with Enhanced Selection
+```toml
+[dependencies]
+caustics = { path = "../caustics" }
+caustics-macros = { path = "../caustics-macros", features = ["select"] }
+```
+
+When the "select" feature is enabled, you can use the convenient `entity::select!(field1, field2)` syntax for field selection. Without the feature, use `caustics::typed_selection` for field selection.
 
 ## Quick Start
 

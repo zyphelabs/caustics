@@ -34,8 +34,8 @@ struct EntityMetadata {
     foreign_key_fields: Vec<String>,
     relations: Vec<RelationMetadata>,
     #[allow(dead_code)]
-    primary_key_type: std::any::TypeId,
-    foreign_key_types: Vec<(String, std::any::TypeId)>,
+    primary_key_type: String,
+    foreign_key_types: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,49 +48,49 @@ struct RelationMetadata {
 }
 
 /// Convert a TypeId back to a token stream for code generation
-fn type_id_to_tokens(type_id: std::any::TypeId) -> proc_macro2::TokenStream {
+fn type_id_to_string(type_id: std::any::TypeId) -> String {
     if type_id == std::any::TypeId::of::<i8>() {
-        quote! { std::any::TypeId::of::<i8>() }
+        "i8".to_string()
     } else if type_id == std::any::TypeId::of::<i16>() {
-        quote! { std::any::TypeId::of::<i16>() }
+        "i16".to_string()
     } else if type_id == std::any::TypeId::of::<i32>() {
-        quote! { std::any::TypeId::of::<i32>() }
+        "i32".to_string()
     } else if type_id == std::any::TypeId::of::<i64>() {
-        quote! { std::any::TypeId::of::<i64>() }
+        "i64".to_string()
     } else if type_id == std::any::TypeId::of::<isize>() {
-        quote! { std::any::TypeId::of::<isize>() }
+        "isize".to_string()
     } else if type_id == std::any::TypeId::of::<u8>() {
-        quote! { std::any::TypeId::of::<u8>() }
+        "u8".to_string()
     } else if type_id == std::any::TypeId::of::<u16>() {
-        quote! { std::any::TypeId::of::<u16>() }
+        "u16".to_string()
     } else if type_id == std::any::TypeId::of::<u32>() {
-        quote! { std::any::TypeId::of::<u32>() }
+        "u32".to_string()
     } else if type_id == std::any::TypeId::of::<u64>() {
-        quote! { std::any::TypeId::of::<u64>() }
+        "u64".to_string()
     } else if type_id == std::any::TypeId::of::<usize>() {
-        quote! { std::any::TypeId::of::<usize>() }
+        "usize".to_string()
     } else if type_id == std::any::TypeId::of::<f32>() {
-        quote! { std::any::TypeId::of::<f32>() }
+        "f32".to_string()
     } else if type_id == std::any::TypeId::of::<f64>() {
-        quote! { std::any::TypeId::of::<f64>() }
+        "f64".to_string()
     } else if type_id == std::any::TypeId::of::<String>() {
-        quote! { std::any::TypeId::of::<String>() }
+        "String".to_string()
     } else if type_id == std::any::TypeId::of::<str>() {
-        quote! { std::any::TypeId::of::<str>() }
+        "str".to_string()
     } else if type_id == std::any::TypeId::of::<bool>() {
-        quote! { std::any::TypeId::of::<bool>() }
+        "bool".to_string()
     } else if type_id == std::any::TypeId::of::<uuid::Uuid>() {
-        quote! { std::any::TypeId::of::<uuid::Uuid>() }
+        "uuid::Uuid".to_string()
     } else if type_id == std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>() {
-        quote! { std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>() }
+        "chrono::DateTime<chrono::Utc>".to_string()
     } else if type_id == std::any::TypeId::of::<chrono::NaiveDateTime>() {
-        quote! { std::any::TypeId::of::<chrono::NaiveDateTime>() }
+        "chrono::NaiveDateTime".to_string()
     } else if type_id == std::any::TypeId::of::<chrono::NaiveDate>() {
-        quote! { std::any::TypeId::of::<chrono::NaiveDate>() }
+        "chrono::NaiveDate".to_string()
     } else if type_id == std::any::TypeId::of::<chrono::NaiveTime>() {
-        quote! { std::any::TypeId::of::<chrono::NaiveTime>() }
+        "chrono::NaiveTime".to_string()
     } else if type_id == std::any::TypeId::of::<serde_json::Value>() {
-        quote! { std::any::TypeId::of::<serde_json::Value>() }
+        "serde_json::Value".to_string()
     } else {
         panic!("Unsupported TypeId in code generation: {:?}", type_id);
     }
@@ -250,7 +250,7 @@ fn extract_entity_metadata(
                                         if field_name_str.ends_with("_id") {
                                             foreign_key_fields.push(field_name_str.clone());
                                             foreign_key_types
-                                                .push((field_name_str.clone(), field_type_id));
+                                                .push((field_name_str.clone(), type_id_to_string(field_type_id)));
                                         }
                                     }
                                 }
@@ -411,9 +411,9 @@ fn extract_entity_metadata(
         }),
         foreign_key_fields,
         relations,
-        primary_key_type: primary_key_type.unwrap_or_else(|| {
+        primary_key_type: type_id_to_string(primary_key_type.unwrap_or_else(|| {
             panic!("No primary key type found for entity '{}'. This should not happen if primary key field was detected.", entity_name)
-        }),
+        })),
         foreign_key_types,
     };
 
@@ -901,13 +901,12 @@ fn generate_metadata_only_client(entities_metadata: &[EntityMetadata]) -> String
 
             let primary_key_field_lit =
                 syn::LitStr::new(&metadata.primary_key_field, proc_macro2::Span::call_site());
-            let primary_key_type_lit = type_id_to_tokens(metadata.primary_key_type);
+            let primary_key_type_lit = &metadata.primary_key_type;
             let foreign_key_types_lit = metadata
                 .foreign_key_types
                 .iter()
                 .map(|(field, type_id)| {
-                    let type_id_tokens = type_id_to_tokens(*type_id);
-                    quote! { (#field, #type_id_tokens) }
+                    quote! { (#field, #type_id) }
                 })
                 .collect::<Vec<_>>();
 
@@ -953,8 +952,8 @@ fn generate_metadata_only_client(entities_metadata: &[EntityMetadata]) -> String
             pub primary_key_field: &'static str,
             pub foreign_key_fields: &'static [&'static str],
             pub relations: &'static [EntityRelationMetadata],
-            pub primary_key_type: std::any::TypeId,
-            pub foreign_key_types: &'static [(&'static str, std::any::TypeId)],
+            pub primary_key_type: &'static str,
+            pub foreign_key_types: &'static [(&'static str, &'static str)],
         }
 
         #[derive(Debug, Clone)]
@@ -1222,13 +1221,12 @@ fn generate_client_code(
 
             let primary_key_field_lit =
                 syn::LitStr::new(&metadata.primary_key_field, proc_macro2::Span::call_site());
-            let primary_key_type_lit = type_id_to_tokens(metadata.primary_key_type);
+            let primary_key_type_lit = &metadata.primary_key_type;
             let foreign_key_types_lit = metadata
                 .foreign_key_types
                 .iter()
                 .map(|(field, type_id)| {
-                    let type_id_tokens = type_id_to_tokens(*type_id);
-                    quote! { (#field, #type_id_tokens) }
+                    quote! { (#field, #type_id) }
                 })
                 .collect::<Vec<_>>();
 
@@ -1261,8 +1259,8 @@ fn generate_client_code(
             pub primary_key_field: &'static str,
             pub foreign_key_fields: &'static [&'static str],
             pub relations: &'static [EntityRelationMetadata],
-            pub primary_key_type: std::any::TypeId,
-            pub foreign_key_types: &'static [(&'static str, std::any::TypeId)],
+            pub primary_key_type: &'static str,
+            pub foreign_key_types: &'static [(&'static str, &'static str)],
         }
 
         #[derive(Debug, Clone)]
@@ -1404,15 +1402,15 @@ fn generate_client_code(
 
         // Implement EntityTypeRegistry trait for type information
         impl caustics::EntityTypeRegistry for CompositeEntityRegistry {
-            fn get_primary_key_type(&self, entity_name: &str) -> Option<std::any::TypeId> {
+            fn get_primary_key_type(&self, entity_name: &str) -> Option<&str> {
                 if let Some(metadata) = get_entity_metadata(entity_name) {
-                    Some(metadata.primary_key_type)
+                    Some(&metadata.primary_key_type)
                 } else {
                     None
                 }
             }
 
-            fn get_foreign_key_type(&self, entity_name: &str, field_name: &str) -> Option<std::any::TypeId> {
+            fn get_foreign_key_type(&self, entity_name: &str, field_name: &str) -> Option<&str> {
                 if let Some(metadata) = get_entity_metadata(entity_name) {
                     metadata.foreign_key_types.iter()
                         .find(|(field, _)| *field == field_name)
@@ -1425,183 +1423,31 @@ fn generate_client_code(
             fn convert_key_for_primary_key(&self, entity: &str, key: caustics::CausticsKey) -> Box<dyn std::any::Any + Send + Sync> {
                 // Get the expected type for this entity's primary key
                 if let Some(metadata) = get_entity_metadata(entity) {
-                    // Convert based on the actual primary key type
-                    match metadata.primary_key_type {
-                        // Integer types
-                        type_id if type_id == std::any::TypeId::of::<i8>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as i8),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i8>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0i8),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<i16>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as i16),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i16>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0i16),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<i32>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i32>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<i64>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as i64),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i64>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0i64),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<isize>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as isize),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<isize>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0isize),
-                            }
-                        },
-                        // Unsigned integer types
-                        type_id if type_id == std::any::TypeId::of::<u8>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u8),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u8>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u8),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<u16>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u16),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u16>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u16),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<u32>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u32),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u32>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u32),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<u64>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u64),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u64>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u64),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<usize>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as usize),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<usize>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0usize),
-                            }
-                        },
-                        // Floating point types
-                        type_id if type_id == std::any::TypeId::of::<f32>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as f32),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<f32>().unwrap_or(0.0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0.0f32),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<f64>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as f64),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<f64>().unwrap_or(0.0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0.0f64),
-                            }
-                        },
-                        // String types
-                        type_id if type_id == std::any::TypeId::of::<String>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => Box::new(value),
-                                caustics::CausticsKey::Int(value) => Box::new(value.to_string()),
-                                caustics::CausticsKey::Uuid(value) => Box::new(value.to_string()),
-                            }
-                        },
-                        // Boolean type
-                        type_id if type_id == std::any::TypeId::of::<bool>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value != 0),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<bool>().unwrap_or(false)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(false),
-                            }
-                        },
-                        // UUID type
-                        type_id if type_id == std::any::TypeId::of::<uuid::Uuid>() => {
-                            match key {
-                                caustics::CausticsKey::Uuid(value) => Box::new(value),
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(uuid::Uuid::nil()),
-                            }
-                        },
-                        // DateTime types
-                        type_id if type_id == std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::DateTime<chrono::Utc>>().unwrap_or_else(|_| chrono::Utc::now()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::Utc::now()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::Utc::now()),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<chrono::NaiveDateTime>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::NaiveDateTime>().unwrap_or_else(|_| chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<chrono::NaiveDate>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::NaiveDate>().unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
-                            }
-                        },
-                        type_id if type_id == std::any::TypeId::of::<chrono::NaiveTime>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::NaiveTime>().unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-                            }
-                        },
-                        // JSON type
-                        type_id if type_id == std::any::TypeId::of::<serde_json::Value>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(serde_json::from_str::<serde_json::Value>(&value).unwrap_or_else(|_| serde_json::Value::Null))
-                                },
-                                caustics::CausticsKey::Int(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                                caustics::CausticsKey::Uuid(value) => Box::new(serde_json::Value::String(value.to_string())),
-                            }
-                        },
-                        _ => {
-                            // Unknown type, try to convert to the most appropriate type
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value),
-                                caustics::CausticsKey::String(value) => Box::new(value),
-                                caustics::CausticsKey::Uuid(value) => Box::new(value),
-                            }
-                        }
-                    }
+                    // Use the unified conversion function
+                    caustics::convert_key_to_type_from_string::<()>(key, &metadata.primary_key_type)
                 } else {
                     // No metadata available, return the key as-is
                     match key {
-                        caustics::CausticsKey::Int(value) => Box::new(value),
+                        caustics::CausticsKey::I8(value) => Box::new(value),
+                        caustics::CausticsKey::I16(value) => Box::new(value),
+                        caustics::CausticsKey::I32(value) => Box::new(value),
+                        caustics::CausticsKey::I64(value) => Box::new(value),
+                        caustics::CausticsKey::ISize(value) => Box::new(value),
+                        caustics::CausticsKey::U8(value) => Box::new(value),
+                        caustics::CausticsKey::U16(value) => Box::new(value),
+                        caustics::CausticsKey::U32(value) => Box::new(value),
+                        caustics::CausticsKey::U64(value) => Box::new(value),
+                        caustics::CausticsKey::USize(value) => Box::new(value),
+                        caustics::CausticsKey::F32(value) => Box::new(value),
+                        caustics::CausticsKey::F64(value) => Box::new(value),
                         caustics::CausticsKey::String(value) => Box::new(value),
+                        caustics::CausticsKey::Bool(value) => Box::new(value),
                         caustics::CausticsKey::Uuid(value) => Box::new(value),
+                        caustics::CausticsKey::DateTimeUtc(value) => Box::new(value),
+                        caustics::CausticsKey::NaiveDateTime(value) => Box::new(value),
+                        caustics::CausticsKey::NaiveDate(value) => Box::new(value),
+                        caustics::CausticsKey::NaiveTime(value) => Box::new(value),
+                        caustics::CausticsKey::Json(value) => Box::new(value),
                     }
                 }
             }
@@ -1615,181 +1461,59 @@ fn generate_client_code(
                         .map(|(_, type_id)| *type_id);
 
                     match field_type {
-                        // Integer types
-                        Some(type_id) if type_id == std::any::TypeId::of::<i8>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as i8),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i8>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0i8),
-                            }
+                        Some(type_id) => {
+                            // Use the unified conversion function
+                            caustics::convert_key_to_type_from_string::<()>(key, type_id)
                         },
-                        Some(type_id) if type_id == std::any::TypeId::of::<i16>() => {
+                        None => {
+                            // No type info for this field, try to convert to the most appropriate type
                             match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as i16),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i16>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0i16),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<i32>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i32>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<i64>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as i64),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<i64>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0i64),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<isize>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as isize),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<isize>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0isize),
-                            }
-                        },
-                        // Unsigned integer types
-                        Some(type_id) if type_id == std::any::TypeId::of::<u8>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u8),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u8>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u8),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<u16>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u16),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u16>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u16),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<u32>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u32),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u32>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u32),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<u64>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as u64),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<u64>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0u64),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<usize>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as usize),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<usize>().unwrap_or(0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0usize),
-                            }
-                        },
-                        // Floating point types
-                        Some(type_id) if type_id == std::any::TypeId::of::<f32>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as f32),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<f32>().unwrap_or(0.0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0.0f32),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<f64>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value as f64),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<f64>().unwrap_or(0.0)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(0.0f64),
-                            }
-                        },
-                        // String types
-                        Some(type_id) if type_id == std::any::TypeId::of::<String>() => {
-                            match key {
+                                caustics::CausticsKey::I8(value) => Box::new(value),
+                                caustics::CausticsKey::I16(value) => Box::new(value),
+                                caustics::CausticsKey::I32(value) => Box::new(value),
+                                caustics::CausticsKey::I64(value) => Box::new(value),
+                                caustics::CausticsKey::ISize(value) => Box::new(value),
+                                caustics::CausticsKey::U8(value) => Box::new(value),
+                                caustics::CausticsKey::U16(value) => Box::new(value),
+                                caustics::CausticsKey::U32(value) => Box::new(value),
+                                caustics::CausticsKey::U64(value) => Box::new(value),
+                                caustics::CausticsKey::USize(value) => Box::new(value),
+                                caustics::CausticsKey::F32(value) => Box::new(value),
+                                caustics::CausticsKey::F64(value) => Box::new(value),
                                 caustics::CausticsKey::String(value) => Box::new(value),
-                                caustics::CausticsKey::Int(value) => Box::new(value.to_string()),
-                                caustics::CausticsKey::Uuid(value) => Box::new(value.to_string()),
-                            }
-                        },
-                        // Boolean type
-                        Some(type_id) if type_id == std::any::TypeId::of::<bool>() => {
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value != 0),
-                                caustics::CausticsKey::String(value) => Box::new(value.parse::<bool>().unwrap_or(false)),
-                                caustics::CausticsKey::Uuid(_) => Box::new(false),
-                            }
-                        },
-                        // UUID type
-                        Some(type_id) if type_id == std::any::TypeId::of::<uuid::Uuid>() => {
-                            match key {
+                                caustics::CausticsKey::Bool(value) => Box::new(value),
                                 caustics::CausticsKey::Uuid(value) => Box::new(value),
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(uuid::Uuid::nil()),
-                            }
-                        },
-                        // DateTime types
-                        Some(type_id) if type_id == std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::DateTime<chrono::Utc>>().unwrap_or_else(|_| chrono::Utc::now()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::Utc::now()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::Utc::now()),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<chrono::NaiveDateTime>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::NaiveDateTime>().unwrap_or_else(|_| chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<chrono::NaiveDate>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::NaiveDate>().unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
-                            }
-                        },
-                        Some(type_id) if type_id == std::any::TypeId::of::<chrono::NaiveTime>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(value.parse::<chrono::NaiveTime>().unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()))
-                                },
-                                caustics::CausticsKey::Int(_) => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-                                caustics::CausticsKey::Uuid(_) => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-                            }
-                        },
-                        // JSON type
-                        Some(type_id) if type_id == std::any::TypeId::of::<serde_json::Value>() => {
-                            match key {
-                                caustics::CausticsKey::String(value) => {
-                                    Box::new(serde_json::from_str::<serde_json::Value>(&value).unwrap_or_else(|_| serde_json::Value::Null))
-                                },
-                                caustics::CausticsKey::Int(value) => Box::new(serde_json::Value::Number(serde_json::Number::from(value))),
-                                caustics::CausticsKey::Uuid(value) => Box::new(serde_json::Value::String(value.to_string())),
-                            }
-                        },
-                        _ => {
-                            // Unknown type or no type info, try to convert to the most appropriate type
-                            match key {
-                                caustics::CausticsKey::Int(value) => Box::new(value),
-                                caustics::CausticsKey::String(value) => Box::new(value),
-                                caustics::CausticsKey::Uuid(value) => Box::new(value),
+                                caustics::CausticsKey::DateTimeUtc(value) => Box::new(value),
+                                caustics::CausticsKey::NaiveDateTime(value) => Box::new(value),
+                                caustics::CausticsKey::NaiveDate(value) => Box::new(value),
+                                caustics::CausticsKey::NaiveTime(value) => Box::new(value),
+                                caustics::CausticsKey::Json(value) => Box::new(value),
                             }
                         }
                     }
                 } else {
                     // No metadata available, return the key as-is
                     match key {
-                        caustics::CausticsKey::Int(value) => Box::new(value),
+                        caustics::CausticsKey::I8(value) => Box::new(value),
+                        caustics::CausticsKey::I16(value) => Box::new(value),
+                        caustics::CausticsKey::I32(value) => Box::new(value),
+                        caustics::CausticsKey::I64(value) => Box::new(value),
+                        caustics::CausticsKey::ISize(value) => Box::new(value),
+                        caustics::CausticsKey::U8(value) => Box::new(value),
+                        caustics::CausticsKey::U16(value) => Box::new(value),
+                        caustics::CausticsKey::U32(value) => Box::new(value),
+                        caustics::CausticsKey::U64(value) => Box::new(value),
+                        caustics::CausticsKey::USize(value) => Box::new(value),
+                        caustics::CausticsKey::F32(value) => Box::new(value),
+                        caustics::CausticsKey::F64(value) => Box::new(value),
                         caustics::CausticsKey::String(value) => Box::new(value),
+                        caustics::CausticsKey::Bool(value) => Box::new(value),
                         caustics::CausticsKey::Uuid(value) => Box::new(value),
+                        caustics::CausticsKey::DateTimeUtc(value) => Box::new(value),
+                        caustics::CausticsKey::NaiveDateTime(value) => Box::new(value),
+                        caustics::CausticsKey::NaiveDate(value) => Box::new(value),
+                        caustics::CausticsKey::NaiveTime(value) => Box::new(value),
+                        caustics::CausticsKey::Json(value) => Box::new(value),
                     }
                 }
             }
@@ -1810,11 +1534,11 @@ fn generate_client_code(
             <CompositeEntityRegistry as caustics::EntityTypeRegistry>::convert_key_for_foreign_key(&REGISTRY, entity, field, key)
         }
 
-        pub fn __caustics_get_primary_key_type(entity: &str) -> Option<std::any::TypeId> {
+        pub fn __caustics_get_primary_key_type(entity: &str) -> Option<&str> {
             <CompositeEntityRegistry as caustics::EntityTypeRegistry>::get_primary_key_type(&REGISTRY, entity)
         }
 
-        pub fn __caustics_get_foreign_key_type(entity: &str, field: &str) -> Option<std::any::TypeId> {
+        pub fn __caustics_get_foreign_key_type<'a>(entity: &'a str, field: &'a str) -> Option<&'static str> {
             if let Some(metadata) = get_entity_metadata(entity) {
                 metadata.foreign_key_types.iter()
                     .find(|(field_name, _)| *field_name == field)
@@ -1858,7 +1582,7 @@ fn generate_client_code(
         }
 
         // Helper function to get the actual field type for downcasting
-        pub fn __caustics_get_field_type(entity: &str, field: &str) -> Option<std::any::TypeId> {
+        pub fn __caustics_get_field_type<'a>(entity: &'a str, field: &'a str) -> Option<&'static str> {
             if let Some(metadata) = get_entity_metadata(entity) {
                 // Check if it's a primary key field
                 if field == metadata.primary_key_field {
@@ -1913,80 +1637,80 @@ fn generate_client_code(
 
             // Convert to sea_orm::Value based on the actual field type
             match field_type {
-                type_id if type_id == std::any::TypeId::of::<i8>() => {
+                "i8" => {
                     converted.downcast::<i8>().map(|v| sea_orm::Value::TinyInt(Some(*v)))
                         .map_err(|_| "Failed to downcast to i8".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<i16>() => {
+                "i16" => {
                     converted.downcast::<i16>().map(|v| sea_orm::Value::SmallInt(Some(*v)))
                         .map_err(|_| "Failed to downcast to i16".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<i32>() => {
+                "i32" => {
                     converted.downcast::<i32>().map(|v| sea_orm::Value::Int(Some(*v)))
                         .map_err(|_| "Failed to downcast to i32".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<i64>() => {
+                "i64" => {
                     converted.downcast::<i64>().map(|v| sea_orm::Value::BigInt(Some(*v)))
                         .map_err(|_| "Failed to downcast to i64".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<u8>() => {
+                "u8" => {
                     converted.downcast::<u8>().map(|v| sea_orm::Value::TinyUnsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u8".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<u16>() => {
+                "u16" => {
                     converted.downcast::<u16>().map(|v| sea_orm::Value::SmallUnsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u16".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<u32>() => {
+                "u32" => {
                     converted.downcast::<u32>().map(|v| sea_orm::Value::Unsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u32".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<u64>() => {
+                "u64" => {
                     converted.downcast::<u64>().map(|v| sea_orm::Value::BigUnsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u64".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<f32>() => {
+                "f32" => {
                     converted.downcast::<f32>().map(|v| sea_orm::Value::Float(Some(*v)))
                         .map_err(|_| "Failed to downcast to f32".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<f64>() => {
+                "f64" => {
                     converted.downcast::<f64>().map(|v| sea_orm::Value::Double(Some(*v)))
                         .map_err(|_| "Failed to downcast to f64".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<String>() => {
+                "String" | "str" => {
                     converted.downcast::<String>().map(|v| sea_orm::Value::String(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to String".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<bool>() => {
+                "bool" => {
                     converted.downcast::<bool>().map(|v| sea_orm::Value::Bool(Some(*v)))
                         .map_err(|_| "Failed to downcast to bool".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<uuid::Uuid>() => {
+                "uuid::Uuid" => {
                     converted.downcast::<uuid::Uuid>().map(|v| sea_orm::Value::Uuid(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to Uuid".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>() => {
+                "chrono::DateTime<chrono::Utc>" => {
                     converted.downcast::<chrono::DateTime<chrono::Utc>>().map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(v)))
                         .map_err(|_| "Failed to downcast to DateTime<Utc>".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<chrono::NaiveDateTime>() => {
+                "chrono::NaiveDateTime" => {
                     converted.downcast::<chrono::NaiveDateTime>().map(|v| sea_orm::Value::ChronoDateTime(Some(v)))
                         .map_err(|_| "Failed to downcast to NaiveDateTime".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<chrono::NaiveDate>() => {
+                "chrono::NaiveDate" => {
                     converted.downcast::<chrono::NaiveDate>().map(|v| sea_orm::Value::ChronoDate(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to NaiveDate".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<chrono::NaiveTime>() => {
+                "chrono::NaiveTime" => {
                     converted.downcast::<chrono::NaiveTime>().map(|v| sea_orm::Value::ChronoTime(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to NaiveTime".to_string())
                 },
-                type_id if type_id == std::any::TypeId::of::<serde_json::Value>() => {
+                "serde_json::Value" => {
                     converted.downcast::<serde_json::Value>().map(|v| sea_orm::Value::Json(Some(v)))
                         .map_err(|_| "Failed to downcast to Json".to_string())
                 },
                 _ => {
-                    Err(format!("Unsupported field type for field {} in entity {}", field, entity))
+                    Err(format!("Unsupported field type '{}' for field {} in entity {}", field_type, field, entity))
                 }
             }
         }
@@ -2016,68 +1740,81 @@ fn generate_client_code(
             match field_type {
                 Some(type_id) => {
                     // Convert based on the actual field type
-                    if type_id == std::any::TypeId::of::<i8>() {
+                    match type_id {
+                        "i8" => {
                         if let Ok(v) = converted.downcast::<i8>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i8 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<i16>() {
+                        },
+                        "i16" => {
                         if let Ok(v) = converted.downcast::<i16>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i16 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<i32>() {
+                        },
+                        "i32" => {
                         if let Ok(v) = converted.downcast::<i32>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i32 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<i64>() {
+                        },
+                        "i64" => {
                         if let Ok(v) = converted.downcast::<i64>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i64 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<u8>() {
+                        },
+                        "u8" => {
                         if let Ok(v) = converted.downcast::<u8>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u8 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<u16>() {
+                        },
+                        "u16" => {
                         if let Ok(v) = converted.downcast::<u16>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u16 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<u32>() {
+                        },
+                        "u32" => {
                         if let Ok(v) = converted.downcast::<u32>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u32 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<u64>() {
+                        },
+                        "u64" => {
                         if let Ok(v) = converted.downcast::<u64>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u64 for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<String>() {
+                        },
+                        "String" | "str" => {
                         if let Ok(v) = converted.downcast::<String>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                                let string_value = *v;
+                                Box::new(sea_orm::ActiveValue::Set(string_value))
                         } else {
                             panic!("Failed to downcast to String for field {}", field);
                         }
-                    } else if type_id == std::any::TypeId::of::<uuid::Uuid>() {
+                        },
+                        "uuid::Uuid" => {
                         if let Ok(v) = converted.downcast::<uuid::Uuid>() {
                             Box::new(sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to Uuid for field {}", field);
                         }
-                    } else {
-                        panic!("Unsupported field type for field {} in entity {}", field, entity);
+                        },
+                        _ => {
+                            panic!("Unsupported field type '{}' for field {} in entity {}", type_id, field, entity);
+                        }
                     }
                 }
                 None => {
@@ -2097,28 +1834,41 @@ fn generate_client_code(
                 .expect("Failed to get field type information");
             
             // Return the appropriate ActiveValue based on field type
-            if field_type == std::any::TypeId::of::<i8>() {
+            match field_type {
+                "i8" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i8>().expect("Failed to convert to i8")))
-            } else if field_type == std::any::TypeId::of::<i16>() {
+                },
+                "i16" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i16>().expect("Failed to convert to i16")))
-            } else if field_type == std::any::TypeId::of::<i32>() {
+                },
+                "i32" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i32>().expect("Failed to convert to i32")))
-            } else if field_type == std::any::TypeId::of::<i64>() {
+                },
+                "i64" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i64>().expect("Failed to convert to i64")))
-            } else if field_type == std::any::TypeId::of::<u8>() {
+                },
+                "u8" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u8>().expect("Failed to convert to u8")))
-            } else if field_type == std::any::TypeId::of::<u16>() {
+                },
+                "u16" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u16>().expect("Failed to convert to u16")))
-            } else if field_type == std::any::TypeId::of::<u32>() {
+                },
+                "u32" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u32>().expect("Failed to convert to u32")))
-            } else if field_type == std::any::TypeId::of::<u64>() {
+                },
+                "u64" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u64>().expect("Failed to convert to u64")))
-            } else if field_type == std::any::TypeId::of::<String>() {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<String>().expect("Failed to convert to String")))
-            } else if field_type == std::any::TypeId::of::<uuid::Uuid>() {
+                },
+                "String" | "str" => {
+                    let string_value = *converted.downcast::<String>().expect("Failed to convert to String");
+                    Box::new(sea_orm::ActiveValue::Set(string_value))
+                },
+                "uuid::Uuid" => {
                 Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid")))
-            } else {
-                panic!("Unsupported foreign key type for field {} in entity {}", field, entity);
+                },
+                _ => {
+                    panic!("Unsupported foreign key type '{}' for field {} in entity {}", field_type, field, entity);
+                }
             }
         }
 
@@ -2133,28 +1883,41 @@ fn generate_client_code(
                 .expect("Failed to get field type information");
             
             // Return the appropriate ActiveValue with Some() wrapper for optional fields
-            if field_type == std::any::TypeId::of::<i8>() {
+            match field_type {
+                "i8" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i8>().expect("Failed to convert to i8"))))
-            } else if field_type == std::any::TypeId::of::<i16>() {
+                },
+                "i16" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i16>().expect("Failed to convert to i16"))))
-            } else if field_type == std::any::TypeId::of::<i32>() {
+                },
+                "i32" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i32>().expect("Failed to convert to i32"))))
-            } else if field_type == std::any::TypeId::of::<i64>() {
+                },
+                "i64" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i64>().expect("Failed to convert to i64"))))
-            } else if field_type == std::any::TypeId::of::<u8>() {
+                },
+                "u8" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u8>().expect("Failed to convert to u8"))))
-            } else if field_type == std::any::TypeId::of::<u16>() {
+                },
+                "u16" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u16>().expect("Failed to convert to u16"))))
-            } else if field_type == std::any::TypeId::of::<u32>() {
+                },
+                "u32" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u32>().expect("Failed to convert to u32"))))
-            } else if field_type == std::any::TypeId::of::<u64>() {
+                },
+                "u64" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u64>().expect("Failed to convert to u64"))))
-            } else if field_type == std::any::TypeId::of::<String>() {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<String>().expect("Failed to convert to String"))))
-            } else if field_type == std::any::TypeId::of::<uuid::Uuid>() {
+                },
+                "String" | "str" => {
+                    let string_value = *converted.downcast::<String>().expect("Failed to convert to String");
+                    Box::new(sea_orm::ActiveValue::Set(Some(string_value)))
+                },
+                "uuid::Uuid" => {
                 Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid"))))
-            } else {
-                panic!("Unsupported foreign key type for field {} in entity {}", field, entity);
+                },
+                _ => {
+                    panic!("Unsupported foreign key type '{}' for field {} in entity {}", field_type, field, entity);
+                }
             }
         }
 

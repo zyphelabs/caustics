@@ -1271,7 +1271,7 @@ pub fn generate_entity(
                                         .filter::<sea_query::Condition>(condition)
                                         .one(conn)
                                         .await?;
-                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
+                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
                                             entity: stringify!(#target_module).to_string(),
                                             condition: format!("{:?}", param),
@@ -1290,7 +1290,7 @@ pub fn generate_entity(
                                         .filter::<sea_query::Condition>(condition)
                                         .one(txn)
                                         .await?;
-                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
+                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
                                             entity: stringify!(#target_module).to_string(),
                                             condition: format!("{:?}", param),
@@ -4002,7 +4002,7 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
                                                 caustics::CausticsError::NotFoundForCondition {
                                                     entity: stringify!(#target_module).to_string(),
                                                     condition: format!("{:?}", param),
@@ -4018,7 +4018,7 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(txn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
                                                 caustics::CausticsError::NotFoundForCondition {
                                                     entity: stringify!(#target_module).to_string(),
                                                     condition: format!("{:?}", param),
@@ -4058,7 +4058,7 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
                                                     "No {} found for condition: {:?}",
                                                     stringify!(#target_module),
@@ -4075,7 +4075,7 @@ pub fn generate_entity(
                                                  .filter::<sea_query::Condition>(condition)
                                                  .one(txn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))).ok_or_else(|| {
+                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
                                                     "No {} found for condition: {:?}",
                                                     stringify!(#target_module),
@@ -4639,6 +4639,9 @@ pub fn generate_entity(
         // Per-entity select! macro (nightly `pub macro` path invocation support)
         // Usage: `entity::select!(field_a, field_b)`
         // Build-time name check inline with match on valid names
+        // NOTE: This uses experimental `pub macro` syntax which requires nightly Rust.
+        // The select feature is therefore only available on nightly.
+        #[cfg(feature = "select")]
         pub macro select($($field:ident),* $(,)?) {{
             #[allow(unused_imports)]
             macro_rules! __check_field_ident {
@@ -4669,6 +4672,7 @@ pub fn generate_entity(
 
 
         // Extension traits to apply select on query builders returning Selected builders
+        #[cfg(feature = "select")]
         pub trait ManySelectExt<'a, C: sea_orm::ConnectionTrait> {
             fn select<S>(self, spec: S) -> caustics::SelectManyQueryBuilder<'a, C, Entity, S::Data>
             where
@@ -4676,6 +4680,7 @@ pub fn generate_entity(
                 S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + caustics::ApplyNestedIncludes<C> + Send + 'static;
         }
 
+        #[cfg(feature = "select")]
         impl<'a, C> ManySelectExt<'a, C> for caustics::ManyQueryBuilder<'a, C, Entity, ModelWithRelations>
         where
             C: sea_orm::ConnectionTrait,
@@ -4718,6 +4723,7 @@ pub fn generate_entity(
         }
 
 
+        #[cfg(feature = "select")]
         pub trait UniqueSelectExt<'a, C: sea_orm::ConnectionTrait> {
             fn select<S>(self, spec: S) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, S::Data>
             where
@@ -4725,6 +4731,7 @@ pub fn generate_entity(
                 S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + caustics::ApplyNestedIncludes<C> + Send + 'static;
         }
 
+        #[cfg(feature = "select")]
         impl<'a, C> UniqueSelectExt<'a, C> for caustics::UniqueQueryBuilder<'a, C, Entity, ModelWithRelations>
         where
             C: sea_orm::ConnectionTrait,
@@ -4757,6 +4764,7 @@ pub fn generate_entity(
             }
         }
 
+        #[cfg(feature = "select")]
         pub trait FirstSelectExt<'a, C: sea_orm::ConnectionTrait> {
             fn select<S>(self, spec: S) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, S::Data>
             where
@@ -4764,6 +4772,7 @@ pub fn generate_entity(
                 S::Data: caustics::EntitySelection + caustics::HasRelationMetadata<S::Data> + Send + 'static;
         }
 
+        #[cfg(feature = "select")]
         impl<'a, C> FirstSelectExt<'a, C> for caustics::FirstQueryBuilder<'a, C, Entity, ModelWithRelations>
         where
             C: sea_orm::ConnectionTrait,
@@ -4804,10 +4813,12 @@ pub fn generate_entity(
 
 
         // Include on select builders
+        #[cfg(feature = "select")]
         pub trait SelectManyIncludeExt<'a, C: sea_orm::ConnectionTrait> {
             fn with(self, include: IncludeParam) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
             fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>;
         }
+        #[cfg(feature = "select")]
         impl<'a, C> SelectManyIncludeExt<'a, C> for caustics::SelectManyQueryBuilder<'a, C, Entity, Selected>
         where C: sea_orm::ConnectionTrait {
             fn with(mut self, include: IncludeParam) -> caustics::SelectManyQueryBuilder<'a, C, Entity, Selected> {
@@ -4820,10 +4831,12 @@ pub fn generate_entity(
             }
         }
 
+        #[cfg(feature = "select")]
         pub trait SelectUniqueIncludeExt<'a, C: sea_orm::ConnectionTrait> {
             fn with(self, include: IncludeParam) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
             fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>;
         }
+        #[cfg(feature = "select")]
         impl<'a, C> SelectUniqueIncludeExt<'a, C> for caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected>
         where C: sea_orm::ConnectionTrait {
             fn with(mut self, include: IncludeParam) -> caustics::SelectUniqueQueryBuilder<'a, C, Entity, Selected> {
@@ -4836,10 +4849,12 @@ pub fn generate_entity(
             }
         }
 
+        #[cfg(feature = "select")]
         pub trait SelectFirstIncludeExt<'a, C: sea_orm::ConnectionTrait> {
             fn with(self, include: IncludeParam) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
             fn include(self, includes: Vec<IncludeParam>) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>;
         }
+        #[cfg(feature = "select")]
         impl<'a, C> SelectFirstIncludeExt<'a, C> for caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected>
         where C: sea_orm::ConnectionTrait {
             fn with(mut self, include: IncludeParam) -> caustics::SelectFirstQueryBuilder<'a, C, Entity, Selected> {
@@ -5037,11 +5052,17 @@ pub fn generate_entity(
             pub use super::GroupByHavingAggExt;
             pub use super::GroupByAggExt;
             pub use super::AggregateAggExt;
+            #[cfg(feature = "select")]
             pub use super::ManySelectExt;
+            #[cfg(feature = "select")]
             pub use super::UniqueSelectExt;
+            #[cfg(feature = "select")]
             pub use super::FirstSelectExt;
+            #[cfg(feature = "select")]
             pub use super::SelectManyIncludeExt;
+            #[cfg(feature = "select")]
             pub use super::SelectUniqueIncludeExt;
+            #[cfg(feature = "select")]
             pub use super::SelectFirstIncludeExt;
             pub use super::RelationOrderExt;
             pub use super::SelectManyRelationOrderExt;
@@ -5155,7 +5176,7 @@ pub fn generate_entity(
         }
 
         pub(crate) fn __extract_id(m: &<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey {
-            caustics::CausticsKey::from_db_value(&m.#current_primary_key_ident.into()).unwrap_or_else(|| caustics::CausticsKey::Int(0))
+            caustics::CausticsKey::from_db_value(&m.#current_primary_key_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))
         }
 
         impl Create {

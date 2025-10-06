@@ -72,7 +72,7 @@ where
         };
         // Convert entity_id to CausticsKey dynamically
         let parent_id_key = match &entity_id {
-            sea_orm::Value::Int(Some(id)) => crate::CausticsKey::Int(*id),
+            sea_orm::Value::Int(Some(id)) => crate::CausticsKey::I32(*id),
             sea_orm::Value::String(Some(s)) => crate::CausticsKey::String(s.to_string()),
             sea_orm::Value::Uuid(Some(uuid)) => crate::CausticsKey::Uuid(**uuid),
             _ => {

@@ -600,8 +600,9 @@ fn generate_where_params_to_condition_function(
         {
             match key {
                 caustics::CausticsKey::String(s) => T::from(s),
-                caustics::CausticsKey::Int(i) => T::from(i),
+                caustics::CausticsKey::I32(i) => T::from(i),
                 caustics::CausticsKey::Uuid(u) => T::from(u),
+                _ => panic!("Unsupported CausticsKey variant for conversion"),
             }
         }
 

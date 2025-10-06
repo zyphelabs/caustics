@@ -1,7 +1,9 @@
 #![crate_type = "proc-macro"]
 #![allow(dead_code)]
 #![allow(unused_variables)]
-#![feature(decl_macro)]
+
+// Enable decl_macro feature when select feature is enabled
+#![cfg_attr(feature = "select", feature(decl_macro))]
 
 use proc_macro::TokenStream;
 use quote::quote;
