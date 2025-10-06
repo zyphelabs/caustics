@@ -138,13 +138,13 @@ where
             for (idx, expr) in self.group_by_exprs.iter().enumerate() {
                 sea_orm::QueryTrait::query(&mut select).add_group_by(std::iter::once(expr.clone()));
                 if let Some(alias) = self.group_by_columns.get(idx) {
-                    select.expr_as(expr.clone(), alias.as_str());
+                    select = select.expr_as(expr.clone(), alias.as_str());
                 }
             }
         }
 
         for (expr, alias) in &self.aggregates {
-            select.expr_as(expr.clone(), *alias);
+            select = select.expr_as(expr.clone(), *alias);
         }
 
         for having in &self.having {

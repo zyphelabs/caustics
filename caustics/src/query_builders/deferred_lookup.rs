@@ -3,7 +3,7 @@ use std::any::Any;
 
 /// Internal structure for storing deferred foreign key lookups
 pub struct DeferredLookup {
-    pub unique_param: Box<dyn Any + Send>,
+    pub unique_param: Box<dyn Any + Send + Sync>,
     pub assign: fn(&mut (dyn Any + 'static), crate::CausticsKey),
     #[allow(clippy::type_complexity)]
     pub resolve_on_conn: Box<
@@ -16,7 +16,7 @@ pub struct DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send,
+            > + Send + Sync,
     >,
     #[allow(clippy::type_complexity)]
     pub resolve_on_txn: Box<
@@ -29,13 +29,13 @@ pub struct DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send,
+            > + Send + Sync,
     >,
 }
 
 impl DeferredLookup {
     pub fn new(
-        unique_param: Box<dyn Any + Send>,
+        unique_param: Box<dyn Any + Send + Sync>,
         assign: fn(&mut (dyn Any + 'static), crate::CausticsKey),
         resolve_on_conn: impl for<'a> Fn(
                 &'a DatabaseConnection,
@@ -46,7 +46,7 @@ impl DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send
+            > + Send + Sync
             + 'static,
         resolve_on_txn: impl for<'a> Fn(
                 &'a DatabaseTransaction,
@@ -57,7 +57,7 @@ impl DeferredLookup {
                         + Send
                         + 'a,
                 >,
-            > + Send
+            > + Send + Sync
             + 'static,
     ) -> Self {
         Self {

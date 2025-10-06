@@ -119,7 +119,7 @@ pub fn generate_entity(
                 if let Ok(value) = crate::__caustics_convert_key_for_sea_orm(#target_entity_name, #foreign_key_column_snake, fk_value) {
                     // Use raw SQL expression to bypass SeaORM's typed API
                     query = query.filter(sea_query::Expr::cust_with_values(
-                        &format!("{} = ?", #target::Column::#foreign_key_column_ident.to_string()),
+                        &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
                         [value]
                     ));
                 }
@@ -228,7 +228,7 @@ pub fn generate_entity(
                 let mut selected_fields_exprs = Vec::new();
                 for field in &required_fields {
                     if let Some(expr) = #target::Selected::column_for_alias(field) {
-                        selected_fields_exprs.push((expr, field.to_string()));
+                        selected_fields_exprs.push((expr, ToString::to_string(&field)));
                     }
                 }
 
@@ -243,7 +243,7 @@ pub fn generate_entity(
                     // Use raw SQL approach with select_only() + expr_as() (like main queries)
                     let mut select_query = q_exec.select_only();
                     for (expr, alias) in &selected_fields_exprs {
-                        select_query.expr_as(expr.clone(), alias.as_str());
+                        select_query = select_query.expr_as(expr.clone(), alias.as_str());
                     }
 
                     // Build and execute raw SQL query (like main queries do)
@@ -360,7 +360,7 @@ pub fn generate_entity(
                                 let selected_fields_exprs: Vec<_> = required_fields.iter()
                                     .filter_map(|field| {
                                         if let Some(col) = #target_entity::column_from_str(field) {
-                                            Some((col.into_simple_expr(), field.to_string()))
+                                            Some((col.into_simple_expr(), ToString::to_string(&field)))
                                         } else {
                                             None
                                         }
@@ -377,7 +377,7 @@ pub fn generate_entity(
                                     // Use raw SQL approach with select_only() + expr_as() (like main queries)
                                     let mut select_query = query.select_only();
                                     for (expr, alias) in &selected_fields_exprs {
-                                        select_query.expr_as(expr.clone(), alias.as_str());
+                                        select_query = select_query.expr_as(expr.clone(), alias.as_str());
                                     }
 
                                     // Build and execute raw SQL query (like main queries do)
@@ -452,7 +452,7 @@ pub fn generate_entity(
                             let mut selected_fields_exprs = Vec::new();
                             for field in &required_fields {
                                 if let Some(expr) = #target_entity::Selected::column_for_alias(field) {
-                                    selected_fields_exprs.push((expr, field.to_string()));
+                                    selected_fields_exprs.push((expr, ToString::to_string(&field)));
                                 }
                             }
 
@@ -465,7 +465,7 @@ pub fn generate_entity(
                                 // Use raw SQL approach with select_only() + expr_as() (like main queries)
                                 let mut select_query = query.select_only();
                                 for (expr, alias) in &selected_fields_exprs {
-                                    select_query.expr_as(expr.clone(), alias.as_str());
+                                    select_query = select_query.expr_as(expr.clone(), alias.as_str());
                                 }
 
                                 // Build and execute raw SQL query (like main queries do)
@@ -559,7 +559,7 @@ pub fn generate_entity(
                 if let Ok(value) = crate::__caustics_convert_key_for_sea_orm(#target::Entity::default().table_name(), #primary_key_field_name, fk_value) {
                     // Use raw SQL expression to bypass SeaORM's typed API
                     query = query.filter(sea_query::Expr::cust_with_values(
-                        &format!("{} = ?", #target::Column::#foreign_key_column_ident.to_string()),
+                        &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
                         [value]
                     ));
                 }
@@ -683,7 +683,7 @@ pub fn generate_entity(
                 let mut selected_fields_exprs = Vec::new();
                 for field in &required_fields {
                     if let Some(expr) = #target::Selected::column_for_alias(field) {
-                        selected_fields_exprs.push((expr, field.to_string()));
+                        selected_fields_exprs.push((expr, ToString::to_string(&field)));
                     }
                 }
 
@@ -696,7 +696,7 @@ pub fn generate_entity(
                     // Use raw SQL approach with select_only() + expr_as() (like main queries)
                     let mut select_query = q_exec.select_only();
                     for (expr, alias) in &selected_fields_exprs {
-                        select_query.expr_as(expr.clone(), alias.as_str());
+                        select_query = select_query.expr_as(expr.clone(), alias.as_str());
                     }
 
                     // Build and execute raw SQL query (like main queries do)
@@ -797,7 +797,7 @@ pub fn generate_entity(
                                 let mut selected_fields_exprs = Vec::new();
                                 for field in &required_fields {
                                     if let Some(expr) = #target::Selected::column_for_alias(field) {
-                                        selected_fields_exprs.push((expr, field.to_string()));
+                                        selected_fields_exprs.push((expr, ToString::to_string(&field)));
                                     }
                                 }
 
@@ -811,7 +811,7 @@ pub fn generate_entity(
                                     // Use raw SQL approach with select_only() + expr_as() (like main queries)
                                     let mut select_query = query.select_only();
                                     for (expr, alias) in &selected_fields_exprs {
-                                        select_query.expr_as(expr.clone(), alias.as_str());
+                                        select_query = select_query.expr_as(expr.clone(), alias.as_str());
                                     }
 
                                     // Build and execute raw SQL query (like main queries do)
@@ -902,7 +902,7 @@ pub fn generate_entity(
                                     let mut selected_fields_exprs = Vec::new();
                                     for field in &required_fields {
                                         if let Some(expr) = #target::Selected::column_for_alias(field) {
-                                            selected_fields_exprs.push((expr, field.to_string()));
+                                            selected_fields_exprs.push((expr, ToString::to_string(&field)));
                                         }
                                     }
 
@@ -916,7 +916,7 @@ pub fn generate_entity(
                                         // Use raw SQL approach with select_only() + expr_as() (like main queries)
                                         let mut select_query = query.select_only();
                                         for (expr, alias) in &selected_fields_exprs {
-                                            select_query.expr_as(expr.clone(), alias.as_str());
+                                            select_query = select_query.expr_as(expr.clone(), alias.as_str());
                                         }
 
                                         // Build and execute raw SQL query (like main queries do)
@@ -1540,9 +1540,10 @@ pub fn generate_entity(
                         Box::pin(async move {
                             let items_local = (*items_arc2).clone();
                             // Use parent_id directly with to_db_value()
-                            for c in items_local.into_iter() {
-                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
-                                for lookup in child_lookups.into_iter() {
+                            for c in items_local.iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseConnection>();
+                                let lookups: Vec<_> = child_lookups.iter().collect();
+                                for lookup in lookups {
                                     let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
@@ -1568,9 +1569,10 @@ pub fn generate_entity(
                         Box::pin(async move {
                             let items_local = (*items_arc3).clone();
                             // Use parent_id directly with to_db_value()
-                            for c in items_local.into_iter() {
-                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
-                                for lookup in child_lookups.into_iter() {
+                            for c in items_local.iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseTransaction>();
+                                let lookups: Vec<_> = child_lookups.iter().collect();
+                                for lookup in lookups {
                                     let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
@@ -1611,9 +1613,10 @@ pub fn generate_entity(
                         Box::pin(async move {
                             let items_local = (*items_arc2).clone();
                             // Use parent_id directly with to_db_value()
-                            for c in items_local.into_iter() {
-                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
-                                for lookup in child_lookups.into_iter() {
+                            for c in items_local.iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseConnection>();
+                                let lookups: Vec<_> = child_lookups.iter().collect();
+                                for lookup in lookups {
                                     let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
@@ -1639,9 +1642,10 @@ pub fn generate_entity(
                         Box::pin(async move {
                             let items_local = (*items_arc3).clone();
                             // Use parent_id directly with to_db_value()
-                            for c in items_local.into_iter() {
-                                let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
-                                for lookup in child_lookups.into_iter() {
+                            for c in items_local.iter() {
+                                let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseTransaction>();
+                                let lookups: Vec<_> = child_lookups.iter().collect();
+                                for lookup in lookups {
                                     let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
                                     (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                                 }
@@ -1685,9 +1689,10 @@ pub fn generate_entity(
                 SetParam::#create_variant(items) => {
                     let items_local = items.clone();
                     // Use parent_id directly with to_db_value()
-                    for c in items_local.into_iter() {
-                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
-                        for lookup in child_lookups.into_iter() {
+                    for c in items_local.iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseConnection>();
+                        let lookups: Vec<_> = child_lookups.iter().collect();
+                        for lookup in lookups {
                             let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
@@ -1709,9 +1714,10 @@ pub fn generate_entity(
                 SetParam::#create_many_variant(items) => {
                     let items_local = items.clone();
                     // Use parent_id directly with to_db_value()
-                    for c in items_local.into_iter() {
-                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseConnection>();
-                        for lookup in child_lookups.into_iter() {
+                    for c in items_local.iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseConnection>();
+                        let lookups: Vec<_> = child_lookups.iter().collect();
+                        for lookup in lookups {
                             let v = (lookup.resolve_on_conn)(conn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
@@ -1733,9 +1739,10 @@ pub fn generate_entity(
             quote! {
                 SetParam::#create_variant(items) => {
                     let items_local = items.clone();
-                    for c in items_local.into_iter() {
-                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
-                        for lookup in child_lookups.into_iter() {
+                    for c in items_local.iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseTransaction>();
+                        let lookups: Vec<_> = child_lookups.iter().collect();
+                        for lookup in lookups {
                             let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
@@ -1757,9 +1764,10 @@ pub fn generate_entity(
             quote! {
                 SetParam::#create_many_variant(items) => {
                     let items_local = items.clone();
-                    for c in items_local.into_iter() {
-                        let (mut child_am, child_lookups, child_post_ops) = c.into_active_model::<sea_orm::DatabaseTransaction>();
-                        for lookup in child_lookups.into_iter() {
+                    for c in items_local.iter() {
+                        let (mut child_am, child_lookups, child_post_ops) = c.clone().into_active_model::<sea_orm::DatabaseTransaction>();
+                        let lookups: Vec<_> = child_lookups.iter().collect();
+                        for lookup in lookups {
                             let v = (lookup.resolve_on_txn)(txn, &*lookup.unique_param).await?;
                             (lookup.assign)(&mut child_am as &mut (dyn std::any::Any + 'static), v);
                         }
@@ -2016,16 +2024,16 @@ pub fn generate_entity(
             if is_opt {
                 quote! {
                     WhereParam::#pascal_name(op) => {
-                        let field = #field_name_lit.to_string();
+                        let field = ToString::to_string(&#field_name_lit);
                         let operation = match op {
-                            caustics::FieldOp::Equals(v) => match v { Some(v) => caustics::FieldOp::Equals(v.to_string()), None => caustics::FieldOp::IsNull },
-                            caustics::FieldOp::NotEquals(v) => match v { Some(v) => caustics::FieldOp::NotEquals(v.to_string()), None => caustics::FieldOp::IsNotNull },
-                            caustics::FieldOp::Gt(v) => match v { Some(v) => caustics::FieldOp::Gt(v.to_string()), None => caustics::FieldOp::IsNotNull },
-                            caustics::FieldOp::Lt(v) => match v { Some(v) => caustics::FieldOp::Lt(v.to_string()), None => caustics::FieldOp::IsNull },
-                            caustics::FieldOp::Gte(v) => match v { Some(v) => caustics::FieldOp::Gte(v.to_string()), None => caustics::FieldOp::IsNotNull },
-                            caustics::FieldOp::Lte(v) => match v { Some(v) => caustics::FieldOp::Lte(v.to_string()), None => caustics::FieldOp::IsNull },
-                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().filter_map(|v| v.map(|x| x.to_string())).collect()),
-                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().filter_map(|v| v.map(|x| x.to_string())).collect()),
+                            caustics::FieldOp::Equals(v) => match v { Some(v) => caustics::FieldOp::Equals(ToString::to_string(&v)), None => caustics::FieldOp::IsNull },
+                            caustics::FieldOp::NotEquals(v) => match v { Some(v) => caustics::FieldOp::NotEquals(ToString::to_string(&v)), None => caustics::FieldOp::IsNotNull },
+                            caustics::FieldOp::Gt(v) => match v { Some(v) => caustics::FieldOp::Gt(ToString::to_string(&v)), None => caustics::FieldOp::IsNotNull },
+                            caustics::FieldOp::Lt(v) => match v { Some(v) => caustics::FieldOp::Lt(ToString::to_string(&v)), None => caustics::FieldOp::IsNull },
+                            caustics::FieldOp::Gte(v) => match v { Some(v) => caustics::FieldOp::Gte(ToString::to_string(&v)), None => caustics::FieldOp::IsNotNull },
+                            caustics::FieldOp::Lte(v) => match v { Some(v) => caustics::FieldOp::Lte(ToString::to_string(&v)), None => caustics::FieldOp::IsNull },
+                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().filter_map(|v| v.map(|x| ToString::to_string(&x))).collect()),
+                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().filter_map(|v| v.map(|x| ToString::to_string(&x))).collect()),
                             caustics::FieldOp::Contains(s) => caustics::FieldOp::Contains(s),
                             caustics::FieldOp::StartsWith(s) => caustics::FieldOp::StartsWith(s),
                             caustics::FieldOp::EndsWith(s) => caustics::FieldOp::EndsWith(s),
@@ -2051,16 +2059,16 @@ pub fn generate_entity(
             } else {
                 quote! {
                     WhereParam::#pascal_name(op) => {
-                        let field = #field_name_lit.to_string();
+                        let field = ToString::to_string(&#field_name_lit);
                         let operation = match op {
-                            caustics::FieldOp::Equals(v) => caustics::FieldOp::Equals(v.to_string()),
-                            caustics::FieldOp::NotEquals(v) => caustics::FieldOp::NotEquals(v.to_string()),
-                            caustics::FieldOp::Gt(v) => caustics::FieldOp::Gt(v.to_string()),
-                            caustics::FieldOp::Lt(v) => caustics::FieldOp::Lt(v.to_string()),
-                            caustics::FieldOp::Gte(v) => caustics::FieldOp::Gte(v.to_string()),
-                            caustics::FieldOp::Lte(v) => caustics::FieldOp::Lte(v.to_string()),
-                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().map(|v| v.to_string()).collect()),
-                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().map(|v| v.to_string()).collect()),
+                            caustics::FieldOp::Equals(v) => caustics::FieldOp::Equals(ToString::to_string(&v)),
+                            caustics::FieldOp::NotEquals(v) => caustics::FieldOp::NotEquals(ToString::to_string(&v)),
+                            caustics::FieldOp::Gt(v) => caustics::FieldOp::Gt(ToString::to_string(&v)),
+                            caustics::FieldOp::Lt(v) => caustics::FieldOp::Lt(ToString::to_string(&v)),
+                            caustics::FieldOp::Gte(v) => caustics::FieldOp::Gte(ToString::to_string(&v)),
+                            caustics::FieldOp::Lte(v) => caustics::FieldOp::Lte(ToString::to_string(&v)),
+                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().map(|v| ToString::to_string(&v)).collect()),
+                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().map(|v| ToString::to_string(&v)).collect()),
                             caustics::FieldOp::Contains(s) => caustics::FieldOp::Contains(s),
                             caustics::FieldOp::StartsWith(s) => caustics::FieldOp::StartsWith(s),
                             caustics::FieldOp::EndsWith(s) => caustics::FieldOp::EndsWith(s),
@@ -3485,8 +3493,8 @@ pub fn generate_entity(
                         let target_entity_name = descriptor.target_entity;
                         if let Some(target_entity_metadata) = caustics::get_entity_metadata(target_entity_name) {
                             for fk_field in target_entity_metadata.foreign_key_fields {
-                                if !aliases.contains(&fk_field.to_string()) {
-                                    aliases.push(fk_field.to_string());
+                                if !aliases.contains(&ToString::to_string(&fk_field)) {
+                                    aliases.push(ToString::to_string(&fk_field));
                                 }
                             }
                         }
@@ -4584,11 +4592,14 @@ pub fn generate_entity(
             database_backend: sea_orm::DatabaseBackend,
         }
 
-        // Centralize registry selection to avoid scattered cfg(test) blocks
-        #[allow(dead_code)]
-        fn get_registry<'a>() -> &'a super::CompositeEntityRegistry {
+        #[cfg(test)]
+        pub fn get_registry<'a>() -> &'a super::CompositeEntityRegistry {
             #[cfg(test)]
             { super::get_registry() }
+        }
+
+        #[cfg(not(test))]
+        pub fn get_registry<'a>() -> &'a crate::CompositeEntityRegistry {
             #[cfg(not(test))]
             { crate::get_registry() }
         }

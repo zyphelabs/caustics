@@ -16,8 +16,8 @@ where
 {
     pub async fn exec(self) -> Result<i64, sea_orm::DbErr> {
         let db_backend = self.conn.get_database_backend();
-        let mut select = Entity::find().filter(self.condition).select_only();
-        select.expr_as(Expr::cust("COUNT(*)"), "count");
+        let select = Entity::find().filter(self.condition).select_only();
+        let select = select.expr_as(Expr::cust("COUNT(*)"), "count");
         let stmt = select.build(db_backend);
         let row = self.conn.query_one(stmt).await?;
         let count = match row {

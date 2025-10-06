@@ -43,7 +43,7 @@ where
         let mut select = Entity::find().filter(self.condition).select_only();
 
         if self.selections.count {
-            select.expr_as(Expr::cust("COUNT(*)"), "count");
+            select = select.expr_as(Expr::cust("COUNT(*)"), "count");
         }
 
         if self.selections.min || self.selections.max || self.selections.sum || self.selections.avg
@@ -52,22 +52,22 @@ where
             if let Some(first_col) = <Entity as EntityTrait>::Column::iter().next() {
                 let expr = first_col.into_simple_expr();
                 if self.selections.min {
-                    select.expr_as(SimpleExpr::FunctionCall(Func::min(expr.clone())), "min");
+                    select = select.expr_as(SimpleExpr::FunctionCall(Func::min(expr.clone())), "min");
                 }
                 if self.selections.max {
-                    select.expr_as(SimpleExpr::FunctionCall(Func::max(expr.clone())), "max");
+                    select = select.expr_as(SimpleExpr::FunctionCall(Func::max(expr.clone())), "max");
                 }
                 if self.selections.sum {
-                    select.expr_as(SimpleExpr::FunctionCall(Func::sum(expr.clone())), "sum");
+                    select = select.expr_as(SimpleExpr::FunctionCall(Func::sum(expr.clone())), "sum");
                 }
                 if self.selections.avg {
-                    select.expr_as(SimpleExpr::FunctionCall(Func::avg(expr.clone())), "avg");
+                    select = select.expr_as(SimpleExpr::FunctionCall(Func::avg(expr.clone())), "avg");
                 }
             }
         }
 
         for (expr, alias, _) in &self.aggregates {
-            select.expr_as(expr.clone(), *alias);
+            select = select.expr_as(expr.clone(), *alias);
         }
 
         let stmt = select.build(db_backend);

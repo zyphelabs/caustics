@@ -212,7 +212,7 @@ where
 
         let mut select = query.select_only();
         for (expr, alias) in &selected {
-            select.expr_as(expr.clone(), alias.as_str());
+            select = select.expr_as(expr.clone(), alias.as_str());
         }
 
         let stmt = select.build(self.database_backend);
