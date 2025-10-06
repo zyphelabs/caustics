@@ -111,7 +111,6 @@ where
         self
     }
 
-    // order_nulls deprecated in favor of tuple-based API via IntoOrderSpec
 
     /// Return distinct rows (across all selected columns)
     pub fn distinct_all(mut self) -> Self {

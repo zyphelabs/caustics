@@ -35,7 +35,6 @@ pub fn generate_where_param_logic(
         let field_type = detect_field_type(ty);
 
         // WhereParam variant uses FieldOp<T> - use CausticsKey for primary key fields, actual field type for others
-        //eprintln!("DEBUG: Generating WhereParam variant for field {} with type {:?}", name, ty);
         if is_primary_key {
             where_field_variants.push(quote! { #pascal_name(FieldOp<caustics::CausticsKey>) });
         } else {
@@ -114,16 +113,12 @@ pub fn generate_where_param_logic(
         };
 
         // Generate type-specific operations
-        //eprintln!("DEBUG: Field {} - is_primary_key: {}, is_unique: {}", name, is_primary_key, is_unique);
         let type_specific_ops = if is_primary_key {
             // For primary key fields, generate operations that accept CausticsKey
-            //eprintln!("DEBUG: Generating primary key operations for field {}", name);
             generate_primary_key_operations(&field_type, &pascal_name, ty)
         } else if !is_unique {
-            //eprintln!("DEBUG: Generating regular operations for field {}", name);
             generate_type_specific_operations(&field_type, &pascal_name, ty)
         } else {
-            //eprintln!("DEBUG: Skipping operations for unique field {}", name);
             quote! {} // Don't generate equals for unique fields since unique_where_fn already has it
         };
 
@@ -1677,7 +1672,6 @@ fn generate_primary_key_operations(
     pascal_name: &proc_macro2::Ident,
     ty: &syn::Type,
 ) -> proc_macro2::TokenStream {
-    //eprintln!("DEBUG: Generating primary key operations for field {} with type {:?}", pascal_name, ty);
     // For primary key fields, generate operations that accept CausticsKey directly
     // Note: equals is handled by unique_where_fn for unique fields, so we don't generate it here
     quote! {

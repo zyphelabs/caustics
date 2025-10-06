@@ -642,43 +642,6 @@ pub struct RelationFilter {
     pub distinct: bool,
 }
 
-// IncludeArgs was an internal transitional type. It is now deprecated.
-#[deprecated(since = "0.1.0", note = "Use relation::include(|rel| ...) instead")]
-#[derive(Debug, Clone, Default)]
-pub struct IncludeArgs {
-    pub filters: Vec<Filter>,
-    pub nested_select_aliases: Option<Vec<String>>,
-    pub nested_includes: Vec<RelationFilter>,
-    pub take: Option<i64>,
-    pub skip: Option<i64>,
-    pub order_by: Vec<(String, SortOrder)>,
-    pub cursor_id: Option<CausticsKey>,
-    pub include_count: bool,
-}
-
-#[allow(deprecated)]
-impl IncludeArgs {
-    pub fn with_filters(mut self, filters: Vec<Filter>) -> Self {
-        self.filters = filters;
-        self
-    }
-    pub fn push_filters(mut self, mut filters: Vec<Filter>) -> Self {
-        self.filters.append(&mut filters);
-        self
-    }
-    pub fn with_nested_includes(mut self, nested: Vec<RelationFilter>) -> Self {
-        self.nested_includes = nested;
-        self
-    }
-    pub fn take(mut self, n: i64) -> Self {
-        self.take = Some(n);
-        self
-    }
-    pub fn skip(mut self, n: i64) -> Self {
-        self.skip = Some(n);
-        self
-    }
-}
 
 /// Central PCR-like include builder that accumulates generic include state
 #[derive(Debug, Clone, Default)]
@@ -982,11 +945,10 @@ where
 }
 
 // Macro helper to construct TypedSelection for a module path without exposing type paths in the callsite macro body
-// legacy helper removed
 
 /// Trait for dynamic entity fetching without hardcoding
 pub trait EntityFetcher<C: sea_orm::ConnectionTrait> {
-    /// Fetch entities by foreign key value (legacy - returns Box<dyn Any + Send>)
+    /// Fetch entities by foreign key value
     #[allow(clippy::type_complexity)]
     fn fetch_by_foreign_key<'a>(
         &'a self,

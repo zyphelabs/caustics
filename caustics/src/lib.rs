@@ -297,7 +297,6 @@ pub use query_builders::DeferredLookup;
 pub use types::ApplyNestedIncludes;
 pub use types::{EntityFetcher, EntityRegistry};
 
-// Legacy Select! and select_typed! macros removed; use per-entity `entity::select!(...)` and builder `.select(...)`.
 
 // Global typed selection macro that returns a SelectionSpec marker
 // Global select_typed! macro no longer exposed

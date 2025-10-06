@@ -2778,6 +2778,11 @@ pub fn generate_entity(
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
                 Some(quote! { #variant(caustics::SortOrder) })
+            } else if matches!(relation.kind, RelationKind::BelongsTo) {
+                // For belongs_to relations, we need to support field ordering
+                // This is more complex as it requires subqueries
+                let variant = format_ident!("{}Field", relation.name.to_pascal_case());
+                Some(quote! { #variant(String, caustics::SortOrder) })
             } else {
                 None
             }
@@ -2845,6 +2850,34 @@ pub fn generate_entity(
                         self.pending_order_bys.push((expr, sea_order));
                     }
                 })
+            } else if matches!(relation.kind, RelationKind::BelongsTo) {
+                let variant = format_ident!("{}Field", relation.name.to_pascal_case());
+                let relation_name_snake = relation.name.to_snake_case();
+                let current_table_name = relation
+                    .current_table_name.clone()
+                    .unwrap_or_else(|| {
+                        entity_name.to_snake_case()
+                    });
+                let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
+                let target_table_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
+                let fk_col_snake = relation
+                    .foreign_key_column
+                    .as_ref()
+                    .map(|s| s.to_snake_case())
+                    .unwrap_or_else(|| current_pk_column_name.clone());
+                let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
+                let target_pk_col = relation.primary_key_field.as_ref().unwrap_or(&relation_name_snake);
+                let target_pk_col_lit = syn::LitStr::new(target_pk_col, proc_macro2::Span::call_site());
+                Some(quote! {
+                    RelationOrderByParam::#variant(field_name, order) => {
+                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let expr = sea_orm::sea_query::Expr::cust(&format!(
+                            "(SELECT \"{}\" FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
+                            field_name, #target_table_lit, #target_table_lit, #target_pk_col_lit, #current_table_lit, #fk_col_lit
+                        ));
+                        self.pending_order_bys.push((expr, sea_order));
+                    }
+                })
             } else { None }
         })
         .collect::<Vec<_>>();
@@ -2877,6 +2910,34 @@ pub fn generate_entity(
                         let expr = sea_orm::sea_query::Expr::cust(&format!(
                             "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
                             #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
+                        ));
+                        self.pending_order_bys.push((expr, sea_order));
+                    }
+                })
+            } else if matches!(relation.kind, RelationKind::BelongsTo) {
+                let variant = format_ident!("{}Field", relation.name.to_pascal_case());
+                let relation_name_snake = relation.name.to_snake_case();
+                let current_table_name = relation
+                    .current_table_name.clone()
+                    .unwrap_or_else(|| {
+                        entity_name.to_snake_case()
+                    });
+                let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
+                let target_table_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
+                let fk_col_snake = relation
+                    .foreign_key_column
+                    .as_ref()
+                    .map(|s| s.to_snake_case())
+                    .unwrap_or_else(|| current_pk_column_name.clone());
+                let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
+                let target_pk_col = relation.primary_key_field.as_ref().unwrap_or(&relation_name_snake);
+                let target_pk_col_lit = syn::LitStr::new(target_pk_col, proc_macro2::Span::call_site());
+                Some(quote! {
+                    RelationOrderByParam::#variant(field_name, order) => {
+                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let expr = sea_orm::sea_query::Expr::cust(&format!(
+                            "(SELECT \"{}\" FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
+                            field_name, #target_table_lit, #target_table_lit, #target_pk_col_lit, #current_table_lit, #fk_col_lit
                         ));
                         self.pending_order_bys.push((expr, sea_order));
                     }
@@ -2914,6 +2975,34 @@ pub fn generate_entity(
                         let expr = sea_orm::sea_query::Expr::cust(&format!(
                             "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
                             #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
+                        ));
+                        (expr, sea_order)
+                    }
+                })
+            } else if matches!(relation.kind, RelationKind::BelongsTo) {
+                let variant = format_ident!("{}Field", relation.name.to_pascal_case());
+                let relation_name_snake = relation.name.to_snake_case();
+                let current_table_name = relation
+                    .current_table_name.clone()
+                    .unwrap_or_else(|| {
+                        entity_name.to_snake_case()
+                    });
+                let current_table_lit = syn::LitStr::new(&current_table_name, proc_macro2::Span::call_site());
+                let target_table_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
+                let fk_col_snake = relation
+                    .foreign_key_column
+                    .as_ref()
+                    .map(|s| s.to_snake_case())
+                    .unwrap_or_else(|| current_pk_column_name.clone());
+                let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
+                let target_pk_col = relation.primary_key_field.as_ref().unwrap_or(&relation_name_snake);
+                let target_pk_col_lit = syn::LitStr::new(target_pk_col, proc_macro2::Span::call_site());
+                Some(quote! {
+                    RelationOrderByParam::#variant(field_name, order) => {
+                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let expr = sea_orm::sea_query::Expr::cust(&format!(
+                            "(SELECT \"{}\" FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
+                            field_name, #target_table_lit, #target_table_lit, #target_pk_col_lit, #current_table_lit, #fk_col_lit
                         ));
                         (expr, sea_order)
                     }
@@ -4576,11 +4665,7 @@ pub fn generate_entity(
         }}
 
 
-        // Note: per-entity macro `select!` is intentionally not generated to avoid
-        // name collisions in modules that define multiple entities. Use the global
-        // `caustics::Select!(entity, { .. })` helper instead.
 
-        // Intentionally no per-entity Select! macro; use global caustics::Select!(entity, { .. })
 
 
         // Extension traits to apply select on query builders returning Selected builders

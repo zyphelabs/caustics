@@ -457,7 +457,6 @@ fn main() {
 }
 
 fn generate_client_for_dir(dir: &str, out_file: &str) {
-    println!("cargo:rerun-if-changed={}/", dir);
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir).join(out_file);
@@ -593,8 +592,7 @@ fn generate_client_for_dir(dir: &str, out_file: &str) {
 }
 
 fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
-    for dir in dirs {
-        println!("cargo:rerun-if-changed={}/", dir);
+    for _dir in dirs {
     }
 
     let out_dir = env::var("OUT_DIR").unwrap();
@@ -695,8 +693,7 @@ fn generate_client_for_dir_multi(dirs: &[&str], out_file: &str) {
 }
 
 fn generate_per_namespace_files(dirs: &[&str]) {
-    for dir in dirs {
-        println!("cargo:rerun-if-changed={}/", dir);
+    for _dir in dirs {
     }
 
     let out_dir = env::var("OUT_DIR").unwrap();

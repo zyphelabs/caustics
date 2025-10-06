@@ -178,7 +178,6 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
             let generated_file = match syn::parse2::<File>(generated) {
                 Ok(file) => file,
                 Err(e) => {
-                    eprintln!("Parse error: {}", e);
                     return Error::new(e.span(), format!("Failed to parse generated items: {}", e))
                         .to_compile_error()
                         .into();

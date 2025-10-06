@@ -93,6 +93,41 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
             quote! {}
         };
 
+        let variant = if matches!(relation.kind, RelationKind::HasMany) {
+            format_ident!("{}Count", relation_name.to_pascal_case())
+        } else {
+            format_ident!("{}Field", relation_name.to_pascal_case())
+        };
+
+        // Generate field ordering functions for relation fields
+        let relation_field_order_fns = if matches!(relation.kind, RelationKind::BelongsTo) {
+            // For belongs_to relations, we can order by fields in the related entity
+            let field_variant = format_ident!("{}Field", relation_name.to_pascal_case());
+            quote! {
+                // Field ordering for belongs_to relations
+                // This allows ordering by fields in the related entity
+                // Example: post::user::name::order(SortOrder::Asc)
+                pub fn field(field_name: &str, order: caustics::SortOrder) -> super::RelationOrderByParam {
+                    super::RelationOrderByParam::#field_variant(field_name.to_string(), order)
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        // Generate count function for has_many relations
+        let count_fn = if matches!(relation.kind, RelationKind::HasMany) {
+            let variant_ident = format_ident!("{}Count", relation_name.to_pascal_case());
+            quote! {
+                // Count function for relation ordering
+                pub fn count(order: caustics::SortOrder) -> super::RelationOrderByParam {
+                    super::RelationOrderByParam::#variant_ident(order)
+                }
+            }
+        } else {
+            quote! {}
+        };
+
         let submodule = quote! {
             pub mod #relation_name_ident {
                 use super::*;
@@ -237,6 +272,12 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
 
                 // Relation-aggregate orderBy sugar entry: relation::order_by(child_field::count(order))
                 #order_by_relation_fn
+
+                // Count function for relation ordering
+                #count_fn
+
+                // Field ordering functions for relation fields
+                #relation_field_order_fns
 
                 pub fn connect(where_param: super::#target::UniqueWhereParam) -> super::SetParam {
                     super::SetParam::#connect_variant(where_param)

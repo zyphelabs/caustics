@@ -25,7 +25,6 @@ pub struct TestContainer<'a>(Container<'a, GenericImage>);
 
 impl<'a> Drop for TestContainer<'a> {
     fn drop(&mut self) {
-        println!("Cleaning up test container...");
         // The container will be automatically removed when dropped
         self.0.stop();
     }
@@ -36,17 +35,13 @@ pub mod helpers {
 
     pub async fn setup_test_db<'a>(
     ) -> Result<(Arc<Mutex<PrismaClient>>, TestContainer<'a>), Box<dyn std::error::Error>> {
-        println!("Setting up test database...");
-        println!("Starting PostgreSQL container...");
         let container = TestContainer(DOCKER.run(POSTGRES_IMAGE.clone()));
         let pg_port = container.0.get_host_port_ipv4(5432);
-        println!("PostgreSQL running on port: {}", pg_port);
         let db_url = format!(
             "postgresql://postgres:postgres@127.0.0.1:{}/postgres",
             pg_port
         );
         // Wait for PostgreSQL to be ready
-        println!("Waiting for PostgreSQL to be ready...");
         let mut retries = 0;
         while retries < 30 {
             let status = Command::new("pg_isready")
@@ -62,7 +57,6 @@ pub mod helpers {
             return Err("PostgreSQL failed to become ready".into());
         }
         // Run Prisma migrations
-        println!("Running Prisma migrations...");
         env::set_var("PGPASSWORD", "postgres");
         let migration_sql =
             include_str!("../../prisma/migrations/20240320000000_init/migration.sql");
@@ -81,15 +75,12 @@ pub mod helpers {
             ])
             .output()?;
         if !output.status.success() {
-            println!(
                 "Migration error: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
             return Err("Failed to run Prisma migrations".into());
         }
-        println!("Migrations completed successfully");
         // Verify tables exist
-        println!("Verifying tables exist...");
         let output = Command::new("psql")
             .args([
                 "-h",
@@ -104,19 +95,18 @@ pub mod helpers {
                 "\\dt",
             ])
             .output()?;
-        println!(
             "Tables in database: {}",
             String::from_utf8_lossy(&output.stdout)
         );
-        println!("Connecting to database...");
+"Connecting to database...");
         let client = PrismaClient::_builder().with_url(db_url).build().await?;
         let client = Arc::new(Mutex::new(client));
-        println!("Database setup complete!");
+"Database setup complete!");
         Ok((client, container))
     }
 
     pub async fn cleanup_test_db(client: &PrismaClient) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Cleaning up test database...");
+"Cleaning up test database...");
         client
             ._query_raw::<()>(Raw::new(
                 "TRUNCATE TABLE \"Post\", \"User\" RESTART IDENTITY CASCADE;",
@@ -124,7 +114,7 @@ pub mod helpers {
             ))
             .exec()
             .await?;
-        println!("Database cleanup complete!");
+"Database cleanup complete!");
         Ok(())
     }
 
@@ -134,7 +124,7 @@ pub mod helpers {
     ) -> Result<(), Box<dyn std::error::Error>> {
         cleanup_test_db(&client_guard).await?;
         container.0.stop();
-        println!("Test teardown complete!");
+"Test teardown complete!");
         Ok(())
     }
 }
@@ -610,7 +600,6 @@ mod query_builder_tests {
             .await
             .unwrap()
             .unwrap();
-        println!(
             "post_without_reviewer.reviewer: {:?}",
             post_without_reviewer.reviewer
         );
@@ -1232,6 +1221,472 @@ mod query_builder_tests {
 
         let total_null_age = client.user().count(vec![user::age::equals(None)]).exec().await?;
         assert_eq!(total_null_age, 1);
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_advanced_ordering_with_nulls() -> Result<(), Box<dyn std::error::Error>> {
+        use std::str::FromStr;
+        use chrono::{DateTime, FixedOffset};
+        use caustics::types::{SortOrder, NullsOrder};
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+
+        let now = DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap();
+        
+        // Create test users with different age values including nulls
+        let _user1 = client
+            .user()
+            .create(
+                "user1@example.com".to_string(),
+                "User One".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _user2 = client
+            .user()
+            .create(
+                "user2@example.com".to_string(),
+                "User Two".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _user3 = client
+            .user()
+            .create(
+                "user3@example.com".to_string(),
+                "User Three".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _user4 = client
+            .user()
+            .create(
+                "user4@example.com".to_string(),
+                "User Four".to_string(),
+                now,
+                now,
+                vec![user::age::set(None), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let _user5 = client
+            .user()
+            .create(
+                "user5@example.com".to_string(),
+                "User Five".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(20)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        // Test 1: Ascending order with nulls first
+        let users_nulls_first_asc = client
+            .user()
+            .find_many(vec![])
+            .order_by((
+                user::age::order(SortOrder::Asc),
+                NullsOrder::First,
+            ))
+            .exec()
+            .await?;
+
+        let ages_nulls_first_asc: Vec<Option<i32>> = users_nulls_first_asc.iter().map(|u| u.age).collect();
+        assert_eq!(ages_nulls_first_asc.len(), 5);
+        
+        // First two should be None (nulls first), then 20, 25, 30
+        assert_eq!(ages_nulls_first_asc[0], None);
+        assert_eq!(ages_nulls_first_asc[1], None);
+        assert_eq!(ages_nulls_first_asc[2], Some(20));
+        assert_eq!(ages_nulls_first_asc[3], Some(25));
+        assert_eq!(ages_nulls_first_asc[4], Some(30));
+
+        // Test 2: Ascending order with nulls last
+        let users_nulls_last_asc = client
+            .user()
+            .find_many(vec![])
+            .order_by((
+                user::age::order(SortOrder::Asc),
+                NullsOrder::Last,
+            ))
+            .exec()
+            .await?;
+
+        let ages_nulls_last_asc: Vec<Option<i32>> = users_nulls_last_asc.iter().map(|u| u.age).collect();
+        assert_eq!(ages_nulls_last_asc.len(), 5);
+        
+        // First should be 20, 25, 30, then None, None (nulls last)
+        assert_eq!(ages_nulls_last_asc[0], Some(20));
+        assert_eq!(ages_nulls_last_asc[1], Some(25));
+        assert_eq!(ages_nulls_last_asc[2], Some(30));
+        assert_eq!(ages_nulls_last_asc[3], None);
+        assert_eq!(ages_nulls_last_asc[4], None);
+
+        // Test 3: Descending order with nulls first
+        let users_nulls_first_desc = client
+            .user()
+            .find_many(vec![])
+            .order_by((
+                user::age::order(SortOrder::Desc),
+                NullsOrder::First,
+            ))
+            .exec()
+            .await?;
+
+        let ages_nulls_first_desc: Vec<Option<i32>> = users_nulls_first_desc.iter().map(|u| u.age).collect();
+        assert_eq!(ages_nulls_first_desc.len(), 5);
+        
+        // First two should be None (nulls first), then 30, 25, 20
+        assert_eq!(ages_nulls_first_desc[0], None);
+        assert_eq!(ages_nulls_first_desc[1], None);
+        assert_eq!(ages_nulls_first_desc[2], Some(30));
+        assert_eq!(ages_nulls_first_desc[3], Some(25));
+        assert_eq!(ages_nulls_first_desc[4], Some(20));
+
+        // Test 4: Descending order with nulls last
+        let users_nulls_last_desc = client
+            .user()
+            .find_many(vec![])
+            .order_by((
+                user::age::order(SortOrder::Desc),
+                NullsOrder::Last,
+            ))
+            .exec()
+            .await?;
+
+        let ages_nulls_last_desc: Vec<Option<i32>> = users_nulls_last_desc.iter().map(|u| u.age).collect();
+        assert_eq!(ages_nulls_last_desc.len(), 5);
+        
+        // First should be 30, 25, 20, then None, None (nulls last)
+        assert_eq!(ages_nulls_last_desc[0], Some(30));
+        assert_eq!(ages_nulls_last_desc[1], Some(25));
+        assert_eq!(ages_nulls_last_desc[2], Some(20));
+        assert_eq!(ages_nulls_last_desc[3], None);
+        assert_eq!(ages_nulls_last_desc[4], None);
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_partial_updates_with_type_safety() -> Result<(), Box<dyn std::error::Error>> {
+        use std::str::FromStr;
+        use chrono::{DateTime, FixedOffset};
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+
+        let now = DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap();
+        
+        // Create initial user with all fields populated
+        let email = format!("partial_test_{}@example.com", chrono::Utc::now().timestamp());
+        let original_user = client
+            .user()
+            .create(
+                email.clone(),
+                "Original Name".to_string(),
+                now,
+                now,
+                vec![
+                    user::age::set(Some(25)), 
+                    user::deleted_at::set(None)
+                ],
+            )
+            .exec()
+            .await?;
+
+        // Verify original state
+        assert_eq!(original_user.name, "Original Name");
+        assert_eq!(original_user.email, email);
+        assert_eq!(original_user.age, Some(25));
+        assert_eq!(original_user.deleted_at, None);
+
+        // Test 1: Partial update - only update name
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(original_user.id),
+                vec![
+                    user::name::set("Updated Name".to_string()),
+                ]
+            )
+            .exec()
+            .await?;
+
+        // Verify only name was updated, other fields remain unchanged
+        assert_eq!(updated_user.name, "Updated Name");
+        assert_eq!(updated_user.email, email); // Should remain the same
+        assert_eq!(updated_user.age, Some(25)); // Should remain the same
+        assert_eq!(updated_user.deleted_at, None); // Should remain the same
+
+        // Test 2: Partial update - update multiple fields
+        let updated_user2 = client
+            .user()
+            .update(
+                user::id::equals(original_user.id),
+                vec![
+                    user::name::set("Final Name".to_string()),
+                    user::age::set(Some(30)),
+                ]
+            )
+            .exec()
+            .await?;
+
+        // Verify multiple fields were updated
+        assert_eq!(updated_user2.name, "Final Name");
+        assert_eq!(updated_user2.email, email); // Should remain the same
+        assert_eq!(updated_user2.age, Some(30)); // Should be updated
+        assert_eq!(updated_user2.deleted_at, None); // Should remain the same
+
+        // Test 3: Partial update - set field to null
+        let updated_user3 = client
+            .user()
+            .update(
+                user::id::equals(original_user.id),
+                vec![
+                    user::age::set(None),
+                ]
+            )
+            .exec()
+            .await?;
+
+        // Verify age was set to null, other fields remain unchanged
+        assert_eq!(updated_user3.name, "Final Name"); // Should remain the same
+        assert_eq!(updated_user3.email, email); // Should remain the same
+        assert_eq!(updated_user3.age, None); // Should be updated to null
+        assert_eq!(updated_user3.deleted_at, None); // Should remain the same
+
+        // Test 4: Partial update - update email and set deleted_at
+        let deleted_at = DateTime::<FixedOffset>::from_str("2021-12-31T23:59:59Z").unwrap();
+        let updated_user4 = client
+            .user()
+            .update(
+                user::id::equals(original_user.id),
+                vec![
+                    user::email::set("updated@example.com".to_string()),
+                    user::deleted_at::set(Some(deleted_at)),
+                ]
+            )
+            .exec()
+            .await?;
+
+        // Verify email and deleted_at were updated
+        assert_eq!(updated_user4.name, "Final Name"); // Should remain the same
+        assert_eq!(updated_user4.email, "updated@example.com"); // Should be updated
+        assert_eq!(updated_user4.age, None); // Should remain the same
+        assert_eq!(updated_user4.deleted_at, Some(deleted_at)); // Should be updated
+
+        // Test 5: Verify the final state by fetching the user
+        let final_user = client
+            .user()
+            .find_unique(user::id::equals(original_user.id))
+            .exec()
+            .await?
+            .ok_or("User not found")?;
+
+        assert_eq!(final_user.name, "Final Name");
+        assert_eq!(final_user.email, "updated@example.com");
+        assert_eq!(final_user.age, None);
+        assert_eq!(final_user.deleted_at, Some(deleted_at));
+
+        teardown_test_db(client, container).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_relation_ordering() -> Result<(), Box<dyn std::error::Error>> {
+        use std::str::FromStr;
+        use chrono::{DateTime, FixedOffset};
+
+        let (client, container) = setup().await?;
+        let client = client.lock().await;
+
+        let now = DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap();
+        
+        // Create users with different names for ordering
+        let user1 = client
+            .user()
+            .create(
+                "alice@example.com".to_string(),
+                "Alice".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let user2 = client
+            .user()
+            .create(
+                "bob@example.com".to_string(),
+                "Bob".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        let user3 = client
+            .user()
+            .create(
+                "charlie@example.com".to_string(),
+                "Charlie".to_string(),
+                now,
+                now,
+                vec![user::age::set(Some(35)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await?;
+
+        // Create posts for each user with different creation times
+        let post1_user1 = client
+            .post()
+            .create(
+                "Alice's First Post".to_string(),
+                now,
+                now,
+                user::id::equals(user1.id),
+                vec![post::content::set(Some("Alice's first content".to_string()))],
+            )
+            .exec()
+            .await?;
+
+        let post2_user1 = client
+            .post()
+            .create(
+                "Alice's Second Post".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-02T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-02T00:00:00Z").unwrap(),
+                user::id::equals(user1.id),
+                vec![post::content::set(Some("Alice's second content".to_string()))],
+            )
+            .exec()
+            .await?;
+
+        let post1_user2 = client
+            .post()
+            .create(
+                "Bob's Post".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-03T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-03T00:00:00Z").unwrap(),
+                user::id::equals(user2.id),
+                vec![post::content::set(Some("Bob's content".to_string()))],
+            )
+            .exec()
+            .await?;
+
+        // Charlie has no posts
+
+        // Test 1: Order users by their post count (ascending)
+        let users_by_post_count_asc = client
+            .user()
+            .find_many(vec![])
+            .with(user::posts::fetch(vec![]))
+            .order_by(user::posts::count(SortOrder::Asc))
+            .exec()
+            .await?;
+
+        // Charlie (0 posts) should come first, then Bob (1 post), then Alice (2 posts)
+        assert_eq!(users_by_post_count_asc.len(), 3);
+        assert_eq!(users_by_post_count_asc[0].name, "Charlie");
+        assert_eq!(users_by_post_count_asc[1].name, "Bob");
+        assert_eq!(users_by_post_count_asc[2].name, "Alice");
+
+        // Test 2: Order users by their post count (descending)
+        let users_by_post_count_desc = client
+            .user()
+            .find_many(vec![])
+            .with(user::posts::fetch(vec![]))
+            .order_by(user::posts::count(SortOrder::Desc))
+            .exec()
+            .await?;
+
+        // Alice (2 posts) should come first, then Bob (1 post), then Charlie (0 posts)
+        assert_eq!(users_by_post_count_desc.len(), 3);
+        assert_eq!(users_by_post_count_desc[0].name, "Alice");
+        assert_eq!(users_by_post_count_desc[1].name, "Bob");
+        assert_eq!(users_by_post_count_desc[2].name, "Charlie");
+
+        // Test 3: Order posts by their user's name (ascending)
+        let posts_by_user_name_asc = client
+            .post()
+            .find_many(vec![])
+            .with(post::user::fetch())
+            .order_by(post::user::name::order(SortOrder::Asc))
+            .exec()
+            .await?;
+
+        // Should be ordered by user name: Alice, Bob
+        assert_eq!(posts_by_user_name_asc.len(), 3);
+        assert_eq!(posts_by_user_name_asc[0].title, "Alice's First Post");
+        assert_eq!(posts_by_user_name_asc[1].title, "Alice's Second Post");
+        assert_eq!(posts_by_user_name_asc[2].title, "Bob's Post");
+
+        // Test 4: Order posts by their user's name (descending)
+        let posts_by_user_name_desc = client
+            .post()
+            .find_many(vec![])
+            .with(post::user::fetch())
+            .order_by(post::user::name::order(SortOrder::Desc))
+            .exec()
+            .await?;
+
+        // Should be ordered by user name: Bob, Alice
+        assert_eq!(posts_by_user_name_desc.len(), 3);
+        assert_eq!(posts_by_user_name_desc[0].title, "Bob's Post");
+        assert_eq!(posts_by_user_name_desc[1].title, "Alice's Second Post");
+        assert_eq!(posts_by_user_name_desc[2].title, "Alice's First Post");
+
+        // Test 5: Order posts by their user's age (ascending)
+        let posts_by_user_age_asc = client
+            .post()
+            .find_many(vec![])
+            .with(post::user::fetch())
+            .order_by(post::user::age::order(SortOrder::Asc))
+            .exec()
+            .await?;
+
+        // Should be ordered by user age: Alice (25), Bob (30)
+        assert_eq!(posts_by_user_age_asc.len(), 3);
+        assert_eq!(posts_by_user_age_asc[0].title, "Alice's First Post");
+        assert_eq!(posts_by_user_age_asc[1].title, "Alice's Second Post");
+        assert_eq!(posts_by_user_age_asc[2].title, "Bob's Post");
+
+        // Test 6: Complex ordering - users by post count, then by name
+        let users_complex_order = client
+            .user()
+            .find_many(vec![])
+            .with(user::posts::fetch(vec![]))
+            .order_by(user::posts::count(SortOrder::Asc))
+            .order_by(user::name::order(SortOrder::Asc))
+            .exec()
+            .await?;
+
+        // Should be ordered by post count first, then by name
+        assert_eq!(users_complex_order.len(), 3);
+        assert_eq!(users_complex_order[0].name, "Charlie"); // 0 posts
+        assert_eq!(users_complex_order[1].name, "Bob"); // 1 post
+        assert_eq!(users_complex_order[2].name, "Alice"); // 2 posts
 
         teardown_test_db(client, container).await?;
         Ok(())

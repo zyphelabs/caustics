@@ -86,11 +86,6 @@ where
             }
         }
 
-        // Log defensive fields for debugging (can be removed in production)
-        if !defensive_fields.is_empty() {
-            // Debug logging can be enabled here if needed
-            // println!("Defensive fields added for relations: {:?}", defensive_fields);
-        }
         let mut select = query.select_only();
         for (expr, alias) in &selected {
             select.expr_as(expr.clone(), alias.as_str());

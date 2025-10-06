@@ -512,7 +512,6 @@ mod caustics_school_tests {
     use caustics::QueryError;
     use caustics_macros::select_struct;
     use chrono::{DateTime, FixedOffset, TimeZone};
-    // legacy import removed
 
     fn fixed_now() -> DateTime<FixedOffset> {
         FixedOffset::east_opt(0)
@@ -965,7 +964,6 @@ mod caustics_school_advanced_tests {
     use super::helpers::setup_test_db;
     use super::*;
     use caustics_macros::select_struct;
-    // legacy imports removed
     use chrono::{DateTime, FixedOffset, TimeZone};
 
     fn fixed_now() -> DateTime<FixedOffset> {

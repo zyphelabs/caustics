@@ -160,6 +160,29 @@ let user = client
     )
     .exec()
     .await?;
+
+// Partial updates with type safety
+let updated_user = client
+    .user()
+    .update(
+        user::id::equals(1),
+        vec![
+            user::name::set("New Name".to_string()),
+            // Only update specific fields, others remain unchanged
+        ]
+    )
+    .exec()
+    .await?;
+
+// Set field to null
+let user_with_null_age = client
+    .user()
+    .update(
+        user::id::equals(1),
+        vec![user::age::set(None)]
+    )
+    .exec()
+    .await?;
 ```
 
 ### Delete
@@ -224,9 +247,7 @@ let user_with_posts: UserWithPosts = client
     .unwrap();
 
 // Access nested data with full type safety
-println!("User: {}", user_with_posts.name);
 for post in user_with_posts.posts {
-    println!("  Post: {} (created: {})", post.title, post.created_at);
 }
 ```
 
@@ -275,8 +296,6 @@ let student: StudentWithEnrollments = client
 
 // Access deeply nested data
 for enrollment in student.enrollments {
-    println!("Enrollment: {} - {}", enrollment.status, enrollment.course.name);
-    println!("  Teacher: {} {}", enrollment.course.teacher.first_name, enrollment.course.teacher.last_name);
 }
 ```
 
@@ -343,6 +362,66 @@ let users = client
     .take(10)
     .skip(0)
     .order_by(user::created_at::order(SortOrder::Desc))
+    .exec()
+    .await?;
+```
+
+### Relation Ordering
+
+Caustics supports powerful relation ordering capabilities, allowing you to sort by related data:
+
+```rust
+// Order users by their post count (ascending)
+let users_by_post_count = client
+    .user()
+    .find_many(vec![])
+    .with(user::posts::fetch())
+    .order_by(user::posts::count(SortOrder::Asc))
+    .exec()
+    .await?;
+
+// Order users by their post count (descending) 
+let users_most_active = client
+    .user()
+    .find_many(vec![])
+    .with(user::posts::fetch())
+    .order_by(user::posts::count(SortOrder::Desc))
+    .exec()
+    .await?;
+
+// Complex ordering - by post count, then by name
+let users_complex_order = client
+    .user()
+    .find_many(vec![])
+    .with(user::posts::fetch())
+    .order_by(user::posts::count(SortOrder::Asc))
+    .order_by(user::name::order(SortOrder::Asc))
+    .exec()
+    .await?;
+```
+
+### Advanced Ordering with Nulls Handling
+
+```rust
+// Order by age with nulls first
+let users_nulls_first = client
+    .user()
+    .find_many(vec![])
+    .order_by((
+        user::age::order(SortOrder::Asc),
+        NullsOrder::First,
+    ))
+    .exec()
+    .await?;
+
+// Order by age with nulls last
+let users_nulls_last = client
+    .user()
+    .find_many(vec![])
+    .order_by((
+        user::age::order(SortOrder::Desc),
+        NullsOrder::Last,
+    ))
     .exec()
     .await?;
 ```

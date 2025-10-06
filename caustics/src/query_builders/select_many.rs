@@ -56,7 +56,6 @@ where
         self
     }
 
-    // order_nulls deprecated in favor of tuple-based API via IntoOrderSpec
 
     /// Execute and return selected rows with type inference
     pub async fn exec<T>(self) -> Result<Vec<T>, sea_orm::DbErr>
@@ -209,7 +208,6 @@ where
         // Log defensive fields for debugging (can be removed in production)
         if !defensive_fields.is_empty() {
             // Debug logging can be enabled here if needed
-            // println!("Defensive fields added for relations: {:?}", defensive_fields);
         }
 
         let mut select = query.select_only();
