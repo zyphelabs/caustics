@@ -119,13 +119,12 @@ pub fn generate_entity(
             quote! {
             let mut query = #target::Entity::find();
             if let Some(fk_value) = foreign_key_value {
-                if let Ok(value) = crate::__caustics_convert_key_for_sea_orm(#target_entity_name, #foreign_key_column_snake, fk_value) {
-                    // Use raw SQL expression to bypass SeaORM's typed API
-                    query = query.filter(sea_query::Expr::cust_with_values(
-                        &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
-                        [value]
-                    ));
-                }
+                let value = fk_value.to_db_value();
+                // Use raw SQL expression to bypass SeaORM's typed API
+                query = query.filter(sea_query::Expr::cust_with_values(
+                    &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
+                    [value]
+                ));
             }
 
             // Apply child-level filters from RelationFilter
@@ -137,12 +136,10 @@ pub fn generate_entity(
                         let col_expr = col.into_simple_expr();
                         match &f.operation {
                             caustics::FieldOp::Equals(v) => {
-                                let val = caustics::parse_string_to_sea_orm_value(v);
-                                cond = cond.add(Expr::expr(col_expr.clone()).eq(val));
+                                cond = cond.add(Expr::expr(col_expr.clone()).eq(v.clone()));
                             }
                             caustics::FieldOp::NotEquals(v) => {
-                                let val = caustics::parse_string_to_sea_orm_value(v);
-                                cond = cond.add(Expr::expr(col_expr.clone()).ne(val));
+                                cond = cond.add(Expr::expr(col_expr.clone()).ne(v.clone()));
                             }
                             caustics::FieldOp::Contains(s) => {
                                 let pat = format!("%{}%", s);
@@ -559,13 +556,12 @@ pub fn generate_entity(
             quote! {
             let mut query = #target::Entity::find();
             if let Some(fk_value) = foreign_key_value {
-                if let Ok(value) = crate::__caustics_convert_key_for_sea_orm(#target::Entity::default().table_name(), #primary_key_field_name, fk_value) {
-                    // Use raw SQL expression to bypass SeaORM's typed API
-                    query = query.filter(sea_query::Expr::cust_with_values(
-                        &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
-                        [value]
-                    ));
-                }
+                let value = fk_value.to_db_value();
+                // Use raw SQL expression to bypass SeaORM's typed API
+                query = query.filter(sea_query::Expr::cust_with_values(
+                    &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
+                    [value]
+                ));
             }
             use sea_orm::QueryTrait;
             let query_sql = query.build(conn.get_database_backend());
@@ -584,12 +580,10 @@ pub fn generate_entity(
                         let col_expr = col.into_simple_expr();
                         match &f.operation {
                             caustics::FieldOp::Equals(v) => {
-                                let val = caustics::parse_string_to_sea_orm_value(v);
-                                cond = cond.add(Expr::expr(col_expr.clone()).eq(val));
+                                cond = cond.add(Expr::expr(col_expr.clone()).eq(v.clone()));
                             }
                             caustics::FieldOp::NotEquals(v) => {
-                                let val = caustics::parse_string_to_sea_orm_value(v);
-                                cond = cond.add(Expr::expr(col_expr.clone()).ne(val));
+                                cond = cond.add(Expr::expr(col_expr.clone()).ne(v.clone()));
                             }
                             caustics::FieldOp::Contains(s) => {
                                 let pat = format!("%{}%", s);
@@ -1340,7 +1334,11 @@ pub fn generate_entity(
                                         .filter::<sea_query::Condition>(condition)
                                         .one(conn)
                                         .await?;
-                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
+                                    result.map(|entity| {
+                                        use caustics::ToSeaOrmValue;
+                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                    }).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
                                             entity: stringify!(#target_module).to_string(),
                                             condition: format!("{:?}", param),
@@ -1359,7 +1357,11 @@ pub fn generate_entity(
                                         .filter::<sea_query::Condition>(condition)
                                         .one(txn)
                                         .await?;
-                                    result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
+                                    result.map(|entity| {
+                                        use caustics::ToSeaOrmValue;
+                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                    }).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
                                             entity: stringify!(#target_module).to_string(),
                                             condition: format!("{:?}", param),
@@ -1896,15 +1898,16 @@ pub fn generate_entity(
                 let entity_name_str = &entity_name;
                 quote! {
                     UniqueWhereParam::#equals_variant(key) => {
-                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
-                            .expect("Failed to convert CausticsKey to field type");
+                        let value = key.to_db_value();
                         Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
                     }
                 }
             } else {
                 quote! {
                     UniqueWhereParam::#equals_variant(value) => {
-                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                        use caustics::ToSeaOrmValue;
+                        let v = value.to_sea_orm_value();
+                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                     }
                 }
             }
@@ -1927,17 +1930,17 @@ pub fn generate_entity(
                 let entity_name_str = &entity_name;
                 quote! {
                     UniqueWhereParam::#equals_variant(key) => {
-                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
-                            .expect("Failed to convert CausticsKey to field type");
+                        let value = key.to_db_value();
                         let expr = <Entity as EntityTrait>::Column::#pascal_name.into_simple_expr();
-                        self.with_cursor(expr, sea_orm::Value::from(value))
+                        self.with_cursor(expr, value)
                     },
                 }
             } else {
                 quote! {
                     UniqueWhereParam::#equals_variant(value) => {
+                        use caustics::ToSeaOrmValue;
                         let expr = <Entity as EntityTrait>::Column::#pascal_name.into_simple_expr();
-                        self.with_cursor(expr, value.into())
+                        self.with_cursor(expr, value.to_sea_orm_value())
                     },
                 }
             }
@@ -1979,18 +1982,18 @@ pub fn generate_entity(
                 let entity_name_str = &entity_name;
                 quote! {
                     UniqueWhereParam::#variant(key) => {
-                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
-                            .expect("Failed to convert CausticsKey to field type");
+                        let value = key.to_db_value();
                         let expr = <Entity as EntityTrait>::Column::#column.into_simple_expr();
-                        (expr, sea_orm::Value::from(value))
+                        (expr, value)
                     }
                 }
             } else {
-                // For other unique fields, value is the field's actual type, use From<T>
+                // For other unique fields, value is the field's actual type, use ToSeaOrmValue
                 quote! {
                     UniqueWhereParam::#variant(value) => {
+                        use caustics::ToSeaOrmValue;
                         let expr = <Entity as EntityTrait>::Column::#column.into_simple_expr();
-                        (expr, sea_orm::Value::from(value))
+                        (expr, value.to_sea_orm_value())
                     }
                 }
             }
@@ -2128,32 +2131,11 @@ pub fn generate_entity(
                     WhereParam::#pascal_name(op) => {
                         let field = ToString::to_string(&#field_name_lit);
                         let operation = match op {
-                            caustics::FieldOp::Equals(v) => match v { Some(v) => caustics::FieldOp::Equals(ToString::to_string(&v)), None => caustics::FieldOp::IsNull },
-                            caustics::FieldOp::NotEquals(v) => match v { Some(v) => caustics::FieldOp::NotEquals(ToString::to_string(&v)), None => caustics::FieldOp::IsNotNull },
-                            caustics::FieldOp::Gt(v) => match v { Some(v) => caustics::FieldOp::Gt(ToString::to_string(&v)), None => caustics::FieldOp::IsNotNull },
-                            caustics::FieldOp::Lt(v) => match v { Some(v) => caustics::FieldOp::Lt(ToString::to_string(&v)), None => caustics::FieldOp::IsNull },
-                            caustics::FieldOp::Gte(v) => match v { Some(v) => caustics::FieldOp::Gte(ToString::to_string(&v)), None => caustics::FieldOp::IsNotNull },
-                            caustics::FieldOp::Lte(v) => match v { Some(v) => caustics::FieldOp::Lte(ToString::to_string(&v)), None => caustics::FieldOp::IsNull },
-                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().filter_map(|v| v.map(|x| ToString::to_string(&x))).collect()),
-                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().filter_map(|v| v.map(|x| ToString::to_string(&x))).collect()),
-                            caustics::FieldOp::Contains(s) => caustics::FieldOp::Contains(s),
-                            caustics::FieldOp::StartsWith(s) => caustics::FieldOp::StartsWith(s),
-                            caustics::FieldOp::EndsWith(s) => caustics::FieldOp::EndsWith(s),
-                            caustics::FieldOp::IsNull => caustics::FieldOp::IsNull,
-                            caustics::FieldOp::IsNotNull => caustics::FieldOp::IsNotNull,
-                            caustics::FieldOp::JsonPath(path) => caustics::FieldOp::JsonPath(path),
-                            caustics::FieldOp::JsonStringContains(s) => caustics::FieldOp::JsonStringContains(s),
-                            caustics::FieldOp::JsonStringStartsWith(s) => caustics::FieldOp::JsonStringStartsWith(s),
-                            caustics::FieldOp::JsonStringEndsWith(s) => caustics::FieldOp::JsonStringEndsWith(s),
-                            caustics::FieldOp::JsonArrayContains(v) => caustics::FieldOp::JsonArrayContains(v),
-                            caustics::FieldOp::JsonArrayStartsWith(v) => caustics::FieldOp::JsonArrayStartsWith(v),
-                            caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
-                            caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
-                            caustics::FieldOp::JsonNull(flag) => caustics::FieldOp::JsonNull(flag),
                             caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => {
                                 // These operations are not supported in this context
                                 continue;
                             },
+                            _ => op.clone(),
                         };
                         caustics::Filter { field, operation }
                     }
@@ -2163,32 +2145,11 @@ pub fn generate_entity(
                     WhereParam::#pascal_name(op) => {
                         let field = ToString::to_string(&#field_name_lit);
                         let operation = match op {
-                            caustics::FieldOp::Equals(v) => caustics::FieldOp::Equals(ToString::to_string(&v)),
-                            caustics::FieldOp::NotEquals(v) => caustics::FieldOp::NotEquals(ToString::to_string(&v)),
-                            caustics::FieldOp::Gt(v) => caustics::FieldOp::Gt(ToString::to_string(&v)),
-                            caustics::FieldOp::Lt(v) => caustics::FieldOp::Lt(ToString::to_string(&v)),
-                            caustics::FieldOp::Gte(v) => caustics::FieldOp::Gte(ToString::to_string(&v)),
-                            caustics::FieldOp::Lte(v) => caustics::FieldOp::Lte(ToString::to_string(&v)),
-                            caustics::FieldOp::InVec(vs) => caustics::FieldOp::InVec(vs.into_iter().map(|v| ToString::to_string(&v)).collect()),
-                            caustics::FieldOp::NotInVec(vs) => caustics::FieldOp::NotInVec(vs.into_iter().map(|v| ToString::to_string(&v)).collect()),
-                            caustics::FieldOp::Contains(s) => caustics::FieldOp::Contains(s),
-                            caustics::FieldOp::StartsWith(s) => caustics::FieldOp::StartsWith(s),
-                            caustics::FieldOp::EndsWith(s) => caustics::FieldOp::EndsWith(s),
-                            caustics::FieldOp::IsNull => caustics::FieldOp::IsNull,
-                            caustics::FieldOp::IsNotNull => caustics::FieldOp::IsNotNull,
-                            caustics::FieldOp::JsonPath(path) => caustics::FieldOp::JsonPath(path),
-                            caustics::FieldOp::JsonStringContains(s) => caustics::FieldOp::JsonStringContains(s),
-                            caustics::FieldOp::JsonStringStartsWith(s) => caustics::FieldOp::JsonStringStartsWith(s),
-                            caustics::FieldOp::JsonStringEndsWith(s) => caustics::FieldOp::JsonStringEndsWith(s),
-                            caustics::FieldOp::JsonArrayContains(v) => caustics::FieldOp::JsonArrayContains(v),
-                            caustics::FieldOp::JsonArrayStartsWith(v) => caustics::FieldOp::JsonArrayStartsWith(v),
-                            caustics::FieldOp::JsonArrayEndsWith(v) => caustics::FieldOp::JsonArrayEndsWith(v),
-                            caustics::FieldOp::JsonObjectContains(s) => caustics::FieldOp::JsonObjectContains(s),
-                            caustics::FieldOp::JsonNull(flag) => caustics::FieldOp::JsonNull(flag),
                             caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => {
                                 // These operations are not supported in this context
                                 continue;
                             },
+                            _ => op.clone(),
                         };
                         caustics::Filter { field, operation }
                     }
@@ -2232,45 +2193,6 @@ pub fn generate_entity(
         .iter()
         .filter(|ident| *ident != "IdEquals")
         .collect();
-
-    // Generate UniqueWhereParam serialize implementation
-    let unique_where_serialize_arms = unique_fields
-        .iter()
-        .map(|field| {
-            let name = field.ident.as_ref().expect("Field has no identifier");
-            let pascal_name = name.to_string().to_pascal_case();
-            let equals_variant = format_ident!("{}Equals", pascal_name);
-            let field_name = name.to_string();
-
-            // For primary keys, use CausticsKey and convert to Int
-            // For other unique fields, use the field value directly
-            if primary_key_fields.contains(&field) {
-                let field_name_snake = name.to_string().to_snake_case();
-                let entity_name_str = &entity_name;
-                quote! {
-                    UniqueWhereParam::#equals_variant(key) => {
-                        let value = crate::__caustics_convert_key_for_sea_orm(#entity_name_str, #field_name_snake, key)
-                            .expect("Failed to convert CausticsKey to field type");
-                        (
-                            #field_name,
-                            ::prisma_client_rust::SerializedWhereValue::Value(
-                                sea_orm::Value::from(value).into(),
-                            ),
-                        )
-                    },
-                }
-            } else {
-                quote! {
-                    UniqueWhereParam::#equals_variant(value) => (
-                        #field_name,
-                        ::prisma_client_rust::SerializedWhereValue::Value(
-                            ::prisma_client_rust::PrismaValue::String(value.to_string()),
-                        ),
-                    ),
-                }
-            }
-        })
-        .collect::<Vec<_>>();
 
     // Generate field operator modules
     let field_ops = field_ops;
@@ -2830,12 +2752,20 @@ pub fn generate_entity(
             if is_nullable {
                 // For nullable fields: Option<T> -> Option<CausticsKey>
                 quote! {
-                    #alias => self.#name.as_ref().and_then(|v| caustics::CausticsKey::from_db_value(&v.clone().into()))
+                    #alias => self.#name.as_ref().and_then(|v| {
+                        use caustics::ToSeaOrmValue;
+                        let val = v.to_sea_orm_value();
+                        caustics::CausticsKey::from_db_value(&val)
+                    })
                 }
             } else {
                 // For non-nullable fields: T -> Option<CausticsKey>
                 quote! {
-                    #alias => caustics::CausticsKey::from_db_value(&self.#name.clone().into())
+                    #alias => {
+                        use caustics::ToSeaOrmValue;
+                        let val = self.#name.to_sea_orm_value();
+                        caustics::CausticsKey::from_db_value(&val)
+                    }
                 }
             }
         })
@@ -3182,12 +3112,10 @@ pub fn generate_entity(
                                             let col_expr = col.into_simple_expr();
                                             match &f.operation {
                                                 caustics::FieldOp::Equals(v) => {
-                                                    let val = sea_orm::Value::from(v);
-                                                    cond = cond.add(Expr::expr(col_expr.clone()).eq(val));
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).eq((*v).clone()));
                                                 }
                                                 caustics::FieldOp::NotEquals(v) => {
-                                                    let val = sea_orm::Value::from(v);
-                                                    cond = cond.add(Expr::expr(col_expr.clone()).ne(val));
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).ne((*v).clone()));
                                                 }
                                                 caustics::FieldOp::Contains(s) => {
                                                     let pat = format!("%{}%", s);
@@ -3266,10 +3194,10 @@ pub fn generate_entity(
                                             let col_expr = col.into_simple_expr();
                                             match &f.operation {
                                                 caustics::FieldOp::Equals(v) => {
-                                                    cond = cond.add(Expr::expr(col_expr.clone()).eq(sea_orm::Value::from(v)));
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).eq((*v).clone()));
                                                 }
                                                 caustics::FieldOp::NotEquals(v) => {
-                                                    cond = cond.add(Expr::expr(col_expr.clone()).ne(sea_orm::Value::from(v)));
+                                                    cond = cond.add(Expr::expr(col_expr.clone()).ne((*v).clone()));
                                                 }
                                                 caustics::FieldOp::Contains(s) => {
                                                     let pat = format!("%{}%", s);
@@ -3580,7 +3508,10 @@ pub fn generate_entity(
                         stringify!(#selected_field_idents_snake) => {
                             let v = self.#selected_field_idents_snake.clone();
                             match v {
-                                Some(val) => Some(sea_orm::Value::from(val)),
+                                Some(val) => {
+                                    use caustics::ToSeaOrmValue;
+                                    Some(val.to_sea_orm_value())
+                                },
                                 None => None,
                             }
                         }
@@ -3744,8 +3675,10 @@ pub fn generate_entity(
                     quote! { model.#id_field },
                     fk_column,
                     quote! { |model| {
+                        use caustics::ToSeaOrmValue;
                         let id_value = model.#id_field;
-                        caustics::CausticsKey::from_db_value(&id_value.into())
+                        let val = id_value.to_sea_orm_value();
+                        caustics::CausticsKey::from_db_value(&val)
                     } },
                 )
             }
@@ -3766,13 +3699,19 @@ pub fn generate_entity(
                 };
                 let get_fk = if is_optional {
                     quote! { |model| {
+                        use caustics::ToSeaOrmValue;
                         let fk_value = model.#foreign_key_field.as_ref();
-                        fk_value.and_then(|v| caustics::CausticsKey::from_db_value(&v.clone().into()))
+                        fk_value.and_then(|v| {
+                            let val = v.to_sea_orm_value();
+                            caustics::CausticsKey::from_db_value(&val)
+                        })
                     } }
                 } else {
                     quote! { |model| {
+                        use caustics::ToSeaOrmValue;
                         let fk_value = model.#foreign_key_field;
-                        caustics::CausticsKey::from_db_value(&fk_value.into())
+                        let val = fk_value.to_sea_orm_value();
+                        caustics::CausticsKey::from_db_value(&val)
                     } }
                 };
                 (
@@ -4138,7 +4077,11 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
+                                            result.map(|entity| {
+                                        use caustics::ToSeaOrmValue;
+                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                    }).ok_or_else(|| {
                                                 caustics::CausticsError::NotFoundForCondition {
                                                     entity: stringify!(#target_module).to_string(),
                                                     condition: format!("{:?}", param),
@@ -4154,7 +4097,11 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(txn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
+                                            result.map(|entity| {
+                                        use caustics::ToSeaOrmValue;
+                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                    }).ok_or_else(|| {
                                                 caustics::CausticsError::NotFoundForCondition {
                                                     entity: stringify!(#target_module).to_string(),
                                                     condition: format!("{:?}", param),
@@ -4194,7 +4141,11 @@ pub fn generate_entity(
                                                 .filter::<sea_query::Condition>(condition)
                                                 .one(conn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
+                                            result.map(|entity| {
+                                        use caustics::ToSeaOrmValue;
+                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                    }).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
                                                     "No {} found for condition: {:?}",
                                                     stringify!(#target_module),
@@ -4211,7 +4162,11 @@ pub fn generate_entity(
                                                  .filter::<sea_query::Condition>(condition)
                                                  .one(txn)
                                                 .await?;
-                                            result.map(|entity| caustics::CausticsKey::from_db_value(&entity.#primary_key_field_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))).ok_or_else(|| {
+                                            result.map(|entity| {
+                                        use caustics::ToSeaOrmValue;
+                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                    }).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
                                                     "No {} found for condition: {:?}",
                                                     stringify!(#target_module),
@@ -5342,7 +5297,9 @@ pub fn generate_entity(
         }
 
         pub(crate) fn __extract_id(m: &<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey {
-            caustics::CausticsKey::from_db_value(&m.#current_primary_key_ident.into()).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+            use caustics::ToSeaOrmValue;
+            let val = m.#current_primary_key_ident.to_sea_orm_value();
+            caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
         }
 
         impl Create {
@@ -5658,7 +5615,9 @@ pub fn generate_entity(
                                 .one(conn)
                                 .await?;
                             if let Some(model) = found {
-                                let id_val: CausticsKey = model.#current_primary_key_ident.into();
+                                use caustics::ToSeaOrmValue;
+                                let val = model.#current_primary_key_ident.to_sea_orm_value();
+                                let id_val: CausticsKey = caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0));
                                 Ok(id_val.to_db_value())
                             } else {
                                 Err(sea_orm::DbErr::RecordNotFound("No record matched for has_many set".to_string()))

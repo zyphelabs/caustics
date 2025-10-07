@@ -55,9 +55,36 @@ Add this to your `Cargo.toml`:
 [dependencies]
 caustics = { path = "../caustics" }
 caustics-macros = { path = "../caustics-macros" }
+
+[build-dependencies]
+caustics-build = { path = "../caustics-build" }
+```
+
+### Configuring the Build Script
+
+Create a `build.rs` file in your project root to generate the Caustics client:
+
+```rust
+use caustics_build::generate_caustics_client;
+
+fn main() {
+    if let Err(e) = generate_caustics_client(&["src"], "caustics_client.rs") {
+        eprintln!("Error generating client: {}", e);
+        std::process::exit(1);
+    }
+}
+```
+
+This build script will automatically generate a `caustics_client.rs` file in your `OUT_DIR` that contains the client code for all entities marked with the `#[caustics]` macro. Include the generated client in your main library file:
+
+```rust
+// In your src/lib.rs or src/main.rs
+include!(concat!(env!("OUT_DIR"), "/caustics_client.rs"));
 ```
 
 Toolchain support: this project supports both stable and nightly Rust toolchains. The `select!` macro requires nightly Rust and is gated behind the "select" feature. Use stable Rust for basic functionality, or enable the "select" feature with nightly Rust for enhanced field selection syntax.
+
+
 
 ## Feature Usage
 

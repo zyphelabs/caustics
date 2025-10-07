@@ -556,17 +556,17 @@ pub enum QueryMode {
     Insensitive,
 }
 
-/// Generic field operations for filtering
+/// Generic field operations for filtering using sea_orm::Value
 #[derive(Debug, Clone)]
-pub enum FieldOp<T> {
-    Equals(T),
-    NotEquals(T),
-    Gt(T),
-    Lt(T),
-    Gte(T),
-    Lte(T),
-    InVec(Vec<T>),
-    NotInVec(Vec<T>),
+pub enum FieldOp {
+    Equals(sea_orm::Value),
+    NotEquals(sea_orm::Value),
+    Gt(sea_orm::Value),
+    Lt(sea_orm::Value),
+    Gte(sea_orm::Value),
+    Lte(sea_orm::Value),
+    InVec(Vec<sea_orm::Value>),
+    NotInVec(Vec<sea_orm::Value>),
     Contains(String),
     StartsWith(String),
     EndsWith(String),
@@ -597,6 +597,124 @@ pub enum JsonNullValueFilter {
     AnyNull,
 }
 
+/// Trait for converting any type to sea_orm::Value
+pub trait ToSeaOrmValue {
+    fn to_sea_orm_value(&self) -> sea_orm::Value;
+}
+
+/// Implement ToSeaOrmValue for common types
+impl ToSeaOrmValue for i8 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::TinyInt(Some(*self)) } }
+impl ToSeaOrmValue for i16 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::SmallInt(Some(*self)) } }
+impl ToSeaOrmValue for i32 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Int(Some(*self)) } }
+impl ToSeaOrmValue for i64 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::BigInt(Some(*self)) } }
+impl ToSeaOrmValue for u8 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::TinyUnsigned(Some(*self)) } }
+impl ToSeaOrmValue for u16 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::SmallUnsigned(Some(*self)) } }
+impl ToSeaOrmValue for u32 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Unsigned(Some(*self)) } }
+impl ToSeaOrmValue for u64 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::BigUnsigned(Some(*self)) } }
+impl ToSeaOrmValue for f32 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Float(Some(*self)) } }
+impl ToSeaOrmValue for f64 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Double(Some(*self)) } }
+impl ToSeaOrmValue for bool { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Bool(Some(*self)) } }
+impl ToSeaOrmValue for String { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::String(Some(Box::new(self.clone()))) } }
+impl ToSeaOrmValue for &str { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::String(Some(Box::new(self.to_string()))) } }
+impl ToSeaOrmValue for uuid::Uuid { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Uuid(Some(Box::new(*self))) } }
+impl ToSeaOrmValue for serde_json::Value { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Json(Some(Box::new(self.clone()))) } }
+
+// Implement for DateTime types
+impl ToSeaOrmValue for chrono::DateTime<chrono::FixedOffset> { 
+    fn to_sea_orm_value(&self) -> sea_orm::Value { 
+        sea_orm::Value::ChronoDateTimeUtc(Some(Box::new(self.with_timezone(&chrono::Utc)))) 
+    } 
+}
+impl ToSeaOrmValue for chrono::NaiveDateTime { 
+    fn to_sea_orm_value(&self) -> sea_orm::Value { 
+        sea_orm::Value::ChronoDateTime(Some(Box::new(*self))) 
+    } 
+}
+impl ToSeaOrmValue for chrono::NaiveDate { 
+    fn to_sea_orm_value(&self) -> sea_orm::Value { 
+        sea_orm::Value::ChronoDate(Some(Box::new(*self))) 
+    } 
+}
+
+// Implement for Option types
+impl<T: ToSeaOrmValue> ToSeaOrmValue for Option<T> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        match self {
+            Some(value) => value.to_sea_orm_value(),
+            None => sea_orm::Value::String(None),
+        }
+    }
+}
+
+// Implement for CausticsKey
+impl ToSeaOrmValue for crate::CausticsKey {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        self.to_db_value()
+    }
+}
+
+// Implement for sea_orm::Value itself
+impl ToSeaOrmValue for sea_orm::Value {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        self.clone()
+    }
+}
+
+// Implement for &sea_orm::Value
+impl ToSeaOrmValue for &sea_orm::Value {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        (*self).clone()
+    }
+}
+
+
+// Helper function for converting enums to sea_orm::Value
+pub fn enum_to_sea_orm_value<T: ToString>(value: &T) -> sea_orm::Value {
+    sea_orm::Value::String(Some(Box::new(value.to_string())))
+}
+
+impl FieldOp {
+    /// Create an equals operation from any type that implements ToSeaOrmValue
+    pub fn equals<T: ToSeaOrmValue>(value: T) -> Self {
+        Self::Equals(value.to_sea_orm_value())
+    }
+    
+    /// Create a not equals operation from any type that implements ToSeaOrmValue
+    pub fn not_equals<T: ToSeaOrmValue>(value: T) -> Self {
+        Self::NotEquals(value.to_sea_orm_value())
+    }
+    
+    /// Create a greater than operation from any type that implements ToSeaOrmValue
+    pub fn gt<T: ToSeaOrmValue>(value: T) -> Self {
+        Self::Gt(value.to_sea_orm_value())
+    }
+    
+    /// Create a less than operation from any type that implements ToSeaOrmValue
+    pub fn lt<T: ToSeaOrmValue>(value: T) -> Self {
+        Self::Lt(value.to_sea_orm_value())
+    }
+    
+    /// Create a greater than or equal operation from any type that implements ToSeaOrmValue
+    pub fn gte<T: ToSeaOrmValue>(value: T) -> Self {
+        Self::Gte(value.to_sea_orm_value())
+    }
+    
+    /// Create a less than or equal operation from any type that implements ToSeaOrmValue
+    pub fn lte<T: ToSeaOrmValue>(value: T) -> Self {
+        Self::Lte(value.to_sea_orm_value())
+    }
+    
+    /// Create an in operation from a vector of values that implement ToSeaOrmValue
+    pub fn in_vec<T: ToSeaOrmValue>(values: Vec<T>) -> Self {
+        Self::InVec(values.into_iter().map(|v| v.to_sea_orm_value()).collect())
+    }
+    
+    /// Create a not in operation from a vector of values that implement ToSeaOrmValue
+    pub fn not_in_vec<T: ToSeaOrmValue>(values: Vec<T>) -> Self {
+        Self::NotInVec(values.into_iter().map(|v| v.to_sea_orm_value()).collect())
+    }
+}
+
 /// Trait for converting a model to a model with relations
 pub trait FromModel<M> {
     fn from_model(model: M) -> Self;
@@ -624,7 +742,7 @@ pub trait RelationFilterTrait: Clone {
 #[derive(Debug, Clone)]
 pub struct Filter {
     pub field: String,
-    pub operation: FieldOp<String>, // Type-safe operation instead of string value
+    pub operation: FieldOp, // Using sea_orm::Value directly
 }
 
 /// Generic relation filter structure that matches the generated RelationFilter type
@@ -718,7 +836,7 @@ impl RelationFilterTrait for RelationFilter {
 #[derive(Debug, Clone)]
 pub struct RelationCondition {
     pub relation_name: &'static str,
-    pub operation: FieldOp<()>,
+    pub operation: FieldOp,
     pub filters: Vec<Filter>,
     pub foreign_key_column: Option<String>,
     pub current_table: Option<String>,

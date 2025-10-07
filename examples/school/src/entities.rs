@@ -1,9 +1,32 @@
 use caustics_macros::caustics;
+use sea_orm::entity::prelude::*;
+use caustics::ToSeaOrmValue;
 
-#[caustics(namespace = "school")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum ActivityStatus {
+    #[sea_orm(string_value = "PENDING")]
+    #[default]
+    Pending,
+    #[sea_orm(string_value = "ACTIVE")]
+    Active,
+}
+
+impl ToSeaOrmValue for ActivityStatus {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        match self {
+            ActivityStatus::Pending => sea_orm::Value::String(Some(Box::new("PENDING".to_string()))),
+            ActivityStatus::Active => sea_orm::Value::String(Some(Box::new("ACTIVE".to_string()))),
+        }
+    }
+}
+
+
+#[caustics]
 pub mod student {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
+    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "students")]
@@ -22,7 +45,7 @@ pub mod student {
         pub enrollment_date: DateTime<FixedOffset>,
         #[sea_orm(nullable)]
         pub graduation_date: Option<DateTime<FixedOffset>>,
-        pub is_active: bool,
+        pub is_active: ActivityStatus,
         pub created_at: DateTime<FixedOffset>,
         pub updated_at: DateTime<FixedOffset>,
         #[sea_orm(nullable)]
@@ -58,10 +81,11 @@ pub mod student {
     }
 }
 
-#[caustics(namespace = "school")]
+#[caustics]
 pub mod teacher {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
+    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "teachers")]
@@ -79,7 +103,7 @@ pub mod teacher {
         pub hire_date: DateTime<FixedOffset>,
         #[sea_orm(nullable)]
         pub termination_date: Option<DateTime<FixedOffset>>,
-        pub is_active: bool,
+        pub is_active: ActivityStatus,
         pub created_at: DateTime<FixedOffset>,
         pub updated_at: DateTime<FixedOffset>,
         #[sea_orm(nullable)]
@@ -119,7 +143,7 @@ pub mod teacher {
     }
 }
 
-#[caustics(namespace = "school")]
+#[caustics]
 pub mod department {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
@@ -169,10 +193,11 @@ pub mod department {
     }
 }
 
-#[caustics(namespace = "school")]
+#[caustics]
 pub mod course {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
+    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "courses")]
@@ -186,7 +211,7 @@ pub mod course {
         pub description: Option<String>,
         pub credits: i32,
         pub max_students: i32,
-        pub is_active: bool,
+        pub is_active: ActivityStatus,
         pub created_at: DateTime<FixedOffset>,
         pub updated_at: DateTime<FixedOffset>,
         #[sea_orm(nullable)]
@@ -270,7 +295,7 @@ pub mod course {
     }
 }
 
-#[caustics(namespace = "school")]
+#[caustics]
 pub mod enrollment {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
@@ -327,7 +352,7 @@ pub mod enrollment {
     }
 }
 
-#[caustics(namespace = "school")]
+#[caustics]
 pub mod grade {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
@@ -402,10 +427,11 @@ pub mod grade {
     }
 }
 
-#[caustics(namespace = "school")]
+#[caustics]
 pub mod semester {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
+    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "semesters")]
@@ -417,7 +443,7 @@ pub mod semester {
         pub name: String,
         pub start_date: DateTime<FixedOffset>,
         pub end_date: DateTime<FixedOffset>,
-        pub is_active: bool,
+        pub is_active: ActivityStatus,
         pub created_at: DateTime<FixedOffset>,
         pub updated_at: DateTime<FixedOffset>,
         #[sea_orm(nullable)]
@@ -440,3 +466,42 @@ pub mod semester {
         }
     }
 }
+
+#[caustics]
+pub mod student_profile {
+    use caustics_macros::Caustics;
+    use sea_orm::entity::prelude::*;
+    use super::ActivityStatus;
+
+    #[derive(Caustics, Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "student_profiles")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i32,
+        pub student_id: i32,
+        pub bio: Option<String>,
+        pub avatar_url: Option<String>,
+        pub social_media_links: Option<String>,
+        pub is_public: ActivityStatus,
+        pub created_at: DateTime<FixedOffset>,
+        pub updated_at: DateTime<FixedOffset>,
+    }
+
+    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::student::Entity",
+            from = "Column::StudentId",
+            to = "super::student::Column::Id"
+        )]
+        Student,
+    }
+
+    impl Related<super::student::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Student.def()
+        }
+    }
+}
+
+

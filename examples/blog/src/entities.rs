@@ -1,6 +1,6 @@
 use caustics_macros::caustics;
 
-#[caustics(namespace = "blog")]
+#[caustics]
 pub mod user {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
@@ -39,7 +39,7 @@ pub mod user {
     }
 }
 
-#[caustics(namespace = "blog")]
+#[caustics]
 pub mod post {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;

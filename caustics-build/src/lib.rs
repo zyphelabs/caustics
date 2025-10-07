@@ -6,22 +6,8 @@
 use quote::{format_ident, quote, ToTokens};
 use std::fs;
 use syn::{parse_file, Attribute, Item, Meta, Type};
+use heck::{ToPascalCase, ToSnakeCase};
 
-// Helper function to convert PascalCase to snake_case
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(ch.to_ascii_lowercase());
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
 
 #[derive(Debug, Clone)]
 struct EntityMetadata {
@@ -147,9 +133,12 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
                         panic!("Cannot extract inner type from Option<{}>. Please ensure the inner type is supported.", segment.ident);
                     }
 
-                    // For unknown types, panic to make it clear what's not supported
+                    // For unknown types, treat them as ToSeaOrmValue implementations
+                    // This allows any custom type that implements ToSeaOrmValue to work
                     _ => {
-                        panic!("Unsupported type: {}. Please add support for this type or use a supported type.", segment.ident);
+                        // For ToSeaOrmValue types, we still use String as the underlying storage
+                        // but we'll handle them specially in the code generation
+                        std::any::TypeId::of::<String>()
                     }
                 }
             } else {
@@ -421,7 +410,7 @@ fn extract_entity_metadata(
                                                         {
                                                             // Convert PascalCase to snake_case for database field names
                                                             let snake_case_name =
-                                                                to_snake_case(field_name);
+                                                                field_name.to_snake_case();
                                                             foreign_key_field =
                                                                 Some(snake_case_name);
                                                         }
@@ -511,28 +500,6 @@ fn has_caustics_attribute(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| attr.path().is_ident("caustics"))
 }
 
-fn extract_namespace_from_caustics_attribute(attrs: &[Attribute]) -> Option<String> {
-    for attr in attrs {
-        if attr.path().is_ident("caustics") {
-            // Parse the attribute content to extract namespace
-            let attr_str = attr.to_token_stream().to_string();
-
-            // Look for namespace = "value" pattern
-            if let Some(start) = attr_str.find("namespace") {
-                if let Some(eq) = attr_str[start..].find('=') {
-                    let after = &attr_str[start + eq + 1..];
-                    let first_quote = after.find('"');
-                    let second_quote =
-                        first_quote.and_then(|i| after[i + 1..].find('"').map(|j| i + 1 + j));
-                    if let (Some(i), Some(j)) = (first_quote, second_quote) {
-                        return Some(after[i + 1..j].to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
-}
 
 fn has_caustics_derive(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
@@ -548,33 +515,19 @@ fn has_caustics_derive(attrs: &[Attribute]) -> bool {
     })
 }
 
-fn to_pascal_case(s: &str) -> String {
-    let mut out = String::new();
-    let mut capitalize = true;
-    for c in s.chars() {
-        if c == '_' {
-            capitalize = true;
-        } else if capitalize {
-            out.push(c.to_ascii_uppercase());
-            capitalize = false;
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
 
 fn generate_client_code(
-    entities: &[(String, String, Option<String>)],
+    entities: &[(String, String)],
     entities_metadata: &[EntityMetadata],
     _include_registry: bool,
 ) -> String {
+    
     let entity_methods: Vec<_> = entities
         .iter()
-        .map(|(name, _module_path, _namespace)| {
+        .map(|(name, _module_path)| {
             let method_name = format_ident!("{}", name.to_lowercase());
             let entity_name = name.to_lowercase();
-            let entity_client_alias = format_ident!("{}EntityClient", entity_name);
+            let entity_client_alias = format_ident!("{}EntityClient", entity_name.to_pascal_case());
 
             // Use imported EntityClient with alias instead of fully qualified path
             quote! {
@@ -587,10 +540,10 @@ fn generate_client_code(
 
     let tx_entity_methods: Vec<_> = entities
         .iter()
-        .map(|(name, _module_path, _namespace)| {
+        .map(|(name, _module_path)| {
             let method_name = format_ident!("{}", name.to_lowercase());
             let entity_name = name.to_lowercase();
-            let entity_client_alias = format_ident!("{}EntityClient", entity_name);
+            let entity_client_alias = format_ident!("{}EntityClient", entity_name.to_pascal_case());
 
             // Use imported EntityClient with alias instead of fully qualified path
             quote! {
@@ -604,10 +557,10 @@ fn generate_client_code(
     // Generate the composite registry
     let registry_match_arms: Vec<_> = entities
         .iter()
-        .map(|(name, _module_path, _namespace)| {
+        .map(|(name, _module_path)| {
             let entity_name_lower = name.to_lowercase();
             let entity_name = name.to_lowercase();
-            let entity_fetcher_alias = format_ident!("{}EntityFetcherImpl", entity_name);
+            let entity_fetcher_alias = format_ident!("{}EntityFetcherImpl", entity_name.to_pascal_case());
 
             // Use imported EntityFetcherImpl with alias instead of fully qualified path
             quote! {
@@ -717,8 +670,13 @@ fn generate_client_code(
     // Generate import statements for entities with aliases to avoid conflicts
     let entity_imports: Vec<proc_macro2::TokenStream> = entities
         .iter()
-        .map(|(name, module_path, _namespace)| {
-            let entity_name = name.to_lowercase();
+        .map(|(name, module_path)| {
+            // For module names, preserve underscores but convert to lowercase
+            let entity_name = if name.contains('_') {
+                name.to_lowercase() // This preserves underscores
+            } else {
+                name.to_lowercase()
+            };
             let entity_ident = format_ident!("{}", entity_name);
             let path_parts: Vec<&str> = module_path.split("::").collect();
 
@@ -730,8 +688,8 @@ fn generate_client_code(
             }
             import_path = quote! { #import_path::#entity_ident };
 
-            let entity_client_alias = format_ident!("{}EntityClient", entity_name);
-            let entity_fetcher_alias = format_ident!("{}EntityFetcherImpl", entity_name);
+            let entity_client_alias = format_ident!("{}EntityClient", entity_name.to_pascal_case());
+            let entity_fetcher_alias = format_ident!("{}EntityFetcherImpl", entity_name.to_pascal_case());
             quote! {
                 use #import_path::{EntityClient as #entity_client_alias, EntityFetcherImpl as #entity_fetcher_alias};
             }
@@ -742,6 +700,9 @@ fn generate_client_code(
         #imports
         // Import entity clients and fetchers
         #(#entity_imports)*
+
+        // Import heck traits for case conversion
+        use heck::ToPascalCase;
 
         // Bring all extension traits into scope automatically (generated)
         #prelude_use
@@ -771,14 +732,14 @@ fn generate_client_code(
             }
 
             // 2. Try PascalCase variations
-            let pascal_case = to_pascal_case(entity_name);
+            let pascal_case = entity_name.to_pascal_case();
             if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == pascal_case) {
                 return Some(meta);
             }
 
             // 3. Try snake_case to PascalCase conversion
             let snake_case = entity_name.to_lowercase();
-            let snake_to_pascal = to_pascal_case(&snake_case);
+            let snake_to_pascal = snake_case.to_pascal_case();
             if let Some(meta) = ENTITY_METADATA.iter().find(|meta| meta.name == snake_to_pascal) {
                 return Some(meta);
             }
@@ -786,22 +747,6 @@ fn generate_client_code(
             None
         }
 
-        // Helper function to convert to PascalCase
-        fn to_pascal_case(s: &str) -> String {
-            let mut out = String::new();
-            let mut capitalize = true;
-            for c in s.chars() {
-                if c == '_' {
-                    capitalize = true;
-                } else if capitalize {
-                    out.push(c.to_ascii_uppercase());
-                    capitalize = false;
-                } else {
-                    out.push(c);
-                }
-            }
-            out
-        }
 
         #[allow(dead_code)]
         pub struct CausticsClient {
@@ -1594,21 +1539,14 @@ fn generate_client_code(
 }
 
 /// Generate client code for external projects (like examples)
-pub fn generate_client_for_external_project(
-    dirs: &[&str],
-    out_file: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    generate_client_for_external_project_with_name(dirs, out_file)
-}
-
-pub fn generate_client_for_external_project_with_name(
+pub fn generate_caustics_client(
     dirs: &[&str],
     out_file: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = std::env::var("OUT_DIR")?;
     let out_path = std::path::Path::new(&out_dir).join(out_file);
 
-    let mut entities: Vec<(String, String, String, String, Option<String>)> = Vec::new(); // (entity_name, module_path, module_name, source_file, namespace)
+    let mut entities: Vec<(String, String, String, String)> = Vec::new(); // (entity_name, module_path, module_name, source_file)
 
     for dir in dirs {
         for entry in walkdir::WalkDir::new(dir) {
@@ -1622,11 +1560,6 @@ pub fn generate_client_for_external_project_with_name(
                         let module_name = module.ident.to_string();
                         if let Some((_, items)) = &module.content {
                             let has_caustics_attr = has_caustics_attribute(&module.attrs);
-                            let namespace = if has_caustics_attr {
-                                extract_namespace_from_caustics_attribute(&module.attrs)
-                            } else {
-                                None
-                            };
 
                             for item in items {
                                 if let syn::Item::Struct(struct_item) = item {
@@ -1634,7 +1567,7 @@ pub fn generate_client_for_external_project_with_name(
                                         if has_caustics_attr
                                             || has_caustics_derive(&struct_item.attrs)
                                         {
-                                            let entity_name = to_pascal_case(&module_name);
+                                            let entity_name = module_name.to_pascal_case();
 
                                             // Construct the full module path from the file structure
                                             let file_path = entry.path();
@@ -1659,7 +1592,6 @@ pub fn generate_client_for_external_project_with_name(
                                                 module_path,
                                                 module_name.clone(),
                                                 source_file,
-                                                namespace.clone(),
                                             ));
                                         }
                                     }
@@ -1676,7 +1608,7 @@ pub fn generate_client_for_external_project_with_name(
 
     // Extract metadata for all entities
     let mut entities_metadata = Vec::new();
-    for (entity_name, module_path, module_name, source_file, _namespace) in &entities {
+    for (entity_name, module_path, module_name, source_file) in &entities {
         if let Some(metadata) =
             extract_entity_metadata(source_file, entity_name, module_path, module_name)
         {
@@ -1688,10 +1620,11 @@ pub fn generate_client_for_external_project_with_name(
     resolve_target_table_names(&mut entities_metadata);
 
     // Convert entities to the format expected by generate_client_code
-    let entities_for_codegen: Vec<(String, String, Option<String>)> = entities
+    let entities_for_codegen: Vec<(String, String)> = entities
         .iter()
-        .map(|(name, path, _module_name, _, namespace)| {
-            (name.clone(), path.clone(), namespace.clone())
+        .map(|(_name, path, module_name, _)| {
+            // Use the original module name for import paths, not the PascalCase entity name
+            (module_name.clone(), path.clone())
         })
         .collect();
 
@@ -1700,3 +1633,4 @@ pub fn generate_client_for_external_project_with_name(
 
     Ok(())
 }
+

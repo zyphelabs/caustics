@@ -361,6 +361,7 @@ name = "caustics-build"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "serde_json",

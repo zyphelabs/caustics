@@ -1,8 +1,6 @@
 //! Centralized primary key utilities to replace hardcoded "id" assumptions
 //! and provide reliable, factored functions for primary key access.
 
-use proc_macro2::TokenStream;
-use quote::quote;
 use syn::{Field, Type};
 
 /// Information about a primary key field
@@ -140,39 +138,4 @@ pub fn get_primary_key_field_ident(fields: &[&Field]) -> proc_macro2::Ident {
     extract_primary_key_info(fields)
         .map(|info| info.field_ident)
         .expect("No primary key field found in entity. Please ensure at least one field is marked as primary key or named 'id'.")
-}
-
-// Removed fallback functions - use fail-fast approach instead
-// If you need fallback behavior, use the non-fallback functions and handle None explicitly
-
-/// Generate a value parser for a specific field
-pub fn generate_field_value_parser(field_name: &str, field_type: &Type) -> TokenStream {
-    quote! {
-        |value: &str| -> sea_orm::Value {
-            // Use SeaORM's from method which handles type conversion automatically
-            sea_orm::Value::from(value)
-        }
-    }
-}
-
-/// Generate a type-safe value parser that handles the specific field type
-pub fn generate_typed_field_parser(field_name: &str, field_type: &Type) -> TokenStream {
-    // This would need more sophisticated type detection
-    // For now, we'll use a generic approach
-    quote! {
-        |value: &str| -> sea_orm::Value {
-            // Use SeaORM's from method which handles type conversion automatically
-            sea_orm::Value::from(value)
-        }
-    }
-}
-
-/// Generate a dynamic value parser that can handle any field type
-pub fn generate_dynamic_value_parser() -> TokenStream {
-    quote! {
-        |field_name: &str, value: &str| -> sea_orm::Value {
-            // Use SeaORM's from method which handles type conversion automatically
-            sea_orm::Value::from(value)
-        }
-    }
 }

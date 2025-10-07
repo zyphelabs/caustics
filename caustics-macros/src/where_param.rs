@@ -34,12 +34,8 @@ pub fn generate_where_param_logic(
         // Detect field type for appropriate operation generation
         let field_type = detect_field_type(ty);
 
-        // WhereParam variant uses FieldOp<T> - use CausticsKey for primary key fields, actual field type for others
-        if is_primary_key {
-            where_field_variants.push(quote! { #pascal_name(FieldOp<caustics::CausticsKey>) });
-        } else {
-            where_field_variants.push(quote! { #pascal_name(FieldOp<#ty>) });
-        }
+        // WhereParam variant uses FieldOp directly with sea_orm::Value
+        where_field_variants.push(quote! { #pascal_name(caustics::FieldOp) });
 
         // Field operator module
         let set_fn = if !is_unique {
@@ -70,7 +66,7 @@ pub fn generate_where_param_logic(
                     }
                     impl From<Equals> for super::WhereParam {
                         fn from(Equals(v): Equals) -> Self {
-                            super::WhereParam::#pascal_name(caustics::FieldOp::Equals(v.clone()))
+                            super::WhereParam::#pascal_name(caustics::FieldOp::equals(v))
                         }
                     }
                 }
@@ -88,7 +84,7 @@ pub fn generate_where_param_logic(
                     }
                     impl From<Equals> for super::WhereParam {
                         fn from(Equals(v): Equals) -> Self {
-                            super::WhereParam::#pascal_name(caustics::FieldOp::Equals(v))
+                            super::WhereParam::#pascal_name(caustics::FieldOp::equals(v))
                         }
                     }
                 }
@@ -126,8 +122,8 @@ pub fn generate_where_param_logic(
         // Skip for primary key fields (handled by generate_primary_key_operations)
         let field_not_alias = if !is_primary_key {
             quote! {
-                pub fn not<T: Into<#ty>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
+                pub fn not<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(caustics::FieldOp::not_equals(value))
                 }
             }
         } else {
@@ -165,27 +161,27 @@ pub fn generate_where_param_logic(
                     | FieldType::OptionUuid
             ) {
             quote! {
-            pub fn not_equals<T: Into<#ty>>(value: T) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
+            pub fn not_equals<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+                WhereParam::#pascal_name(caustics::FieldOp::not_equals(value))
             }
-            pub fn gt<T: Into<#ty>>(value: T) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::Gt(value.into()))
+            pub fn gt<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+                WhereParam::#pascal_name(caustics::FieldOp::gt(value))
             }
-            pub fn lt<T: Into<#ty>>(value: T) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::Lt(value.into()))
+            pub fn lt<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+                WhereParam::#pascal_name(caustics::FieldOp::lt(value))
             }
-            pub fn gte<T: Into<#ty>>(value: T) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::Gte(value.into()))
+            pub fn gte<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+                WhereParam::#pascal_name(caustics::FieldOp::gte(value))
             }
-            pub fn lte<T: Into<#ty>>(value: T) -> WhereParam {
-                WhereParam::#pascal_name(caustics::FieldOp::Lte(value.into()))
+            pub fn lte<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+                WhereParam::#pascal_name(caustics::FieldOp::lte(value))
             }
             }
         } else if !is_primary_key {
             // For boolean, UUID, and JSON fields, only provide equals/not_equals
             quote! {
-                pub fn not_equals<T: Into<#ty>>(value: T) -> WhereParam {
-                    WhereParam::#pascal_name(caustics::FieldOp::NotEquals(value.into()))
+                pub fn not_equals<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+                    WhereParam::#pascal_name(caustics::FieldOp::not_equals(value))
                 }
             }
         } else {
@@ -196,11 +192,11 @@ pub fn generate_where_param_logic(
         // Skip for primary key fields (handled by generate_primary_key_operations)
         let collection_ops = if !is_primary_key {
             quote! {
-                pub fn in_vec<T: Into<#ty>>(values: Vec<T>) -> WhereParam {
-                    WhereParam::#pascal_name(caustics::FieldOp::InVec(values.into_iter().map(|v| v.into()).collect()))
+                pub fn in_vec<T: caustics::ToSeaOrmValue>(values: Vec<T>) -> WhereParam {
+                    WhereParam::#pascal_name(caustics::FieldOp::in_vec(values))
                 }
-                pub fn not_in_vec<T: Into<#ty>>(values: Vec<T>) -> WhereParam {
-                    WhereParam::#pascal_name(caustics::FieldOp::NotInVec(values.into_iter().map(|v| v.into()).collect()))
+                pub fn not_in_vec<T: caustics::ToSeaOrmValue>(values: Vec<T>) -> WhereParam {
+                    WhereParam::#pascal_name(caustics::FieldOp::not_in_vec(values))
                 }
             }
         } else {
@@ -684,37 +680,37 @@ fn generate_where_params_to_condition_function(
                 caustics::FieldOp::Equals(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} = ?", table_name, filter.field),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::NotEquals(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} != ?", table_name, filter.field),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Gt(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} > ?", table_name, filter.field),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Lt(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} < ?", table_name, filter.field),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Gte(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} >= ?", table_name, filter.field),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Lte(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} <= ?", table_name, filter.field),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Contains(value) => {
@@ -739,14 +735,14 @@ fn generate_where_params_to_condition_function(
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} IN ({})", table_name, filter.field,
                             values.iter().map(|_| "?").collect::<Vec<_>>().join(",")),
-                        values.iter().map(|v| sea_orm::Value::from(v)).collect::<Vec<_>>()
+                        values.iter().map(|v| v.clone()).collect::<Vec<_>>()
                     ))
                 },
                 caustics::FieldOp::NotInVec(values) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} NOT IN ({})", table_name, filter.field,
                             values.iter().map(|_| "?").collect::<Vec<_>>().join(",")),
-                        values.iter().map(|v| sea_orm::Value::from(v)).collect::<Vec<_>>()
+                        values.iter().map(|v| v.clone()).collect::<Vec<_>>()
                     ))
                 },
                 caustics::FieldOp::IsNull => {
@@ -971,66 +967,56 @@ fn generate_string_field_handler(
                 let query_mode = query_modes.get(#field_name_str).copied().unwrap_or(caustics::QueryMode::Default);
                 match op {
                     caustics::FieldOp::Equals(v) => {
-                        match v {
-                            Some(val) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    // Database-agnostic case insensitive equality
-                                    match database_backend {
-                                        sea_orm::DatabaseBackend::Postgres => {
-                                            Condition::all().add(
-                                                sea_query::Expr::cust_with_values(
-                                                    &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
-                                                    [val]
-                                                )
-                                            )
-                                        },
-                                        _ => {
-                                            // MySQL, MariaDB, SQLite - use UPPER() for consistency
-                                            Condition::all().add(
-                                                sea_query::Expr::cust_with_values(
-                                                    &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
-                                                    [val]
-                                                )
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val))
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            // Database-agnostic case insensitive equality
+                            match database_backend {
+                                sea_orm::DatabaseBackend::Postgres => {
+                                    Condition::all().add(
+                                        sea_query::Expr::cust_with_values(
+                                            &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                            [v.clone()]
+                                        )
+                                    )
+                                },
+                                _ => {
+                                    // MySQL, MariaDB, SQLite - use UPPER() for consistency
+                                    Condition::all().add(
+                                        sea_query::Expr::cust_with_values(
+                                            &format!("UPPER({}) = UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                            [v.clone()]
+                                        )
+                                    )
                                 }
-                            },
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                            }
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                         }
                     },
                     caustics::FieldOp::NotEquals(v) => {
-                        match v {
-                            Some(val) => {
-                                if query_mode == caustics::QueryMode::Insensitive {
-                                    match database_backend {
-                                        sea_orm::DatabaseBackend::Postgres => {
-                                        Condition::all().add(
-                                            sea_query::Expr::cust_with_values(
-                                                &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
-                                                [val]
-                                            )
+                        if query_mode == caustics::QueryMode::Insensitive {
+                            match database_backend {
+                                sea_orm::DatabaseBackend::Postgres => {
+                                Condition::all().add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [v.clone()]
+                                    )
+                                )
+                                },
+                                _ => {
+                                    Condition::all().add(
+                                        sea_query::Expr::cust_with_values(
+                                            &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                            [v.clone()]
                                         )
-                                        },
-                                        _ => {
-                                            Condition::all().add(
-                                                sea_query::Expr::cust_with_values(
-                                                    &format!("UPPER({}) != UPPER(?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
-                                                    [val]
-                                                )
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val))
+                                    )
                                 }
-                            },
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                            }
+                        } else {
+                            Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                         }
                     },
-                    FieldOp::Contains(s) => {
+                    caustics::FieldOp::Contains(s) => {
                         if query_mode == caustics::QueryMode::Insensitive {
                             match database_backend {
                                 sea_orm::DatabaseBackend::Postgres => {
@@ -1057,7 +1043,7 @@ fn generate_string_field_handler(
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
                         }
                     },
-                    FieldOp::StartsWith(s) => {
+                    caustics::FieldOp::StartsWith(s) => {
                         if query_mode == caustics::QueryMode::Insensitive {
                             match database_backend {
                                 sea_orm::DatabaseBackend::Postgres => {
@@ -1097,31 +1083,19 @@ fn generate_string_field_handler(
                         }
                     },
                     caustics::FieldOp::Gt(v) => {
-                        match v {
-                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                        }
+                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v))
                     },
                     caustics::FieldOp::Lt(v) => {
-                        match v {
-                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                        }
+                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v))
                     },
                     caustics::FieldOp::Gte(v) => {
-                        match v {
-                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                        }
+                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v))
                     },
                     caustics::FieldOp::Lte(v) => {
-                        match v {
-                            Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                            None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                        }
+                        Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v))
                     },
-                    caustics::FieldOp::InVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(v)),
-                    caustics::FieldOp::NotInVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(v)),
+                    caustics::FieldOp::InVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(v.to_vec())),
+                    caustics::FieldOp::NotInVec(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(v.to_vec())),
                     caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                     caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                     // Catch-all for unsupported operations
@@ -1134,7 +1108,7 @@ fn generate_string_field_handler(
             WhereParam::#pascal_name(op) => {
                 let query_mode = query_modes.get(#field_name_str).copied().unwrap_or(caustics::QueryMode::Default);
                 match op {
-                    FieldOp::Equals(val) => {
+                    caustics::FieldOp::Equals(val) => {
                         if query_mode == caustics::QueryMode::Insensitive {
                             // Database-agnostic case insensitive equality using UPPER()
                                 Condition::all().add(
@@ -1147,7 +1121,7 @@ fn generate_string_field_handler(
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val))
                         }
                     },
-                    FieldOp::NotEquals(val) => {
+                    caustics::FieldOp::NotEquals(val) => {
                         if query_mode == caustics::QueryMode::Insensitive {
                             // Database-agnostic case insensitive inequality using UPPER()
                                 Condition::all().add(
@@ -1160,7 +1134,7 @@ fn generate_string_field_handler(
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val))
                         }
                     },
-                    FieldOp::Contains(s) => {
+                    caustics::FieldOp::Contains(s) => {
                         if query_mode == caustics::QueryMode::Insensitive {
                             // Database-agnostic case insensitive contains using UPPER()
                                 Condition::all().add(
@@ -1174,7 +1148,7 @@ fn generate_string_field_handler(
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.contains(s))
                         }
                     },
-                    FieldOp::StartsWith(s) => {
+                    caustics::FieldOp::StartsWith(s) => {
                         if query_mode == caustics::QueryMode::Insensitive {
                             // Database-agnostic case insensitive starts with using UPPER()
                                 Condition::all().add(
@@ -1188,7 +1162,7 @@ fn generate_string_field_handler(
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.starts_with(s))
                         }
                     },
-                    FieldOp::EndsWith(s) => {
+                    caustics::FieldOp::EndsWith(s) => {
                         if query_mode == caustics::QueryMode::Insensitive {
                             // Database-agnostic case insensitive ends with using UPPER()
                                 Condition::all().add(
@@ -1202,12 +1176,12 @@ fn generate_string_field_handler(
                             Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ends_with(s))
                         }
                     },
-                    FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
-                    FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
-                    FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
-                    FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                    FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                    FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                    caustics::FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                    caustics::FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                    caustics::FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                    caustics::FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                    caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs.clone())),
+                    caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs.clone())),
                     // Catch-all for unsupported operations
                     _ => panic!("Unsupported FieldOp operation for this field type"),
                 }
@@ -1242,29 +1216,17 @@ fn generate_numeric_field_handler(
         let field_name_snake = pascal_name.to_string().to_snake_case();
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => {
-                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                        .expect("Failed to convert CausticsKey to field type");
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                 },
-                FieldOp::NotEquals(v) => {
-                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                        .expect("Failed to convert CausticsKey to field type");
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value))
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                 },
-                FieldOp::InVec(vs) => {
-                    let values: Vec<sea_orm::Value> = vs.into_iter()
-                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                            .expect("Failed to convert CausticsKey to field type"))
-                        .collect();
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(values))
+                caustics::FieldOp::InVec(vs) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs.clone()))
                 },
-                FieldOp::NotInVec(vs) => {
-                    let values: Vec<sea_orm::Value> = vs.into_iter()
-                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                            .expect("Failed to convert CausticsKey to field type"))
-                        .collect();
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(values))
+                caustics::FieldOp::NotInVec(vs) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs.clone()))
                 },
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
@@ -1273,46 +1235,36 @@ fn generate_numeric_field_handler(
     } else if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                 },
-                FieldOp::NotEquals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                 },
-                FieldOp::Gt(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::Gt(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v))
                 },
-                FieldOp::Lt(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Lt(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v))
                 },
-                FieldOp::Gte(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::Gte(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v))
                 },
-                FieldOp::Lte(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Lte(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v))
                 },
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                caustics::FieldOp::InVec(vs) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs.clone()))
+                },
+                caustics::FieldOp::NotInVec(vs) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs.clone()))
+                },
+                caustics::FieldOp::IsNull => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null())
+                },
+                caustics::FieldOp::IsNotNull => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null())
+                },
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1320,14 +1272,14 @@ fn generate_numeric_field_handler(
     } else {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
-                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
-                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                caustics::FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                caustics::FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                caustics::FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+                caustics::FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+                caustics::FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+                caustics::FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+                caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1344,22 +1296,16 @@ fn generate_boolean_field_handler(
     if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                 },
-                FieldOp::NotEquals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                 },
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1367,10 +1313,10 @@ fn generate_boolean_field_handler(
     } else {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
-                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                caustics::FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                caustics::FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1387,46 +1333,28 @@ fn generate_datetime_field_handler(
     if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                 },
-                FieldOp::NotEquals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                 },
-                FieldOp::Gt(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::Gt(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v))
                 },
-                FieldOp::Lt(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Lt(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v))
                 },
-                FieldOp::Gte(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::Gte(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v))
                 },
-                FieldOp::Lte(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Lte(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v))
                 },
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1434,14 +1362,14 @@ fn generate_datetime_field_handler(
     } else {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
-                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
-                FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-                FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-                FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-                FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                caustics::FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                caustics::FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                caustics::FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+                caustics::FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+                caustics::FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+                caustics::FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+                caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1461,29 +1389,17 @@ fn generate_uuid_field_handler(
         let field_name_snake = pascal_name.to_string().to_snake_case();
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => {
-                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                        .expect("Failed to convert CausticsKey to field type");
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(value))
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                 },
-                FieldOp::NotEquals(v) => {
-                    let value = crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                        .expect("Failed to convert CausticsKey to field type");
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(value))
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                 },
-                FieldOp::InVec(vs) => {
-                    let values: Vec<sea_orm::Value> = vs.into_iter()
-                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                            .expect("Failed to convert CausticsKey to field type"))
-                        .collect();
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(values))
+                caustics::FieldOp::InVec(vs) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs.clone()))
                 },
-                FieldOp::NotInVec(vs) => {
-                    let values: Vec<sea_orm::Value> = vs.into_iter()
-                        .map(|v| crate::__caustics_convert_key_for_sea_orm(#entity_name, #field_name_snake, v)
-                            .expect("Failed to convert CausticsKey to field type"))
-                        .collect();
-                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(values))
+                caustics::FieldOp::NotInVec(vs) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs.clone()))
                 },
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
@@ -1492,22 +1408,16 @@ fn generate_uuid_field_handler(
     } else if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                 },
-                FieldOp::NotEquals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                 },
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
-                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1515,10 +1425,10 @@ fn generate_uuid_field_handler(
     } else {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
-                FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
-                FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-                FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
+                caustics::FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                caustics::FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+                caustics::FieldOp::NotInVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vs)),
                 // Catch-all for unsupported operations
                 _ => panic!("Unsupported FieldOp operation for this field type"),
             }
@@ -1535,28 +1445,22 @@ fn generate_json_field_handler(
     if is_nullable {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                    }
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
                 },
-                FieldOp::NotEquals(v) => {
-                    match v {
-                        Some(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
-                        None => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
-                    }
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
                 },
-                FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
-                FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
-                FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
-                FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                FieldOp::InVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vals)),
-                FieldOp::NotInVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vals)),
-                FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                caustics::FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                caustics::FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                caustics::FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                caustics::FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                caustics::FieldOp::InVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vals)),
+                caustics::FieldOp::NotInVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vals)),
+                caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                 // JSON-specific operations - use database-agnostic SQL
-                FieldOp::JsonPath(path) => {
+                caustics::FieldOp::JsonPath(path) => {
                     let json_path = path.join(".");
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
@@ -1565,43 +1469,43 @@ fn generate_json_field_handler(
                             )
                         )
                 },
-                FieldOp::JsonStringContains(s) => {
+                caustics::FieldOp::JsonStringContains(s) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}%", s)]
                     ))
                 },
-                FieldOp::JsonStringStartsWith(s) => {
+                caustics::FieldOp::JsonStringStartsWith(s) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("{}%", s)]
                     ))
                 },
-                FieldOp::JsonStringEndsWith(s) => {
+                caustics::FieldOp::JsonStringEndsWith(s) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}", s)]
                     ))
                 },
-                FieldOp::JsonArrayContains(val) => {
+                caustics::FieldOp::JsonArrayContains(val) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                     ))
                 },
-                FieldOp::JsonArrayStartsWith(val) => {
+                caustics::FieldOp::JsonArrayStartsWith(val) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                     ))
                 },
-                FieldOp::JsonArrayEndsWith(val) => {
+                caustics::FieldOp::JsonArrayEndsWith(val) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$[#-1]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                     ))
                 },
-                FieldOp::JsonObjectContains(key) => {
+                caustics::FieldOp::JsonObjectContains(key) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                         [format!("$.{}", key)]
@@ -1624,16 +1528,16 @@ fn generate_json_field_handler(
     } else {
         quote! {
             WhereParam::#pascal_name(op) => match op {
-                FieldOp::Equals(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
-                FieldOp::NotEquals(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
-                FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
-                FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
-                FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
-                FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                FieldOp::InVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vals)),
-                FieldOp::NotInVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vals)),
+                caustics::FieldOp::Equals(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(val)),
+                caustics::FieldOp::NotEquals(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(val)),
+                caustics::FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                caustics::FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                caustics::FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                caustics::FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                caustics::FieldOp::InVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vals)),
+                caustics::FieldOp::NotInVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vals)),
                 // JSON-specific operations - use database-agnostic SQL (same as nullable version)
-                FieldOp::JsonPath(path) => {
+                caustics::FieldOp::JsonPath(path) => {
                     let json_path = path.join(".");
                         Condition::all().add(
                             sea_query::Expr::cust_with_values(
@@ -1642,43 +1546,43 @@ fn generate_json_field_handler(
                             )
                         )
                 },
-                FieldOp::JsonStringContains(s) => {
+                caustics::FieldOp::JsonStringContains(s) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}%", s)]
                     ))
                 },
-                FieldOp::JsonStringStartsWith(s) => {
+                caustics::FieldOp::JsonStringStartsWith(s) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("{}%", s)]
                     ))
                 },
-                FieldOp::JsonStringEndsWith(s) => {
+                caustics::FieldOp::JsonStringEndsWith(s) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [format!("%{}", s)]
                     ))
                 },
-                FieldOp::JsonArrayContains(val) => {
+                caustics::FieldOp::JsonArrayContains(val) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                     ))
                 },
-                FieldOp::JsonArrayStartsWith(val) => {
+                caustics::FieldOp::JsonArrayStartsWith(val) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$[0]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                     ))
                 },
-                FieldOp::JsonArrayEndsWith(val) => {
+                caustics::FieldOp::JsonArrayEndsWith(val) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, '$[#-1]') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                                 [val.to_string()]
                     ))
                 },
-                FieldOp::JsonObjectContains(key) => {
+                caustics::FieldOp::JsonObjectContains(key) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                                 &format!("json_extract({}, ?) IS NOT NULL", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                         [format!("$.{}", key)]
@@ -1708,15 +1612,15 @@ fn generate_generic_field_handler(
 ) -> proc_macro2::TokenStream {
     quote! {
         WhereParam::#pascal_name(op) => match op {
-            FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
-            FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
-            FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
-            FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
-            FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
-            FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
-            FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
-            FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-            FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+            caustics::FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+            caustics::FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+            caustics::FieldOp::Gt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(v)),
+            caustics::FieldOp::Lt(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(v)),
+            caustics::FieldOp::Gte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(v)),
+            caustics::FieldOp::Lte(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(v)),
+            caustics::FieldOp::InVec(vs) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vs)),
+            caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+            caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
             // Catch-all for unsupported operations
             _ => panic!("Unsupported FieldOp operation for this field type"),
         }
@@ -1729,10 +1633,10 @@ fn generate_type_specific_operations(
     pascal_name: &proc_macro2::Ident,
     ty: &syn::Type,
 ) -> proc_macro2::TokenStream {
-    // For all field types, generate an equals function using the actual field type
+    // For all field types, generate an equals function that converts to sea_orm::Value
     quote! {
-        pub fn equals<T: Into<#ty>>(value: T) -> WhereParam {
-            WhereParam::#pascal_name(FieldOp::Equals(value.into()))
+        pub fn equals<T: caustics::ToSeaOrmValue>(value: T) -> WhereParam {
+            WhereParam::#pascal_name(caustics::FieldOp::equals(value))
         }
     }
 }
@@ -1743,20 +1647,20 @@ fn generate_primary_key_operations(
     pascal_name: &proc_macro2::Ident,
     ty: &syn::Type,
 ) -> proc_macro2::TokenStream {
-    // For primary key fields, generate operations that accept CausticsKey directly
+    // For primary key fields, generate operations that accept CausticsKey and convert to sea_orm::Value
     // Note: equals is handled by unique_where_fn for unique fields, so we don't generate it here
     quote! {
         pub fn not_equals<T: Into<caustics::CausticsKey>>(value: T) -> WhereParam {
             let key = value.into();
-            WhereParam::#pascal_name(FieldOp::NotEquals(key))
+            WhereParam::#pascal_name(caustics::FieldOp::not_equals(key))
         }
         pub fn in_vec<T: Into<caustics::CausticsKey>>(values: Vec<T>) -> WhereParam {
             let keys: Vec<caustics::CausticsKey> = values.into_iter().map(|v| v.into()).collect();
-            WhereParam::#pascal_name(FieldOp::InVec(keys))
+            WhereParam::#pascal_name(caustics::FieldOp::in_vec(keys))
         }
         pub fn not_in_vec<T: Into<caustics::CausticsKey>>(values: Vec<T>) -> WhereParam {
             let keys: Vec<caustics::CausticsKey> = values.into_iter().map(|v| v.into()).collect();
-            WhereParam::#pascal_name(FieldOp::NotInVec(keys))
+            WhereParam::#pascal_name(caustics::FieldOp::not_in_vec(keys))
         }
     }
 }
@@ -1776,37 +1680,37 @@ fn generate_target_field_mappings(
                 caustics::FieldOp::Equals(value) => {
                                         Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} = ?", #table_name, field_name),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                                         ))
                                     },
                 caustics::FieldOp::NotEquals(value) => {
                                         Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} != ?", #table_name, field_name),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                                         ))
                                     },
                 caustics::FieldOp::Gt(value) => {
                                         Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} > ?", #table_name, field_name),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Lt(value) => {
                                 Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} < ?", #table_name, field_name),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Gte(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} >= ?", #table_name, field_name),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Lte(value) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} <= ?", #table_name, field_name),
-                        [sea_orm::Value::from(value)]
+                        [value.clone()]
                     ))
                 },
                 caustics::FieldOp::Contains(value) => {
@@ -1831,14 +1735,14 @@ fn generate_target_field_mappings(
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} IN ({})", #table_name, field_name,
                             values.iter().map(|_| "?").collect::<Vec<_>>().join(",")),
-                        values.iter().map(|v| sea_orm::Value::from(v)).collect::<Vec<_>>()
+                        values.iter().map(|v| v.clone()).collect::<Vec<_>>()
                     ))
                 },
                 caustics::FieldOp::NotInVec(values) => {
                     Condition::all().add(sea_query::Expr::cust_with_values(
                         &format!("\"{}\".{} NOT IN ({})", #table_name, field_name,
                             values.iter().map(|_| "?").collect::<Vec<_>>().join(",")),
-                        values.iter().map(|v| sea_orm::Value::from(v)).collect::<Vec<_>>()
+                        values.iter().map(|v| v.clone()).collect::<Vec<_>>()
                     ))
                 },
                 caustics::FieldOp::IsNull => {

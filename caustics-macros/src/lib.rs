@@ -172,8 +172,8 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                     Err(error_tokens) => return error_tokens.into(),
                 };
 
-            // Debug: Print the generated code (commented for production, useful for AI debugging)
-            // eprintln!("DEBUG: Generated code for {}: {}", mod_ident, generated);
+    // Debug: Print the generated code (commented for production, useful for AI debugging)
+    eprintln!("DEBUG: Generated code for {}: {}", mod_ident, generated);
 
             // Parse the generated items into a File
             let generated_file = match syn::parse2::<File>(generated) {

@@ -1,11 +1,11 @@
-use caustics_build::generate_client_for_external_project;
+use caustics_build::generate_caustics_client;
 
 fn main() {
     // Use the caustics-build library to generate client code
     // This demonstrates how examples can reuse caustics build functionality
 
     // Generate main client
-    if let Err(e) = generate_client_for_external_project(&["src"], "caustics_client_blog.rs") {
+    if let Err(e) = generate_caustics_client(&["src"], "caustics_client_blog.rs") {
         eprintln!("Error generating main client: {}", e);
         std::process::exit(1);
     }
