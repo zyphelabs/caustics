@@ -1,6 +1,6 @@
+use caustics::ToSeaOrmValue;
 use caustics_macros::caustics;
 use sea_orm::entity::prelude::*;
-use caustics::ToSeaOrmValue;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]
@@ -15,18 +15,19 @@ pub enum ActivityStatus {
 impl ToSeaOrmValue for ActivityStatus {
     fn to_sea_orm_value(&self) -> sea_orm::Value {
         match self {
-            ActivityStatus::Pending => sea_orm::Value::String(Some(Box::new("PENDING".to_string()))),
+            ActivityStatus::Pending => {
+                sea_orm::Value::String(Some(Box::new("PENDING".to_string())))
+            }
             ActivityStatus::Active => sea_orm::Value::String(Some(Box::new("ACTIVE".to_string()))),
         }
     }
 }
 
-
 #[caustics]
 pub mod student {
+    use super::ActivityStatus;
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
-    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "students")]
@@ -79,13 +80,15 @@ pub mod student {
             Relation::Grades.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
 pub mod teacher {
+    use super::ActivityStatus;
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
-    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "teachers")]
@@ -141,6 +144,8 @@ pub mod teacher {
             Relation::Department.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
@@ -191,13 +196,15 @@ pub mod department {
             Relation::Teachers.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
 pub mod course {
+    use super::ActivityStatus;
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
-    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "courses")]
@@ -293,6 +300,8 @@ pub mod course {
             Relation::Semester.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
@@ -350,6 +359,8 @@ pub mod enrollment {
             Relation::Course.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
@@ -425,13 +436,15 @@ pub mod grade {
             Relation::Teacher.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
 pub mod semester {
+    use super::ActivityStatus;
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
-    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "semesters")]
@@ -465,13 +478,15 @@ pub mod semester {
             Relation::Courses.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
 pub mod student_profile {
+    use super::ActivityStatus;
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
-    use super::ActivityStatus;
 
     #[derive(Caustics, Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
     #[sea_orm(table_name = "student_profiles")]
@@ -502,6 +517,6 @@ pub mod student_profile {
             Relation::Student.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
-
-

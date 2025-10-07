@@ -8,6 +8,18 @@ pub use key_types::*;
 pub use query_builders::*;
 pub use types::*;
 
+// Re-export commonly used external types to reduce dependency declarations
+pub mod prelude {
+    // Re-export the most commonly used external types
+    pub use chrono::{DateTime, Utc, NaiveDateTime, NaiveDate, NaiveTime, FixedOffset};
+    pub use uuid::Uuid;
+    pub use serde::{Serialize, Deserialize};
+    pub use serde_json::Value as JsonValue;
+    pub use sea_orm::entity::prelude::*;
+    pub use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
+    pub use heck::{ToSnakeCase, ToPascalCase};
+}
+
 pub mod hooks {
     use std::sync::{Arc, RwLock};
 

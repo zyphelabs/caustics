@@ -41,7 +41,8 @@ cargo build
 cargo test
 
 # Run tests with nightly features
-cargo +nightly test --all-features
+cargo +nightly test --workspace --exclude library --all-features
+
 
 # Build examples
 cargo build --examples
@@ -55,6 +56,12 @@ Add this to your `Cargo.toml`:
 [dependencies]
 caustics = { path = "../caustics" }
 caustics-macros = { path = "../caustics-macros" }
+sea-orm = { version = "1.1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-query = "0.32"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [build-dependencies]
 caustics-build = { path = "../caustics-build" }
@@ -102,7 +109,7 @@ caustics = { path = "../caustics" }
 caustics-macros = { path = "../caustics-macros", features = ["select"] }
 ```
 
-When the "select" feature is enabled, you can use the convenient `entity::select!(field1, field2)` syntax for field selection. Without the feature, use `caustics::typed_selection` for field selection.
+* When the "select" feature is enabled, you can use the convenient `entity::select!(field1, field2)`
 
 ## Quick Start
 
@@ -159,6 +166,13 @@ pub mod user {
         Posts,
     }
 
+    // Add Related trait implementation for relations
+    impl Related<super::post::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Posts.def()
+        }
+    }
+
     impl sea_orm::ActiveModelBehavior for ActiveModel {}
 }
 
@@ -192,6 +206,13 @@ pub mod post {
             to = "super::user::Column::Id"
         )]
         User,
+    }
+
+    // Add Related trait implementation for relations
+    impl Related<super::user::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::User.def()
+        }
     }
 
     impl ActiveModelBehavior for ActiveModel {}

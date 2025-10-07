@@ -19,33 +19,8 @@ mod where_param;
 
 #[proc_macro_attribute]
 pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Parse the namespace parameter robustly: allow string literal or key-value
-    let namespace = {
-        // Try as string literal
-        if let Ok(args_str) = syn::parse::<syn::LitStr>(_args.clone()) {
-            args_str.value()
-        } else {
-            // Fallback: parse key-value tokens, look for namespace = "..."
-            let args_str = _args.to_string();
-            if let Some(pos) = args_str.find("namespace") {
-                if let Some(eq) = args_str[pos..].find('=') {
-                    let after = &args_str[pos + eq + 1..];
-                    let first_quote = after.find('"');
-                    let second_quote =
-                        first_quote.and_then(|i| after[i + 1..].find('"').map(|j| i + 1 + j));
-                    if let (Some(i), Some(j)) = (first_quote, second_quote) {
-                        after[i + 1..j].to_string()
-                    } else {
-                        "default".to_string()
-                    }
-                } else {
-                    "default".to_string()
-                }
-            } else {
-                "default".to_string()
-            }
-        }
-    };
+    // No longer using namespaces - simplified
+    let namespace = "default".to_string();
 
     let mut ast = match syn::parse::<syn::ItemMod>(input.clone()) {
         Ok(ast) => ast,
@@ -79,7 +54,7 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                 if struct_item.attrs.iter().any(|attr| {
                     if attr.path().is_ident("derive") {
                         if let syn::Meta::List(meta) = &attr.meta {
-                            meta.tokens.to_string().contains("Caustics")
+                            ::std::string::ToString::to_string(&meta.tokens).contains("Caustics")
                         } else {
                             false
                         }
@@ -94,7 +69,8 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                         .filter(|attr| {
                             !(attr.path().is_ident("derive")
                                 && if let syn::Meta::List(meta) = &attr.meta {
-                                    meta.tokens.to_string().contains("Caustics")
+                                    ::std::string::ToString::to_string(&meta.tokens)
+                                        .contains("Caustics")
                                 } else {
                                     false
                                 })
@@ -116,17 +92,20 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                 }
             }
             syn::Item::Enum(enum_item) => {
-                if enum_item.attrs.iter().any(|attr| {
+                // Check if this enum has #[derive(Caustics)]
+                let has_caustics_derive = enum_item.attrs.iter().any(|attr| {
                     if attr.path().is_ident("derive") {
                         if let syn::Meta::List(meta) = &attr.meta {
-                            meta.tokens.to_string().contains("Caustics")
+                            ::std::string::ToString::to_string(&meta.tokens).contains("Caustics")
                         } else {
                             false
                         }
                     } else {
                         false
                     }
-                }) {
+                });
+
+                if has_caustics_derive {
                     // Filter out #[derive(Caustics)] attributes
                     let filtered_attrs: Vec<_> = enum_item
                         .attrs
@@ -134,7 +113,8 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
                         .filter(|attr| {
                             !(attr.path().is_ident("derive")
                                 && if let syn::Meta::List(meta) = &attr.meta {
-                                    meta.tokens.to_string().contains("Caustics")
+                                    ::std::string::ToString::to_string(&meta.tokens)
+                                        .contains("Caustics")
                                 } else {
                                     false
                                 })
@@ -160,20 +140,20 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     // If we found both struct and enum with #[derive(Caustics)], generate the entity code
-    match (model_ast, relation_ast) {
+    match (&model_ast, &relation_ast) {
         (Some(model_ast), Some(relation_ast)) => {
             // Use the module name for the path: crate::<mod_ident>
             let mod_ident = &ast.ident;
             let full_mod_path: syn::Path =
                 syn::parse_str(&format!("crate::{}", mod_ident)).unwrap();
             let generated =
-                match entity::generate_entity(model_ast, relation_ast, namespace, &full_mod_path) {
+                match entity::generate_entity(model_ast.clone(), relation_ast.clone(), namespace, &full_mod_path) {
                     Ok(tokens) => tokens,
                     Err(error_tokens) => return error_tokens.into(),
                 };
 
-    // Debug: Print the generated code (commented for production, useful for AI debugging)
-    eprintln!("DEBUG: Generated code for {}: {}", mod_ident, generated);
+            // Debug: Print the generated code (commented for production, useful for AI debugging)
+            //eprintln!("DEBUG: Generated code for {}: {}", mod_ident, generated);
 
             // Parse the generated items into a File
             let generated_file = match syn::parse2::<File>(generated) {
@@ -201,6 +181,15 @@ pub fn caustics(_args: TokenStream, input: TokenStream) -> TokenStream {
             .into()
         }
         _ => {
+            // Check if we have a Model but no Relation with Caustics derive
+            if model_ast.is_some() && relation_ast.is_none() {
+                return crate::errors::CausticsError::missing_caustics_on_relation(
+                    &ast.ident.to_string(),
+                    ast.ident.span(),
+                )
+                .into();
+            }
+            
             // If we didn't find both struct and enum with #[derive(Caustics)], return the original module
             quote! {
                 #[allow(clippy::cmp_owned)]

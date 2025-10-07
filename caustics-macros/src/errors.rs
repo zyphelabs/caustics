@@ -40,6 +40,9 @@ pub enum CausticsError {
         field_name: String,
         attribute: String,
     },
+
+    #[error("Missing #[derive(Caustics)] on Relation enum for entity '{entity_name}'.\n\nPlease add #[derive(Caustics)] to your Relation enum.\n\nExample:\n    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]\n    pub enum Relation {{\n        // your relations here\n    }}")]
+    MissingCausticsOnRelation { entity_name: String },
 }
 
 impl CausticsError {
@@ -75,6 +78,14 @@ impl CausticsError {
     /// Create error for missing table name
     pub fn no_table_name(entity_name: &str, span: Span) -> proc_macro2::TokenStream {
         Self::NoTableName {
+            entity_name: entity_name.to_string(),
+        }
+        .to_compile_error(span)
+    }
+
+    /// Create error for missing Caustics derive on Relation enum
+    pub fn missing_caustics_on_relation(entity_name: &str, span: Span) -> proc_macro2::TokenStream {
+        Self::MissingCausticsOnRelation {
             entity_name: entity_name.to_string(),
         }
         .to_compile_error(span)

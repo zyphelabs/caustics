@@ -4,6 +4,7 @@ members = [
     "caustics-macros",
     "caustics-build",
     "examples/blog",
-    "examples/school"
+    "examples/school",
+    "examples/library"
 ]
 resolver = "2" 

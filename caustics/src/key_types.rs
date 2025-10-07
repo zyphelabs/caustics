@@ -116,7 +116,7 @@ impl CausticsKey {
     pub fn to_db_value(&self) -> Value {
         match self {
             // Integer types
-            Self::I8(value) => Value::TinyInt(Some(*value as i8)),
+            Self::I8(value) => Value::TinyInt(Some(*value)),
             Self::I16(value) => Value::SmallInt(Some(*value)),
             Self::I32(value) => Value::Int(Some(*value)),
             Self::I64(value) => Value::BigInt(Some(*value)),
@@ -1206,7 +1206,7 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
             CausticsKey::Json(value) => Box::new(value),
             CausticsKey::String(value) => Box::new(
                 serde_json::from_str::<serde_json::Value>(&value)
-                    .unwrap_or_else(|_| serde_json::Value::Null),
+                    .unwrap_or(serde_json::Value::Null),
             ),
             CausticsKey::I8(value) => {
                 Box::new(serde_json::Value::Number(serde_json::Number::from(value)))
@@ -1564,7 +1564,7 @@ pub fn convert_key_to_type<T: 'static + Default + Send + Sync>(
             CausticsKey::Json(value) => Box::new(value),
             CausticsKey::String(value) => Box::new(
                 serde_json::from_str::<serde_json::Value>(&value)
-                    .unwrap_or_else(|_| serde_json::Value::Null),
+                    .unwrap_or(serde_json::Value::Null),
             ),
             CausticsKey::I8(value) => {
                 Box::new(serde_json::Value::Number(serde_json::Number::from(value)))

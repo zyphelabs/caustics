@@ -3,11 +3,10 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::possible_missing_else)]
 
+use heck::{ToPascalCase, ToSnakeCase};
 use quote::{format_ident, quote, ToTokens};
 use std::fs;
 use syn::{parse_file, Attribute, Item, Meta, Type};
-use heck::{ToPascalCase, ToSnakeCase};
-
 
 #[derive(Debug, Clone)]
 struct EntityMetadata {
@@ -153,7 +152,11 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
 }
 
 /// Find the type of a field in a struct by looking through the struct definition
-fn find_field_type_in_struct(file: &syn::File, entity_name: &str, field_name: &str) -> Option<String> {
+fn find_field_type_in_struct(
+    file: &syn::File,
+    entity_name: &str,
+    field_name: &str,
+) -> Option<String> {
     // Look for the Model struct within the module that matches the entity name
     for item in &file.items {
         if let Item::Mod(module) = item {
@@ -168,22 +171,44 @@ fn find_field_type_in_struct(file: &syn::File, entity_name: &str, field_name: &s
                                     if let Some(ident) = &field.ident {
                                         // Check if the field name matches directly
                                         if ident.to_string() == field_name {
-                                            return Some(type_id_to_string(get_type_id_from_ty(&field.ty)));
+                                            return Some(type_id_to_string(get_type_id_from_ty(
+                                                &field.ty,
+                                            )));
                                         }
-                                        
+
                                         // Also check if the field has a column_name attribute that matches
                                         for attr in &field.attrs {
                                             if attr.path().is_ident("sea_orm") {
                                                 let attr_str = attr.to_token_stream().to_string();
                                                 if attr_str.contains("column_name") {
-                                                    if let Some(start) = attr_str.find("column_name") {
-                                                        if let Some(equals) = attr_str[start..].find('=') {
-                                                            let after_equals = &attr_str[start + equals + 1..];
-                                                            if let Some(quote_start) = after_equals.find('"') {
-                                                                if let Some(quote_end) = after_equals[quote_start + 1..].find('"') {
-                                                                    let column_name = &after_equals[quote_start + 1..quote_start + 1 + quote_end];
+                                                    if let Some(start) =
+                                                        attr_str.find("column_name")
+                                                    {
+                                                        if let Some(equals) =
+                                                            attr_str[start..].find('=')
+                                                        {
+                                                            let after_equals =
+                                                                &attr_str[start + equals + 1..];
+                                                            if let Some(quote_start) =
+                                                                after_equals.find('"')
+                                                            {
+                                                                if let Some(quote_end) =
+                                                                    after_equals[quote_start + 1..]
+                                                                        .find('"')
+                                                                {
+                                                                    let column_name = &after_equals
+                                                                        [quote_start + 1
+                                                                            ..quote_start
+                                                                                + 1
+                                                                                + quote_end];
                                                                     if column_name == field_name {
-                                                                        return Some(type_id_to_string(get_type_id_from_ty(&field.ty)));
+                                                                        return Some(
+                                                                            type_id_to_string(
+                                                                                get_type_id_from_ty(
+                                                                                    &field.ty,
+                                                                                ),
+                                                                            ),
+                                                                        );
                                                                     }
                                                                 }
                                                             }
@@ -428,14 +453,19 @@ fn extract_entity_metadata(
                                     if relation_kind == "BelongsTo" {
                                         if let Some(ref fk_field) = foreign_key_field {
                                             foreign_key_fields.push(fk_field.clone());
-                                            
+
                                             // Find the type of this foreign key field by looking at the struct fields
-                                            if let Some(field_type) = find_field_type_in_struct(&file, &entity_name, fk_field) {
-                                                foreign_key_types.push((fk_field.clone(), field_type));
+                                            if let Some(field_type) = find_field_type_in_struct(
+                                                &file,
+                                                entity_name,
+                                                fk_field,
+                                            ) {
+                                                foreign_key_types
+                                                    .push((fk_field.clone(), field_type));
                                             }
                                         }
                                     }
-                                    
+
                                     relations.push(RelationMetadata {
                                         name: relation_name,
                                         target_entity,
@@ -472,7 +502,7 @@ fn extract_entity_metadata(
 }
 
 /// Resolve target table names for relations by looking them up in the entity metadata
-fn resolve_target_table_names(entities_metadata: &mut Vec<EntityMetadata>) {
+fn resolve_target_table_names(entities_metadata: &mut [EntityMetadata]) {
     // Create a lookup table from entity name to table name
     let entity_lookup: std::collections::HashMap<String, String> = entities_metadata
         .iter()
@@ -483,9 +513,12 @@ fn resolve_target_table_names(entities_metadata: &mut Vec<EntityMetadata>) {
     for entity_metadata in entities_metadata.iter_mut() {
         for relation in entity_metadata.relations.iter_mut() {
             if relation.target_table_name.is_empty() {
+                // Convert target_entity to PascalCase for lookup
+                let target_entity_pascal = relation.target_entity.to_pascal_case();
+                
                 // Look up the target table name from the entity lookup
                 relation.target_table_name = entity_lookup
-                    .get(&relation.target_entity)
+                    .get(&target_entity_pascal)
                     .cloned()
                     .unwrap_or_else(|| {
                         // Fallback to snake_case conversion if not found
@@ -499,7 +532,6 @@ fn resolve_target_table_names(entities_metadata: &mut Vec<EntityMetadata>) {
 fn has_caustics_attribute(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| attr.path().is_ident("caustics"))
 }
-
 
 fn has_caustics_derive(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
@@ -515,13 +547,11 @@ fn has_caustics_derive(attrs: &[Attribute]) -> bool {
     })
 }
 
-
 fn generate_client_code(
     entities: &[(String, String)],
     entities_metadata: &[EntityMetadata],
     _include_registry: bool,
 ) -> String {
-    
     let entity_methods: Vec<_> = entities
         .iter()
         .map(|(name, _module_path)| {
@@ -560,7 +590,8 @@ fn generate_client_code(
         .map(|(name, _module_path)| {
             let entity_name_lower = name.to_lowercase();
             let entity_name = name.to_lowercase();
-            let entity_fetcher_alias = format_ident!("{}EntityFetcherImpl", entity_name.to_pascal_case());
+            let entity_fetcher_alias =
+                format_ident!("{}EntityFetcherImpl", entity_name.to_pascal_case());
 
             // Use imported EntityFetcherImpl with alias instead of fully qualified path
             quote! {
@@ -672,11 +703,7 @@ fn generate_client_code(
         .iter()
         .map(|(name, module_path)| {
             // For module names, preserve underscores but convert to lowercase
-            let entity_name = if name.contains('_') {
-                name.to_lowercase() // This preserves underscores
-            } else {
-                name.to_lowercase()
-            };
+            let entity_name = name.to_lowercase();
             let entity_ident = format_ident!("{}", entity_name);
             let path_parts: Vec<&str> = module_path.split("::").collect();
 
@@ -702,7 +729,7 @@ fn generate_client_code(
         #(#entity_imports)*
 
         // Import heck traits for case conversion
-        use heck::ToPascalCase;
+        use caustics::prelude::ToPascalCase;
 
         // Bring all extension traits into scope automatically (generated)
         #prelude_use
@@ -826,7 +853,7 @@ fn generate_client_code(
         impl caustics::EntityTypeRegistry for CompositeEntityRegistry {
             fn get_primary_key_type(&self, entity_name: &str) -> Option<&str> {
                 if let Some(metadata) = get_entity_metadata(entity_name) {
-                    Some(&metadata.primary_key_type)
+                    Some(metadata.primary_key_type)
                 } else {
                     None
                 }
@@ -846,7 +873,7 @@ fn generate_client_code(
                 // Get the expected type for this entity's primary key
                 if let Some(metadata) = get_entity_metadata(entity) {
                     // Use the unified conversion function
-                    caustics::convert_key_to_type_from_string::<()>(key, &metadata.primary_key_type)
+                    caustics::convert_key_to_type_from_string::<()>(key, metadata.primary_key_type)
                 } else {
                     // No metadata available, return the key as-is
                     match key {
@@ -1563,9 +1590,9 @@ pub fn generate_caustics_client(
 
                             for item in items {
                                 if let syn::Item::Struct(struct_item) = item {
-                                    if struct_item.ident == "Model" {
-                                        if has_caustics_attr
-                                            || has_caustics_derive(&struct_item.attrs)
+                                    if struct_item.ident == "Model"
+                                        && (has_caustics_attr
+                                            || has_caustics_derive(&struct_item.attrs))
                                         {
                                             let entity_name = module_name.to_pascal_case();
 
@@ -1594,7 +1621,6 @@ pub fn generate_caustics_client(
                                                 source_file,
                                             ));
                                         }
-                                    }
                                 }
                             }
 
@@ -1633,4 +1659,3 @@ pub fn generate_caustics_client(
 
     Ok(())
 }
-

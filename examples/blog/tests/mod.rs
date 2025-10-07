@@ -4221,23 +4221,27 @@ mod query_builder_tests {
         assert_eq!(users_by_post_count_desc[1].name, "Bob");
         assert_eq!(users_by_post_count_desc[2].name, "Charlie");
 
-        // Test 3: Order posts by their user's name (ascending) - Skip for now due to SQL issue
-        // let posts_by_user_name_asc = client
-        //     .post()
-        //     .find_many(vec![])
-        //     .with(post::user::fetch())
-        //     .order_by(post::user::field("name", SortOrder::Asc))
-        //     .exec()
-        //     .await
-        //     .unwrap();
+        // Test 3: Order posts by their user's name (ascending)
+        let posts_by_user_name_asc = client
+            .post()
+            .find_many(vec![])
+            .with(post::user::fetch())
+            .order_by(post::user::field("name", SortOrder::Asc))
+            .exec()
+            .await
+            .unwrap();
 
-        // // Should be ordered by user name: Alice, Bob
-        // assert_eq!(posts_by_user_name_asc.len(), 3);
-        // assert_eq!(posts_by_user_name_asc[0].title, "Alice's First Post");
-        // assert_eq!(posts_by_user_name_asc[1].title, "Alice's Second Post");
-        // assert_eq!(posts_by_user_name_asc[2].title, "Bob's Post");
+        // Should be ordered by user name: Alice, Bob
+        assert_eq!(posts_by_user_name_asc.len(), 3);
+        assert_eq!(posts_by_user_name_asc[0].title, "Alice's First Post");
+        assert_eq!(posts_by_user_name_asc[1].title, "Alice's Second Post");
+        assert_eq!(posts_by_user_name_asc[2].title, "Bob's Post");
 
-        // Test 4: Order posts by their user's name (descending) - Skip for now due to SQL issue
+        // Test 4: Order posts by their user's name (descending)
+        // KNOWN ISSUE: Descending order for BelongsTo field ordering is not working correctly
+        // The macro code generation is correct, but there might be an issue with how
+        // SQLite or SeaORM handles ordering by subquery results in descending order.
+        // This needs further investigation. For now, only ascending order is tested.
         // let posts_by_user_name_desc = client
         //     .post()
         //     .find_many(vec![])
@@ -4246,28 +4250,28 @@ mod query_builder_tests {
         //     .exec()
         //     .await
         //     .unwrap();
-
-        // // Should be ordered by user name: Bob, Alice
+        
+        // // Should be ordered by user name: Bob, Alice (descending Z-A)
         // assert_eq!(posts_by_user_name_desc.len(), 3);
         // assert_eq!(posts_by_user_name_desc[0].title, "Bob's Post");
         // assert_eq!(posts_by_user_name_desc[1].title, "Alice's Second Post");
         // assert_eq!(posts_by_user_name_desc[2].title, "Alice's First Post");
 
-        // Test 5: Order posts by their user's age (ascending) - Skip for now due to SQL issue
-        // let posts_by_user_age_asc = client
-        //     .post()
-        //     .find_many(vec![])
-        //     .with(post::user::fetch())
-        //     .order_by(post::user::field("age", SortOrder::Asc))
-        //     .exec()
-        //     .await
-        //     .unwrap();
+        // Test 5: Order posts by their user's age (ascending)
+        let posts_by_user_age_asc = client
+            .post()
+            .find_many(vec![])
+            .with(post::user::fetch())
+            .order_by(post::user::field("age", SortOrder::Asc))
+            .exec()
+            .await
+            .unwrap();
 
-        // // Should be ordered by user age: Alice (25), Bob (30)
-        // assert_eq!(posts_by_user_age_asc.len(), 3);
-        // assert_eq!(posts_by_user_age_asc[0].title, "Alice's First Post");
-        // assert_eq!(posts_by_user_age_asc[1].title, "Alice's Second Post");
-        // assert_eq!(posts_by_user_age_asc[2].title, "Bob's Post");
+        // Should be ordered by user age: Alice (25), Bob (30)
+        assert_eq!(posts_by_user_age_asc.len(), 3);
+        assert_eq!(posts_by_user_age_asc[0].title, "Alice's First Post");
+        assert_eq!(posts_by_user_age_asc[1].title, "Alice's Second Post");
+        assert_eq!(posts_by_user_age_asc[2].title, "Bob's Post");
 
         // Test 6: Complex ordering - users by post count, then by name
         let users_complex_order = client

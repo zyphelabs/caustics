@@ -383,8 +383,10 @@ pub fn generate_where_param_logic(
     where_field_variants.push(quote! { Or(Vec<WhereParam>) });
     where_field_variants.push(quote! { Not(Vec<WhereParam>) });
 
-    // Add relation condition variant for advanced relation operations
-    where_field_variants.push(quote! { RelationCondition(caustics::RelationCondition) });
+    // Add relation condition variant for advanced relation operations (only if there are relations)
+    if !relations.is_empty() {
+        where_field_variants.push(quote! { RelationCondition(caustics::RelationCondition) });
+    }
 
     // Generate a function that processes all WhereParams together, properly handling QueryMode
     let where_params_to_condition_fn = generate_where_params_to_condition_function(
@@ -537,7 +539,6 @@ fn generate_where_params_to_condition_function(
 
     // Generate dynamic relation match arms
     let mut relation_match_arms = Vec::new();
-    let mut field_mappings = Vec::new();
 
     for relation in relations {
         let relation_name = &relation.name;
@@ -575,13 +576,10 @@ fn generate_where_params_to_condition_function(
             })
             .to_string();
 
-        // Generate completely agnostic field mappings that work with any entity
-        let target_field_mappings = generate_target_field_mappings(target, &target_table_name_str);
-        field_mappings.extend(target_field_mappings);
-
         // Generate match arm for this relation
+        let relation_name_lit = syn::LitStr::new(&relation_name_str, proc_macro2::Span::call_site());
         let relation_match_arm = quote! {
-            #relation_name_str => {
+            #relation_name_lit => {
                 match relation_condition.operation {
                     caustics::FieldOp::Some(()) => {
                         // Phase 3: Use SeaORM query builder instead of raw SQL
@@ -654,6 +652,23 @@ fn generate_where_params_to_condition_function(
 
         relation_match_arms.push(relation_match_arm);
     }
+
+    // Generate the RelationCondition match arm only if there are relations
+    let relation_condition_arm = if !relations.is_empty() {
+        let arms = &relation_match_arms;
+        quote! {
+            WhereParam::RelationCondition(relation_condition) => {
+                match relation_condition.relation_name {
+                    #(
+                        #arms
+                    )*
+                    _ => panic!("Unknown relation: {}", relation_condition.relation_name),
+                }
+            },
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         /// Convert CausticsKey to the appropriate type for SeaORM operations
@@ -868,15 +883,7 @@ fn generate_where_params_to_condition_function(
                         }
                         cond.not()
                     },
-                    WhereParam::RelationCondition(relation_condition) => {
-                        match relation_condition.relation_name.as_ref() {
-                            // ... dynamically generated arms ...
-                            #(
-                                #relation_match_arms
-                            )*
-                            _ => panic!("Unknown relation: {}", relation_condition.relation_name),
-                        }
-                    },
+                    #relation_condition_arm
                     _ => panic!("Unhandled WhereParam variant"),
                 };
                 final_condition = final_condition.add(condition);
@@ -1665,154 +1672,3 @@ fn generate_primary_key_operations(
     }
 }
 
-/// Generate dynamic field mappings for a target entity
-/// This makes the code agnostic by generating field-to-column mapping for any entity
-fn generate_target_field_mappings(
-    target: &syn::Path,
-    table_name: &str,
-) -> Vec<proc_macro2::TokenStream> {
-    // Type-safe approach: generate direct FieldOp matching for any field
-    vec![quote! {
-                    field_name => {
-            // Type-safe field handling - direct FieldOp matching
-            // This approach eliminates string parsing and is fully type-safe
-            match &filter.operation {
-                caustics::FieldOp::Equals(value) => {
-                                        Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} = ?", #table_name, field_name),
-                        [value.clone()]
-                                        ))
-                                    },
-                caustics::FieldOp::NotEquals(value) => {
-                                        Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} != ?", #table_name, field_name),
-                        [value.clone()]
-                                        ))
-                                    },
-                caustics::FieldOp::Gt(value) => {
-                                        Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} > ?", #table_name, field_name),
-                        [value.clone()]
-                    ))
-                },
-                caustics::FieldOp::Lt(value) => {
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} < ?", #table_name, field_name),
-                        [value.clone()]
-                    ))
-                },
-                caustics::FieldOp::Gte(value) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} >= ?", #table_name, field_name),
-                        [value.clone()]
-                    ))
-                },
-                caustics::FieldOp::Lte(value) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} <= ?", #table_name, field_name),
-                        [value.clone()]
-                    ))
-                },
-                caustics::FieldOp::Contains(value) => {
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                                    &format!("\"{}\".{} LIKE ?", #table_name, field_name),
-                        [sea_orm::Value::from(format!("%{}%", value))]
-                    ))
-                },
-                caustics::FieldOp::StartsWith(value) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} LIKE ?", #table_name, field_name),
-                        [sea_orm::Value::from(format!("{}%", value))]
-                    ))
-                },
-                caustics::FieldOp::EndsWith(value) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} LIKE ?", #table_name, field_name),
-                        [sea_orm::Value::from(format!("%{}", value))]
-                    ))
-                },
-                caustics::FieldOp::InVec(values) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} IN ({})", #table_name, field_name,
-                            values.iter().map(|_| "?").collect::<Vec<_>>().join(",")),
-                        values.iter().map(|v| v.clone()).collect::<Vec<_>>()
-                    ))
-                },
-                caustics::FieldOp::NotInVec(values) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} NOT IN ({})", #table_name, field_name,
-                            values.iter().map(|_| "?").collect::<Vec<_>>().join(",")),
-                        values.iter().map(|v| v.clone()).collect::<Vec<_>>()
-                    ))
-                },
-                caustics::FieldOp::IsNull => {
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                                    &format!("\"{}\".{} IS NULL", #table_name, field_name),
-                                    Vec::<sea_orm::Value>::new()
-                                ))
-                },
-                caustics::FieldOp::IsNotNull => {
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                                    &format!("\"{}\".{} IS NOT NULL", #table_name, field_name),
-                                    Vec::<sea_orm::Value>::new()
-                                ))
-                },
-                // JSON operations
-                caustics::FieldOp::JsonPath(path) => {
-                    let json_path = path.join(".");
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{}->'{}' IS NOT NULL", #table_name, field_name, json_path),
-                        Vec::<sea_orm::Value>::new()
-                                ))
-                },
-                caustics::FieldOp::JsonStringContains(value) => {
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{}::text LIKE ?", #table_name, field_name),
-                        [sea_orm::Value::from(format!("%{}%", value))]
-                                ))
-                },
-                caustics::FieldOp::JsonStringStartsWith(value) => {
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{}::text LIKE ?", #table_name, field_name),
-                        [sea_orm::Value::from(format!("{}%", value))]
-                                ))
-                },
-                caustics::FieldOp::JsonStringEndsWith(value) => {
-                                Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{}::text LIKE ?", #table_name, field_name),
-                        [sea_orm::Value::from(format!("%{}", value))]
-                    ))
-                },
-                caustics::FieldOp::JsonArrayContains(value) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} @> ?", #table_name, field_name),
-                        [sea_orm::Value::from(serde_json::to_string(&value).unwrap())]
-                    ))
-                },
-                caustics::FieldOp::JsonArrayStartsWith(value) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} @> ?", #table_name, field_name),
-                        [sea_orm::Value::from(serde_json::to_string(&value).unwrap())]
-                    ))
-                },
-                caustics::FieldOp::JsonArrayEndsWith(value) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} @> ?", #table_name, field_name),
-                        [sea_orm::Value::from(serde_json::to_string(&value).unwrap())]
-                    ))
-                },
-                caustics::FieldOp::JsonObjectContains(key) => {
-                    Condition::all().add(sea_query::Expr::cust_with_values(
-                        &format!("\"{}\".{} ? ?", #table_name, field_name),
-                        [sea_orm::Value::from(key)]
-                    ))
-                },
-                _ => Condition::all(),
-                // Relation operations (these should not be used in field mappings)
-                caustics::FieldOp::Some(_) | caustics::FieldOp::Every(_) | caustics::FieldOp::None(_) => {
-                    panic!("Relation operations should not be used in field mappings")
-                }
-            }
-        },
-    }]
-}

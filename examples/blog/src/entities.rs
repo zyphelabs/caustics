@@ -37,6 +37,8 @@ pub mod user {
             Relation::Posts.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 #[caustics]
@@ -90,4 +92,6 @@ pub mod post {
             Relation::User.def()
         }
     }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }

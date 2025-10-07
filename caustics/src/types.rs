@@ -603,37 +603,102 @@ pub trait ToSeaOrmValue {
 }
 
 /// Implement ToSeaOrmValue for common types
-impl ToSeaOrmValue for i8 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::TinyInt(Some(*self)) } }
-impl ToSeaOrmValue for i16 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::SmallInt(Some(*self)) } }
-impl ToSeaOrmValue for i32 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Int(Some(*self)) } }
-impl ToSeaOrmValue for i64 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::BigInt(Some(*self)) } }
-impl ToSeaOrmValue for u8 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::TinyUnsigned(Some(*self)) } }
-impl ToSeaOrmValue for u16 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::SmallUnsigned(Some(*self)) } }
-impl ToSeaOrmValue for u32 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Unsigned(Some(*self)) } }
-impl ToSeaOrmValue for u64 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::BigUnsigned(Some(*self)) } }
-impl ToSeaOrmValue for f32 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Float(Some(*self)) } }
-impl ToSeaOrmValue for f64 { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Double(Some(*self)) } }
-impl ToSeaOrmValue for bool { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Bool(Some(*self)) } }
-impl ToSeaOrmValue for String { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::String(Some(Box::new(self.clone()))) } }
-impl ToSeaOrmValue for &str { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::String(Some(Box::new(self.to_string()))) } }
-impl ToSeaOrmValue for uuid::Uuid { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Uuid(Some(Box::new(*self))) } }
-impl ToSeaOrmValue for serde_json::Value { fn to_sea_orm_value(&self) -> sea_orm::Value { sea_orm::Value::Json(Some(Box::new(self.clone()))) } }
+impl ToSeaOrmValue for i8 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::TinyInt(Some(*self))
+    }
+}
+impl ToSeaOrmValue for i16 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::SmallInt(Some(*self))
+    }
+}
+impl ToSeaOrmValue for i32 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::Int(Some(*self))
+    }
+}
+impl ToSeaOrmValue for i64 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::BigInt(Some(*self))
+    }
+}
+impl ToSeaOrmValue for u8 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::TinyUnsigned(Some(*self))
+    }
+}
+impl ToSeaOrmValue for u16 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::SmallUnsigned(Some(*self))
+    }
+}
+impl ToSeaOrmValue for u32 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::Unsigned(Some(*self))
+    }
+}
+impl ToSeaOrmValue for u64 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::BigUnsigned(Some(*self))
+    }
+}
+impl ToSeaOrmValue for f32 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::Float(Some(*self))
+    }
+}
+impl ToSeaOrmValue for f64 {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::Double(Some(*self))
+    }
+}
+impl ToSeaOrmValue for bool {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::Bool(Some(*self))
+    }
+}
+impl ToSeaOrmValue for String {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::String(Some(Box::new(self.clone())))
+    }
+}
+impl ToSeaOrmValue for &str {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::String(Some(Box::new(self.to_string())))
+    }
+}
+impl ToSeaOrmValue for uuid::Uuid {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::Uuid(Some(Box::new(*self)))
+    }
+}
+impl ToSeaOrmValue for serde_json::Value {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::Json(Some(Box::new(self.clone())))
+    }
+}
 
 // Implement for DateTime types
-impl ToSeaOrmValue for chrono::DateTime<chrono::FixedOffset> { 
-    fn to_sea_orm_value(&self) -> sea_orm::Value { 
-        sea_orm::Value::ChronoDateTimeUtc(Some(Box::new(self.with_timezone(&chrono::Utc)))) 
-    } 
+impl ToSeaOrmValue for chrono::DateTime<chrono::FixedOffset> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::ChronoDateTimeUtc(Some(Box::new(self.with_timezone(&chrono::Utc))))
+    }
 }
-impl ToSeaOrmValue for chrono::NaiveDateTime { 
-    fn to_sea_orm_value(&self) -> sea_orm::Value { 
-        sea_orm::Value::ChronoDateTime(Some(Box::new(*self))) 
-    } 
+impl ToSeaOrmValue for chrono::DateTime<chrono::Utc> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::ChronoDateTimeUtc(Some(Box::new(*self)))
+    }
 }
-impl ToSeaOrmValue for chrono::NaiveDate { 
-    fn to_sea_orm_value(&self) -> sea_orm::Value { 
-        sea_orm::Value::ChronoDate(Some(Box::new(*self))) 
-    } 
+impl ToSeaOrmValue for chrono::NaiveDateTime {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::ChronoDateTime(Some(Box::new(*self)))
+    }
+}
+impl ToSeaOrmValue for chrono::NaiveDate {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        sea_orm::Value::ChronoDate(Some(Box::new(*self)))
+    }
 }
 
 // Implement for Option types
@@ -667,7 +732,6 @@ impl ToSeaOrmValue for &sea_orm::Value {
     }
 }
 
-
 // Helper function for converting enums to sea_orm::Value
 pub fn enum_to_sea_orm_value<T: ToString>(value: &T) -> sea_orm::Value {
     sea_orm::Value::String(Some(Box::new(value.to_string())))
@@ -678,37 +742,37 @@ impl FieldOp {
     pub fn equals<T: ToSeaOrmValue>(value: T) -> Self {
         Self::Equals(value.to_sea_orm_value())
     }
-    
+
     /// Create a not equals operation from any type that implements ToSeaOrmValue
     pub fn not_equals<T: ToSeaOrmValue>(value: T) -> Self {
         Self::NotEquals(value.to_sea_orm_value())
     }
-    
+
     /// Create a greater than operation from any type that implements ToSeaOrmValue
     pub fn gt<T: ToSeaOrmValue>(value: T) -> Self {
         Self::Gt(value.to_sea_orm_value())
     }
-    
+
     /// Create a less than operation from any type that implements ToSeaOrmValue
     pub fn lt<T: ToSeaOrmValue>(value: T) -> Self {
         Self::Lt(value.to_sea_orm_value())
     }
-    
+
     /// Create a greater than or equal operation from any type that implements ToSeaOrmValue
     pub fn gte<T: ToSeaOrmValue>(value: T) -> Self {
         Self::Gte(value.to_sea_orm_value())
     }
-    
+
     /// Create a less than or equal operation from any type that implements ToSeaOrmValue
     pub fn lte<T: ToSeaOrmValue>(value: T) -> Self {
         Self::Lte(value.to_sea_orm_value())
     }
-    
+
     /// Create an in operation from a vector of values that implement ToSeaOrmValue
     pub fn in_vec<T: ToSeaOrmValue>(values: Vec<T>) -> Self {
         Self::InVec(values.into_iter().map(|v| v.to_sea_orm_value()).collect())
     }
-    
+
     /// Create a not in operation from a vector of values that implement ToSeaOrmValue
     pub fn not_in_vec<T: ToSeaOrmValue>(values: Vec<T>) -> Self {
         Self::NotInVec(values.into_iter().map(|v| v.to_sea_orm_value()).collect())
