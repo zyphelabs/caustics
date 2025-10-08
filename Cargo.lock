@@ -330,16 +330,13 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 name = "caustics"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "caustics-macros",
  "chrono",
- "env_logger",
  "heck 0.4.1",
  "once_cell",
  "proc-macro2",
  "quote",
  "regex",
- "rust_decimal",
  "sea-orm",
  "sea-orm-migration",
  "sea-query",
@@ -348,7 +345,6 @@ dependencies = [
  "sqlx",
  "syn 2.0.106",
  "tempfile",
- "thiserror 1.0.69",
  "tokio",
  "tokio-test",
  "uuid",
@@ -359,6 +355,7 @@ dependencies = [
 name = "caustics-build"
 version = "0.1.0"
 dependencies = [
+ "caustics",
  "chrono",
  "heck 0.4.1",
  "proc-macro2",
@@ -373,20 +370,14 @@ dependencies = [
 name = "caustics-macros"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "heck 0.4.1",
- "lazy_static",
- "once_cell",
  "proc-macro2",
  "quote",
- "rust_decimal",
  "sea-orm",
- "serde",
  "serde_json",
  "syn 2.0.106",
  "thiserror 1.0.69",
  "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -659,6 +650,15 @@ name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
+name = "dummy"
+version = "0.1.0"
+dependencies = [
+ "caustics",
+ "caustics-build",
+ "caustics-macros",
+]
 
 [[package]]
 name = "either"
@@ -1258,7 +1258,6 @@ dependencies = [
  "serde_json",
  "testcontainers",
  "tokio",
- "uuid",
 ]
 
 [[package]]

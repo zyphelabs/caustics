@@ -102,6 +102,7 @@ pub fn generate_entity(
 
     // Extract primary key field name from current entity
     let current_primary_key = get_primary_key_field_name(&fields);
+    let current_primary_key_str = syn::LitStr::new(&current_primary_key, proc_macro2::Span::call_site());
 
     // Generate per-relation fetcher arms
     let mut relation_names = Vec::new();
@@ -265,7 +266,7 @@ pub fn generate_entity(
                             })
                             .collect::<String>();
                         // Always include primary key for relation traversal
-                        fields.insert(#current_primary_key);
+                        fields.insert(#current_primary_key_str);
                         fields
                     };
 
@@ -712,7 +713,7 @@ pub fn generate_entity(
                                             }
                                         }).collect::<String>();
                                         // Always include primary key for relation traversal
-                                        fields.insert(#current_primary_key);
+                                        fields.insert(#current_primary_key_str);
                                         // Add foreign key field for this relation
                                         fields.insert(#foreign_key_column_str);
                         // Add all foreign key fields for nested relation traversal
@@ -1147,7 +1148,7 @@ pub fn generate_entity(
                 if segment.ident == "Uuid" {
                     quote! {
                         if model.#current_primary_key_ident == sea_orm::ActiveValue::NotSet {
-                            model.#current_primary_key_ident = sea_orm::ActiveValue::Set(uuid::Uuid::new_v4());
+                            model.#current_primary_key_ident = sea_orm::ActiveValue::Set(caustics::uuid::Uuid::new_v4());
                         }
                     }
                 } else {
@@ -1394,7 +1395,7 @@ pub fn generate_entity(
                                         .await?;
                                     result.map(|entity| {
                                         use caustics::ToSeaOrmValue;
-                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        let val = (&entity.#primary_key_field_ident).to_sea_orm_value();
                                         caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
                                     }).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
@@ -1417,7 +1418,7 @@ pub fn generate_entity(
                                         .await?;
                                     result.map(|entity| {
                                         use caustics::ToSeaOrmValue;
-                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        let val = (&entity.#primary_key_field_ident).to_sea_orm_value();
                                         caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
                                     }).ok_or_else(|| {
                                         caustics::CausticsError::NotFoundForCondition {
@@ -2841,7 +2842,7 @@ pub fn generate_entity(
                 quote! {
                     #alias => {
                         use caustics::ToSeaOrmValue;
-                        let val = self.#name.to_sea_orm_value();
+                        let val = (&self.#name).to_sea_orm_value();
                         caustics::CausticsKey::from_db_value(&val)
                     }
                 }
@@ -3788,7 +3789,7 @@ pub fn generate_entity(
                     fk_column,
                     quote! { |model| {
                         use caustics::ToSeaOrmValue;
-                        let id_value = model.#id_field;
+                        let id_value = &model.#id_field;
                         let val = id_value.to_sea_orm_value();
                         caustics::CausticsKey::from_db_value(&val)
                     } },
@@ -3821,7 +3822,7 @@ pub fn generate_entity(
                 } else {
                     quote! { |model| {
                         use caustics::ToSeaOrmValue;
-                        let fk_value = model.#foreign_key_field;
+                        let fk_value = &model.#foreign_key_field;
                         let val = fk_value.to_sea_orm_value();
                         caustics::CausticsKey::from_db_value(&val)
                     } }
@@ -4262,7 +4263,7 @@ pub fn generate_entity(
                                                 .await?;
                                             result.map(|entity| {
                                         use caustics::ToSeaOrmValue;
-                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        let val = (&entity.#primary_key_field_ident).to_sea_orm_value();
                                         caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
                                     }).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
@@ -4283,7 +4284,7 @@ pub fn generate_entity(
                                                 .await?;
                                             result.map(|entity| {
                                         use caustics::ToSeaOrmValue;
-                                        let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                        let val = (&entity.#primary_key_field_ident).to_sea_orm_value();
                                         caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
                                     }).ok_or_else(|| {
                                                 sea_orm::DbErr::Custom(format!(
@@ -4808,8 +4809,8 @@ pub fn generate_entity(
         #[allow(clippy::useless_conversion)]
         #[allow(clippy::if_same_then_else)]
         #[allow(unused_imports)]
-        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
-        use uuid::Uuid;
+        use caustics::chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+        use caustics::uuid::Uuid;
         use std::vec::Vec;
         use caustics::{SortOrder, MergeInto, FieldOp, CausticsKey};
         use caustics::{FromModel, HasManySetHandler};
@@ -5370,7 +5371,7 @@ pub fn generate_entity(
 
         pub(crate) fn __extract_id(m: &<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey {
             use caustics::ToSeaOrmValue;
-            let val = m.#current_primary_key_ident.to_sea_orm_value();
+            let val = (&m.#current_primary_key_ident).to_sea_orm_value();
             caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
         }
 
@@ -5688,7 +5689,7 @@ pub fn generate_entity(
                                 .await?;
                             if let Some(model) = found {
                                 use caustics::ToSeaOrmValue;
-                                let val = model.#current_primary_key_ident.to_sea_orm_value();
+                                let val = (&model.#current_primary_key_ident).to_sea_orm_value();
                                 let id_val: CausticsKey = caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0));
                                 Ok(id_val.to_db_value())
                             } else {

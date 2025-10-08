@@ -56,12 +56,6 @@ Add this to your `Cargo.toml`:
 [dependencies]
 caustics = { path = "../caustics" }
 caustics-macros = { path = "../caustics-macros" }
-sea-orm = { version = "1.1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
-sea-query = "0.32"
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 
 [build-dependencies]
 caustics-build = { path = "../caustics-build" }

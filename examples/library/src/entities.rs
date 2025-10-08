@@ -4,13 +4,13 @@ use caustics_macros::caustics;
 pub mod author {
     use caustics_macros::Caustics;
     use sea_orm::entity::prelude::*;
-    use chrono::Utc;
+    use caustics::chrono::Utc;
 
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "authors")]
     pub struct Model {
         #[sea_orm(primary_key, auto_increment = false, column_name = "authorId")]
-        pub id: Uuid,
+        pub id: String,
         #[sea_orm(column_name = "firstName")]
         pub first_name: String,
         #[sea_orm(column_name = "lastName")]
@@ -50,13 +50,13 @@ pub mod book {
     #[sea_orm(table_name = "books")]
     pub struct Model {
         #[sea_orm(primary_key, auto_increment = false, column_name = "bookId")]
-        pub id: Uuid,
+        pub id: String,
         #[sea_orm(column_name = "bookTitle")]
         pub title: String,
         #[sea_orm(column_name = "genres", column_type = "Json")]
         pub genres: Vec<String>,
         #[sea_orm(column_name = "authorId")]
-        pub author_id: Uuid,
+        pub author_id: String,
         #[sea_orm(column_name = "createdAt")]
         pub created_at: DateTime<Utc>,
         #[sea_orm(column_name = "updatedAt")]
@@ -89,7 +89,7 @@ pub mod api_key {
     #[sea_orm(table_name = "ApiKey", schema_name = "api")]
         pub struct Model {
         #[sea_orm(primary_key)]
-        pub id: Uuid,
+        pub id: String,
         pub key: String,
         pub allowed_origins: String,
         pub options: serde_json::Value,

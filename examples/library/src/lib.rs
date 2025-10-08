@@ -75,17 +75,17 @@ mod tests {
             vec!["Fantasy".to_string(), "Science Fiction".to_string()],
             now,
             now,
-            author::id::equals(author.id),
+            author::id::equals(author.id.clone()),
             vec![]
         ).exec().await?;
 
         // Verify the book was created with correct field mapping
         assert_eq!(book.title, "Test Book");
-        assert_eq!(book.author_id, author.id);
+        assert_eq!(book.author_id, author.id.clone());
         assert_eq!(book.genres, vec!["Fantasy".to_string(), "Science Fiction".to_string()]);
 
         // Test querying with camelCase column names
-        let found_author = author_client.find_unique(author::id::equals(author.id))
+        let found_author = author_client.find_unique(author::id::equals(author.id.clone()))
             .exec()
             .await?
             .expect("Author should exist");
@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(found_author.first_name, "John");
 
         // Test querying books by author
-        let author_books = book_client.find_many(vec![book::author_id::equals(author.id)])
+        let author_books = book_client.find_many(vec![book::author_id::equals(author.id.clone())])
             .exec()
             .await?;
 

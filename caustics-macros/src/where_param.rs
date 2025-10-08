@@ -240,13 +240,13 @@ pub fn generate_where_param_logic(
                     pub fn json_string_ends_with(value: String) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonStringEndsWith(value))
                     }
-                    pub fn json_array_contains(value: serde_json::Value) -> WhereParam {
+                    pub fn json_array_contains(value: caustics::serde_json::Value) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonArrayContains(value))
                     }
-                    pub fn json_array_starts_with(value: serde_json::Value) -> WhereParam {
+                    pub fn json_array_starts_with(value: caustics::serde_json::Value) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonArrayStartsWith(value))
                     }
-                    pub fn json_array_ends_with(value: serde_json::Value) -> WhereParam {
+                    pub fn json_array_ends_with(value: caustics::serde_json::Value) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonArrayEndsWith(value))
                     }
                     pub fn json_object_contains(key: String) -> WhereParam {
@@ -271,13 +271,13 @@ pub fn generate_where_param_logic(
                     pub fn json_string_ends_with(value: String) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonStringEndsWith(value))
                     }
-                    pub fn json_array_contains(value: serde_json::Value) -> WhereParam {
+                    pub fn json_array_contains(value: caustics::serde_json::Value) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonArrayContains(value))
                     }
-                    pub fn json_array_starts_with(value: serde_json::Value) -> WhereParam {
+                    pub fn json_array_starts_with(value: caustics::serde_json::Value) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonArrayStartsWith(value))
                     }
-                    pub fn json_array_ends_with(value: serde_json::Value) -> WhereParam {
+                    pub fn json_array_ends_with(value: caustics::serde_json::Value) -> WhereParam {
                         WhereParam::#pascal_name(caustics::FieldOp::JsonArrayEndsWith(value))
                     }
                     pub fn json_object_contains(key: String) -> WhereParam {
@@ -353,8 +353,8 @@ pub fn generate_where_param_logic(
         }
         field_ops.push(quote! {
                     pub mod #name {
-                        use chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
-                        use uuid::Uuid;
+                        use caustics::chrono::{NaiveDate, NaiveDateTime, DateTime, FixedOffset};
+                        use caustics::uuid::Uuid;
                         use std::vec::Vec;
                         use super::*;
                 #(#field_mod_items)*
@@ -688,7 +688,7 @@ fn generate_where_params_to_condition_function(
         /// Convert CausticsKey to the appropriate type for SeaORM operations
         fn convert_caustics_key_to_type<T>(key: caustics::CausticsKey) -> T
         where
-            T: From<String> + From<i32> + From<uuid::Uuid>,
+            T: From<String> + From<i32> + From<caustics::uuid::Uuid>,
         {
             match key {
                 caustics::CausticsKey::String(s) => T::from(s),
@@ -1770,7 +1770,7 @@ fn generate_json_field_handler(
                 caustics::FieldOp::JsonNull(flag) => {
                     match flag {
                         caustics::JsonNullValueFilter::DbNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                        caustics::JsonNullValueFilter::JsonNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(serde_json::Value::Null)),
+                        caustics::JsonNullValueFilter::JsonNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(caustics::serde_json::Value::Null)),
                         caustics::JsonNullValueFilter::AnyNull => Condition::all().add(sea_query::Expr::cust_with_values(
                             &format!("({} IS NULL OR {} = 'null')", <Entity as EntityTrait>::Column::#pascal_name.to_string(), <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                             Vec::<sea_orm::Value>::new()
@@ -1847,7 +1847,7 @@ fn generate_json_field_handler(
                 caustics::FieldOp::JsonNull(flag) => {
                     match flag {
                         caustics::JsonNullValueFilter::DbNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
-                        caustics::JsonNullValueFilter::JsonNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(serde_json::Value::Null)),
+                        caustics::JsonNullValueFilter::JsonNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(caustics::serde_json::Value::Null)),
                         caustics::JsonNullValueFilter::AnyNull => Condition::all().add(sea_query::Expr::cust_with_values(
                             &format!("({} IS NULL OR {} = 'null')", <Entity as EntityTrait>::Column::#pascal_name.to_string(), <Entity as EntityTrait>::Column::#pascal_name.to_string()),
                             Vec::<sea_orm::Value>::new()

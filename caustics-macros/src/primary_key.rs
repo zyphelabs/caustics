@@ -122,20 +122,20 @@ pub fn extract_primary_key_info(fields: &[&Field]) -> Option<PrimaryKeyInfo> {
 /// Get primary key field name - panics if no primary key is found
 pub fn get_primary_key_field_name(fields: &[&Field]) -> String {
     extract_primary_key_info(fields)
-        .map(|info| info.field_name)
+        .map(|info| info.field_name().to_string())
         .expect("No primary key field found in entity. Please ensure at least one field is marked as primary key or named 'id'.")
 }
 
 /// Get primary key column name - panics if no primary key is found
 pub fn get_primary_key_column_name(fields: &[&Field]) -> String {
     extract_primary_key_info(fields)
-        .map(|info| info.column_name)
+        .map(|info| info.column_name().to_string())
         .expect("No primary key field found in entity. Please ensure at least one field is marked as primary key or named 'id'.")
 }
 
 /// Get primary key field identifier - panics if no primary key is found
 pub fn get_primary_key_field_ident(fields: &[&Field]) -> proc_macro2::Ident {
     extract_primary_key_info(fields)
-        .map(|info| info.field_ident)
+        .map(|info| info.field_ident().clone())
         .expect("No primary key field found in entity. Please ensure at least one field is marked as primary key or named 'id'.")
 }

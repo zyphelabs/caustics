@@ -10,7 +10,6 @@ sea-orm = { version = "1.1", features = ["sqlx-sqlite", "runtime-tokio-rustls", 
 sea-query = "0.32"
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 
@@ -22,3 +21,7 @@ env_logger = "0.11"
 
 [build-dependencies]
 caustics-build = { path = "../../caustics-build" }
+
+[lib]
+crate-type = ["lib"]
+path = "src/lib.rs"

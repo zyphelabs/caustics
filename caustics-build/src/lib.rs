@@ -61,18 +61,18 @@ fn type_id_to_string(type_id: std::any::TypeId) -> String {
         "str".to_string()
     } else if type_id == std::any::TypeId::of::<bool>() {
         "bool".to_string()
-    } else if type_id == std::any::TypeId::of::<uuid::Uuid>() {
-        "uuid::Uuid".to_string()
-    } else if type_id == std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>() {
-        "chrono::DateTime<chrono::Utc>".to_string()
-    } else if type_id == std::any::TypeId::of::<chrono::NaiveDateTime>() {
-        "chrono::NaiveDateTime".to_string()
-    } else if type_id == std::any::TypeId::of::<chrono::NaiveDate>() {
-        "chrono::NaiveDate".to_string()
-    } else if type_id == std::any::TypeId::of::<chrono::NaiveTime>() {
-        "chrono::NaiveTime".to_string()
-    } else if type_id == std::any::TypeId::of::<serde_json::Value>() {
-        "serde_json::Value".to_string()
+    } else if type_id == std::any::TypeId::of::<caustics::uuid::Uuid>() {
+        "caustics::uuid::Uuid".to_string()
+    } else if type_id == std::any::TypeId::of::<caustics::chrono::DateTime<caustics::chrono::Utc>>() {
+        "caustics::chrono::DateTime<caustics::chrono::Utc>".to_string()
+    } else if type_id == std::any::TypeId::of::<caustics::chrono::NaiveDateTime>() {
+        "caustics::chrono::NaiveDateTime".to_string()
+    } else if type_id == std::any::TypeId::of::<caustics::chrono::NaiveDate>() {
+        "caustics::chrono::NaiveDate".to_string()
+    } else if type_id == std::any::TypeId::of::<caustics::chrono::NaiveTime>() {
+        "caustics::chrono::NaiveTime".to_string()
+    } else if type_id == std::any::TypeId::of::<caustics::serde_json::Value>() {
+        "caustics::serde_json::Value".to_string()
     } else {
         panic!("Unsupported TypeId in code generation: {:?}", type_id);
     }
@@ -108,17 +108,17 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
                     "bool" => std::any::TypeId::of::<bool>(),
 
                     // UUID type
-                    "Uuid" => std::any::TypeId::of::<uuid::Uuid>(),
+                    "Uuid" => std::any::TypeId::of::<caustics::uuid::Uuid>(),
 
                     // DateTime types
-                    "DateTime" => std::any::TypeId::of::<chrono::DateTime<chrono::Utc>>(),
-                    "NaiveDateTime" => std::any::TypeId::of::<chrono::NaiveDateTime>(),
-                    "NaiveDate" => std::any::TypeId::of::<chrono::NaiveDate>(),
-                    "NaiveTime" => std::any::TypeId::of::<chrono::NaiveTime>(),
+                    "DateTime" => std::any::TypeId::of::<caustics::chrono::DateTime<caustics::chrono::Utc>>(),
+                    "NaiveDateTime" => std::any::TypeId::of::<caustics::chrono::NaiveDateTime>(),
+                    "NaiveDate" => std::any::TypeId::of::<caustics::chrono::NaiveDate>(),
+                    "NaiveTime" => std::any::TypeId::of::<caustics::chrono::NaiveTime>(),
 
                     // JSON type
-                    "Value" => std::any::TypeId::of::<serde_json::Value>(),
-                    "Json" => std::any::TypeId::of::<serde_json::Value>(),
+                    "Value" => std::any::TypeId::of::<caustics::serde_json::Value>(),
+                    "Json" => std::any::TypeId::of::<caustics::serde_json::Value>(),
 
                     // Option types - handle Option<T> by extracting the inner type
                     "Option" => {
@@ -612,7 +612,7 @@ fn generate_client_code(
         merge_into,
     ) = (
         quote! {
-            use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+            use caustics::sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
         },
         quote! { caustics::EntityRegistry<C> },
         quote! { caustics::EntityFetcher },
@@ -778,24 +778,24 @@ fn generate_client_code(
         #[allow(dead_code)]
         pub struct CausticsClient {
             db: std::sync::Arc<DatabaseConnection>,
-            database_backend: sea_orm::DatabaseBackend,
+            database_backend: caustics::sea_orm::DatabaseBackend,
         }
 
         #raw_block
 
         pub struct RawQuery<T> {
             db: std::sync::Arc<DatabaseConnection>,
-            backend: sea_orm::DatabaseBackend,
+            backend: caustics::sea_orm::DatabaseBackend,
             raw: Raw,
             _marker: std::marker::PhantomData<T>,
         }
 
         impl<T> RawQuery<T> {
-            pub async fn exec(self) -> Result<Vec<T>, sea_orm::DbErr>
+            pub async fn exec(self) -> Result<Vec<T>, caustics::sea_orm::DbErr>
             where
-                T: sea_orm::FromQueryResult + Send + Sync + 'static,
+                T: caustics::sea_orm::FromQueryResult + Send + Sync + 'static,
             {
-                use sea_orm::{Statement, SelectorRaw, SelectModel};
+                use caustics::sea_orm::{Statement, SelectorRaw, SelectModel};
                 let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
                 let rows = SelectorRaw::<SelectModel<T>>::from_statement(stmt).all(self.db.as_ref()).await?;
                 Ok(rows)
@@ -804,13 +804,13 @@ fn generate_client_code(
 
         pub struct RawExecute {
             db: std::sync::Arc<DatabaseConnection>,
-            backend: sea_orm::DatabaseBackend,
+            backend: caustics::sea_orm::DatabaseBackend,
             raw: Raw,
         }
 
         impl RawExecute {
-            pub async fn exec(self) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
-                use sea_orm::{Statement, ConnectionTrait};
+            pub async fn exec(self) -> Result<caustics::sea_orm::ExecResult, caustics::sea_orm::DbErr> {
+                use caustics::sea_orm::{Statement, ConnectionTrait};
                 let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
                 let res = self.db.execute(stmt).await?;
                 Ok(res)
@@ -820,18 +820,18 @@ fn generate_client_code(
         #[allow(dead_code)]
         pub struct TransactionCausticsClient {
             tx: std::sync::Arc<DatabaseTransaction>,
-            database_backend: sea_orm::DatabaseBackend,
+            database_backend: caustics::sea_orm::DatabaseBackend,
         }
 
         pub struct TransactionBuilder {
             db: std::sync::Arc<DatabaseConnection>,
-            database_backend: sea_orm::DatabaseBackend,
+            database_backend: caustics::sea_orm::DatabaseBackend,
         }
 
         // Composite Entity Registry for relation fetching
         pub struct CompositeEntityRegistry;
 
-        impl<C: sea_orm::ConnectionTrait> #registry_trait for CompositeEntityRegistry {
+        impl<C: caustics::sea_orm::ConnectionTrait> #registry_trait for CompositeEntityRegistry {
             fn get_fetcher(&self, entity_name: &str) -> Option<&dyn #fetcher_trait<C>> {
                 match entity_name {
                     #(#registry_match_arms)*
@@ -842,7 +842,7 @@ fn generate_client_code(
         }
 
         // Implement for reference so &REGISTRY works as a trait object
-        impl<C: sea_orm::ConnectionTrait> #registry_trait for &'static CompositeEntityRegistry {
+        impl<C: caustics::sea_orm::ConnectionTrait> #registry_trait for &'static CompositeEntityRegistry {
             fn get_fetcher(&self, entity_name: &str) -> Option<&dyn #fetcher_trait<C>> {
                 (**self).get_fetcher(entity_name)
             }
@@ -1083,86 +1083,86 @@ fn generate_client_code(
             entity: &str,
             field: &str,
             key: caustics::CausticsKey,
-        ) -> Result<sea_orm::Value, String> {
+        ) -> Result<caustics::sea_orm::Value, String> {
             // Convert using the registry
             let converted = __caustics_convert_and_downcast(entity, field, key)?;
 
-            // Get the field type to determine how to convert to sea_orm::Value
+            // Get the field type to determine how to convert to caustics::sea_orm::Value
             let field_type = __caustics_get_field_type(entity, field)
                 .ok_or_else(|| format!("No type information found for field {} in entity {}", field, entity))?;
 
-            // Convert to sea_orm::Value based on the actual field type
+            // Convert to caustics::sea_orm::Value based on the actual field type
             match field_type {
                 "i8" => {
-                    converted.downcast::<i8>().map(|v| sea_orm::Value::TinyInt(Some(*v)))
+                    converted.downcast::<i8>().map(|v| caustics::sea_orm::Value::TinyInt(Some(*v)))
                         .map_err(|_| "Failed to downcast to i8".to_string())
                 },
                 "i16" => {
-                    converted.downcast::<i16>().map(|v| sea_orm::Value::SmallInt(Some(*v)))
+                    converted.downcast::<i16>().map(|v| caustics::sea_orm::Value::SmallInt(Some(*v)))
                         .map_err(|_| "Failed to downcast to i16".to_string())
                 },
                 "i32" => {
-                    converted.downcast::<i32>().map(|v| sea_orm::Value::Int(Some(*v)))
+                    converted.downcast::<i32>().map(|v| caustics::sea_orm::Value::Int(Some(*v)))
                         .map_err(|_| "Failed to downcast to i32".to_string())
                 },
                 "i64" => {
-                    converted.downcast::<i64>().map(|v| sea_orm::Value::BigInt(Some(*v)))
+                    converted.downcast::<i64>().map(|v| caustics::sea_orm::Value::BigInt(Some(*v)))
                         .map_err(|_| "Failed to downcast to i64".to_string())
                 },
                 "u8" => {
-                    converted.downcast::<u8>().map(|v| sea_orm::Value::TinyUnsigned(Some(*v)))
+                    converted.downcast::<u8>().map(|v| caustics::sea_orm::Value::TinyUnsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u8".to_string())
                 },
                 "u16" => {
-                    converted.downcast::<u16>().map(|v| sea_orm::Value::SmallUnsigned(Some(*v)))
+                    converted.downcast::<u16>().map(|v| caustics::sea_orm::Value::SmallUnsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u16".to_string())
                 },
                 "u32" => {
-                    converted.downcast::<u32>().map(|v| sea_orm::Value::Unsigned(Some(*v)))
+                    converted.downcast::<u32>().map(|v| caustics::sea_orm::Value::Unsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u32".to_string())
                 },
                 "u64" => {
-                    converted.downcast::<u64>().map(|v| sea_orm::Value::BigUnsigned(Some(*v)))
+                    converted.downcast::<u64>().map(|v| caustics::sea_orm::Value::BigUnsigned(Some(*v)))
                         .map_err(|_| "Failed to downcast to u64".to_string())
                 },
                 "f32" => {
-                    converted.downcast::<f32>().map(|v| sea_orm::Value::Float(Some(*v)))
+                    converted.downcast::<f32>().map(|v| caustics::sea_orm::Value::Float(Some(*v)))
                         .map_err(|_| "Failed to downcast to f32".to_string())
                 },
                 "f64" => {
-                    converted.downcast::<f64>().map(|v| sea_orm::Value::Double(Some(*v)))
+                    converted.downcast::<f64>().map(|v| caustics::sea_orm::Value::Double(Some(*v)))
                         .map_err(|_| "Failed to downcast to f64".to_string())
                 },
                 "String" | "str" => {
-                    converted.downcast::<String>().map(|v| sea_orm::Value::String(Some(Box::new(*v))))
+                    converted.downcast::<String>().map(|v| caustics::sea_orm::Value::String(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to String".to_string())
                 },
                 "bool" => {
-                    converted.downcast::<bool>().map(|v| sea_orm::Value::Bool(Some(*v)))
+                    converted.downcast::<bool>().map(|v| caustics::sea_orm::Value::Bool(Some(*v)))
                         .map_err(|_| "Failed to downcast to bool".to_string())
                 },
-                "uuid::Uuid" => {
-                    converted.downcast::<uuid::Uuid>().map(|v| sea_orm::Value::Uuid(Some(Box::new(*v))))
+                "caustics::uuid::Uuid" => {
+                    converted.downcast::<caustics::uuid::Uuid>().map(|v| caustics::sea_orm::Value::Uuid(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to Uuid".to_string())
                 },
-                "chrono::DateTime<chrono::Utc>" => {
-                    converted.downcast::<chrono::DateTime<chrono::Utc>>().map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(v)))
+                "caustics::chrono::DateTime<caustics::chrono::Utc>" => {
+                    converted.downcast::<caustics::chrono::DateTime<caustics::chrono::Utc>>().map(|v| caustics::sea_orm::Value::ChronoDateTimeUtc(Some(v)))
                         .map_err(|_| "Failed to downcast to DateTime<Utc>".to_string())
                 },
-                "chrono::NaiveDateTime" => {
-                    converted.downcast::<chrono::NaiveDateTime>().map(|v| sea_orm::Value::ChronoDateTime(Some(v)))
+                "caustics::chrono::NaiveDateTime" => {
+                    converted.downcast::<caustics::chrono::NaiveDateTime>().map(|v| caustics::sea_orm::Value::ChronoDateTime(Some(v)))
                         .map_err(|_| "Failed to downcast to NaiveDateTime".to_string())
                 },
-                "chrono::NaiveDate" => {
-                    converted.downcast::<chrono::NaiveDate>().map(|v| sea_orm::Value::ChronoDate(Some(Box::new(*v))))
+                "caustics::chrono::NaiveDate" => {
+                    converted.downcast::<caustics::chrono::NaiveDate>().map(|v| caustics::sea_orm::Value::ChronoDate(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to NaiveDate".to_string())
                 },
-                "chrono::NaiveTime" => {
-                    converted.downcast::<chrono::NaiveTime>().map(|v| sea_orm::Value::ChronoTime(Some(Box::new(*v))))
+                "caustics::chrono::NaiveTime" => {
+                    converted.downcast::<caustics::chrono::NaiveTime>().map(|v| caustics::sea_orm::Value::ChronoTime(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to NaiveTime".to_string())
                 },
-                "serde_json::Value" => {
-                    converted.downcast::<serde_json::Value>().map(|v| sea_orm::Value::Json(Some(v)))
+                "caustics::serde_json::Value" => {
+                    converted.downcast::<caustics::serde_json::Value>().map(|v| caustics::sea_orm::Value::Json(Some(v)))
                         .map_err(|_| "Failed to downcast to Json".to_string())
                 },
                 _ => {
@@ -1199,56 +1199,56 @@ fn generate_client_code(
                     match type_id {
                         "i8" => {
                         if let Ok(v) = converted.downcast::<i8>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i8 for field {}", field);
                         }
                         },
                         "i16" => {
                         if let Ok(v) = converted.downcast::<i16>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i16 for field {}", field);
                         }
                         },
                         "i32" => {
                         if let Ok(v) = converted.downcast::<i32>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i32 for field {}", field);
                         }
                         },
                         "i64" => {
                         if let Ok(v) = converted.downcast::<i64>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to i64 for field {}", field);
                         }
                         },
                         "u8" => {
                         if let Ok(v) = converted.downcast::<u8>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u8 for field {}", field);
                         }
                         },
                         "u16" => {
                         if let Ok(v) = converted.downcast::<u16>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u16 for field {}", field);
                         }
                         },
                         "u32" => {
                         if let Ok(v) = converted.downcast::<u32>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u32 for field {}", field);
                         }
                         },
                         "u64" => {
                         if let Ok(v) = converted.downcast::<u64>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to u64 for field {}", field);
                         }
@@ -1256,14 +1256,14 @@ fn generate_client_code(
                         "String" | "str" => {
                         if let Ok(v) = converted.downcast::<String>() {
                                 let string_value = *v;
-                                Box::new(sea_orm::ActiveValue::Set(string_value))
+                                Box::new(caustics::sea_orm::ActiveValue::Set(string_value))
                         } else {
                             panic!("Failed to downcast to String for field {}", field);
                         }
                         },
-                        "uuid::Uuid" => {
-                        if let Ok(v) = converted.downcast::<uuid::Uuid>() {
-                            Box::new(sea_orm::ActiveValue::Set(*v))
+                        "caustics::uuid::Uuid" => {
+                        if let Ok(v) = converted.downcast::<caustics::uuid::Uuid>() {
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to Uuid for field {}", field);
                         }
@@ -1292,35 +1292,35 @@ fn generate_client_code(
             // Return the appropriate ActiveValue based on field type
             match field_type {
                 "i8" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i8>().expect("Failed to convert to i8")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<i8>().expect("Failed to convert to i8")))
                 },
                 "i16" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i16>().expect("Failed to convert to i16")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<i16>().expect("Failed to convert to i16")))
                 },
                 "i32" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i32>().expect("Failed to convert to i32")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<i32>().expect("Failed to convert to i32")))
                 },
                 "i64" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<i64>().expect("Failed to convert to i64")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<i64>().expect("Failed to convert to i64")))
                 },
                 "u8" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u8>().expect("Failed to convert to u8")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<u8>().expect("Failed to convert to u8")))
                 },
                 "u16" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u16>().expect("Failed to convert to u16")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<u16>().expect("Failed to convert to u16")))
                 },
                 "u32" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u32>().expect("Failed to convert to u32")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<u32>().expect("Failed to convert to u32")))
                 },
                 "u64" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<u64>().expect("Failed to convert to u64")))
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<u64>().expect("Failed to convert to u64")))
                 },
                 "String" | "str" => {
                     let string_value = *converted.downcast::<String>().expect("Failed to convert to String");
-                    Box::new(sea_orm::ActiveValue::Set(string_value))
+                    Box::new(caustics::sea_orm::ActiveValue::Set(string_value))
                 },
-                "uuid::Uuid" => {
-                Box::new(sea_orm::ActiveValue::Set(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid")))
+                "caustics::uuid::Uuid" => {
+                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<caustics::uuid::Uuid>().expect("Failed to convert to Uuid")))
                 },
                 _ => {
                     panic!("Unsupported foreign key type '{}' for field {} in entity {}", field_type, field, entity);
@@ -1341,35 +1341,35 @@ fn generate_client_code(
             // Return the appropriate ActiveValue with Some() wrapper for optional fields
             match field_type {
                 "i8" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i8>().expect("Failed to convert to i8"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<i8>().expect("Failed to convert to i8"))))
                 },
                 "i16" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i16>().expect("Failed to convert to i16"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<i16>().expect("Failed to convert to i16"))))
                 },
                 "i32" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i32>().expect("Failed to convert to i32"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<i32>().expect("Failed to convert to i32"))))
                 },
                 "i64" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<i64>().expect("Failed to convert to i64"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<i64>().expect("Failed to convert to i64"))))
                 },
                 "u8" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u8>().expect("Failed to convert to u8"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<u8>().expect("Failed to convert to u8"))))
                 },
                 "u16" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u16>().expect("Failed to convert to u16"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<u16>().expect("Failed to convert to u16"))))
                 },
                 "u32" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u32>().expect("Failed to convert to u32"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<u32>().expect("Failed to convert to u32"))))
                 },
                 "u64" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<u64>().expect("Failed to convert to u64"))))
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<u64>().expect("Failed to convert to u64"))))
                 },
                 "String" | "str" => {
                     let string_value = *converted.downcast::<String>().expect("Failed to convert to String");
-                    Box::new(sea_orm::ActiveValue::Set(Some(string_value)))
+                    Box::new(caustics::sea_orm::ActiveValue::Set(Some(string_value)))
                 },
-                "uuid::Uuid" => {
-                Box::new(sea_orm::ActiveValue::Set(Some(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid"))))
+                "caustics::uuid::Uuid" => {
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<caustics::uuid::Uuid>().expect("Failed to convert to Uuid"))))
                 },
                 _ => {
                     panic!("Unsupported foreign key type '{}' for field {} in entity {}", field_type, field, entity);
@@ -1380,7 +1380,7 @@ fn generate_client_code(
         #[allow(dead_code)]
         impl CausticsClient {
             pub fn new(db: DatabaseConnection) -> Self {
-                use sea_orm::ConnectionTrait;
+                use caustics::sea_orm::ConnectionTrait;
                 let database_backend = db.get_database_backend();
                 Self {
                     db: std::sync::Arc::new(db),
@@ -1392,7 +1392,7 @@ fn generate_client_code(
                 self.db.clone()
             }
 
-            pub fn database_backend(&self) -> sea_orm::DatabaseBackend {
+            pub fn database_backend(&self) -> caustics::sea_orm::DatabaseBackend {
                 self.database_backend
             }
 
@@ -1420,14 +1420,14 @@ fn generate_client_code(
             pub async fn _batch<'a, Entity, ActiveModel, ModelWithRelations, T, Container>(
                 &self,
                 queries: Container,
-            ) -> Result<Container::ReturnType, sea_orm::DbErr>
+            ) -> Result<Container::ReturnType, caustics::sea_orm::DbErr>
             where
-                Entity: sea_orm::EntityTrait,
-                ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
-                ModelWithRelations: #from_model<<Entity as sea_orm::EntityTrait>::Model>,
+                Entity: caustics::sea_orm::EntityTrait,
+                ActiveModel: caustics::sea_orm::ActiveModelTrait<Entity = Entity> + caustics::sea_orm::ActiveModelBehavior + Send + 'static,
+                ModelWithRelations: #from_model<<Entity as caustics::sea_orm::EntityTrait>::Model>,
                 T: #merge_into<ActiveModel>,
-                <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
-                Container: #batch_container<'a, sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, T>,
+                <Entity as caustics::sea_orm::EntityTrait>::Model: caustics::sea_orm::IntoActiveModel<ActiveModel>,
+                Container: #batch_container<'a, caustics::sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, T>,
             {
                 let txn = self.db.begin().await?;
                 let batch_queries = Container::into_queries(queries);
@@ -1469,7 +1469,7 @@ fn generate_client_code(
 
         #[allow(dead_code)]
         impl TransactionCausticsClient {
-            pub fn new(tx: std::sync::Arc<DatabaseTransaction>, database_backend: sea_orm::DatabaseBackend) -> Self {
+            pub fn new(tx: std::sync::Arc<DatabaseTransaction>, database_backend: caustics::sea_orm::DatabaseBackend) -> Self {
                 Self { tx, database_backend }
             }
 
@@ -1485,10 +1485,10 @@ fn generate_client_code(
             }
 
             // Transaction-scoped hook installer (overrides global while running in this thread)
-            pub fn with_hook<F, Fut, T>(&self, hook: std::sync::Arc<dyn #hooks_mod::QueryHook>, f: F) -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<T, sea_orm::DbErr>> + Send + '_>>
+            pub fn with_hook<F, Fut, T>(&self, hook: std::sync::Arc<dyn #hooks_mod::QueryHook>, f: F) -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<T, caustics::sea_orm::DbErr>> + Send + '_>>
             where
                 F: FnOnce(Self) -> Fut + Send + 'static,
-                Fut: std::future::Future<Output = Result<T, sea_orm::DbErr>> + Send + 'static,
+                Fut: std::future::Future<Output = Result<T, caustics::sea_orm::DbErr>> + Send + 'static,
                 T: Send + 'static,
             {
                 Box::pin(async move {
@@ -1504,17 +1504,17 @@ fn generate_client_code(
 
         pub struct TxRawQuery<T> {
             tx: std::sync::Arc<DatabaseTransaction>,
-            backend: sea_orm::DatabaseBackend,
+            backend: caustics::sea_orm::DatabaseBackend,
             raw: Raw,
             _marker: std::marker::PhantomData<T>,
         }
 
         impl<T> TxRawQuery<T> {
-            pub async fn exec(self) -> Result<Vec<T>, sea_orm::DbErr>
+            pub async fn exec(self) -> Result<Vec<T>, caustics::sea_orm::DbErr>
             where
-                T: sea_orm::FromQueryResult + Send + Sync + 'static,
+                T: caustics::sea_orm::FromQueryResult + Send + Sync + 'static,
             {
-                use sea_orm::{Statement, SelectorRaw, SelectModel};
+                use caustics::sea_orm::{Statement, SelectorRaw, SelectModel};
                 let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
                 let rows = SelectorRaw::<SelectModel<T>>::from_statement(stmt).all(self.tx.as_ref()).await?;
                 Ok(rows)
@@ -1523,13 +1523,13 @@ fn generate_client_code(
 
         pub struct TxRawExecute {
             tx: std::sync::Arc<DatabaseTransaction>,
-            backend: sea_orm::DatabaseBackend,
+            backend: caustics::sea_orm::DatabaseBackend,
             raw: Raw,
         }
 
         impl TxRawExecute {
-            pub async fn exec(self) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
-                use sea_orm::{Statement, ConnectionTrait};
+            pub async fn exec(self) -> Result<caustics::sea_orm::ExecResult, caustics::sea_orm::DbErr> {
+                use caustics::sea_orm::{Statement, ConnectionTrait};
                 let stmt = Statement::from_sql_and_values(self.backend, self.raw.sql, self.raw.params);
                 let res = self.tx.execute(stmt).await?;
                 Ok(res)
@@ -1537,10 +1537,10 @@ fn generate_client_code(
         }
 
         impl TransactionBuilder {
-            pub async fn run<F, Fut, T>(&self, f: F) -> Result<T, sea_orm::DbErr>
+            pub async fn run<F, Fut, T>(&self, f: F) -> Result<T, caustics::sea_orm::DbErr>
             where
                 F: FnOnce(TransactionCausticsClient) -> Fut,
-                Fut: std::future::Future<Output = Result<T, sea_orm::DbErr>>,
+                Fut: std::future::Future<Output = Result<T, caustics::sea_orm::DbErr>>,
             {
                 let tx = self.db.begin().await?;
                 let tx_arc = std::sync::Arc::new(tx);

@@ -5,6 +5,7 @@ members = [
     "caustics-build",
     "examples/blog",
     "examples/school",
-    "examples/library"
+    "examples/library",
+    "examples/dummy"
 ]
 resolver = "2" 

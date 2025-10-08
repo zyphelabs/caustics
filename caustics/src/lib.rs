@@ -3,6 +3,41 @@ pub mod key_types;
 pub mod query_builders;
 pub mod types;
 
+// Internal UUID re-export for macro use
+pub mod uuid {
+    pub use uuid::Uuid;
+}
+
+// Internal chrono re-export for macro use
+pub mod chrono {
+    pub use chrono::{DateTime, Utc, NaiveDateTime, NaiveDate, NaiveTime, FixedOffset};
+}
+
+// Internal serde_json re-export for macro use
+pub mod serde_json {
+    pub use serde_json::Value;
+}
+
+// Internal serde re-export for macro use
+pub mod serde {
+    pub use serde::{Serialize, Deserialize};
+}
+
+// Internal sea-query re-export for macro use
+pub mod sea_query {
+    pub use sea_query::{Condition, Expr, SimpleExpr};
+}
+
+// Internal sea-orm re-export for macro use
+pub mod sea_orm {
+    pub use sea_orm::{
+        DatabaseConnection, DatabaseTransaction, TransactionTrait, ConnectionTrait,
+        EntityTrait, ActiveModelTrait, ActiveModelBehavior, IntoActiveModel, FromQueryResult,
+        ExecResult, DbErr, DatabaseBackend, Statement, SelectorRaw, SelectModel,
+        Value, ActiveValue
+    };
+}
+
 pub use entity_metadata::*;
 pub use key_types::*;
 pub use query_builders::*;

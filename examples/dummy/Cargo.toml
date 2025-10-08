@@ -1,0 +1,16 @@
+[package]
+name = "dummy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+caustics = { path = "../../caustics" }
+caustics-macros = { path = "../../caustics-macros" }
+caustics-build = { path = "../../caustics-build" }
+
+[build-dependencies]
+caustics-build = { path = "../../caustics-build" }
+
+[lib]
+crate-type = ["lib"]
+path = "src/lib.rs"
