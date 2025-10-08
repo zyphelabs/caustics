@@ -718,6 +718,187 @@ impl ToSeaOrmValue for crate::CausticsKey {
     }
 }
 
+// Implement for Vec<T> where T implements ToSeaOrmValue
+impl<T: ToSeaOrmValue> ToSeaOrmValue for Vec<T> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        // For now, always convert to JSON for compatibility
+        // In the future, this could be made database-specific
+        let json_array: serde_json::Value = self.iter()
+            .map(|item| {
+                let sea_orm_value = item.to_sea_orm_value();
+                // Convert sea_orm::Value to serde_json::Value
+                match sea_orm_value {
+                    sea_orm::Value::TinyInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Int(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::TinyUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Unsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Float(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v as f64).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::Double(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::String(Some(v)) => serde_json::Value::String((*v).clone()),
+                    sea_orm::Value::Bool(Some(v)) => serde_json::Value::Bool(v),
+                    sea_orm::Value::Uuid(Some(v)) => serde_json::Value::String(v.to_string()),
+                    sea_orm::Value::ChronoDateTimeUtc(Some(v)) => serde_json::Value::String(v.to_rfc3339()),
+                    sea_orm::Value::ChronoDateTime(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::ChronoDate(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d").to_string()),
+                    sea_orm::Value::ChronoTime(Some(v)) => serde_json::Value::String(v.format("%H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::Json(Some(v)) => (*v).clone(),
+                    _ => serde_json::Value::Null,
+                }
+            })
+            .collect();
+        sea_orm::Value::Json(Some(Box::new(json_array)))
+    }
+}
+
+// Implement for &[T] where T implements ToSeaOrmValue
+impl<T: ToSeaOrmValue + Clone> ToSeaOrmValue for &[T] {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        self.to_vec().to_sea_orm_value()
+    }
+}
+
+// Implement for HashSet<T> where T implements ToSeaOrmValue
+impl<T: ToSeaOrmValue + std::hash::Hash + std::cmp::Eq> ToSeaOrmValue for std::collections::HashSet<T> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        let json_array: serde_json::Value = self.iter()
+            .map(|item| {
+                let sea_orm_value = item.to_sea_orm_value();
+                // Convert sea_orm::Value to serde_json::Value
+                match sea_orm_value {
+                    sea_orm::Value::TinyInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Int(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::TinyUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Unsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Float(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v as f64).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::Double(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::String(Some(v)) => serde_json::Value::String((*v).clone()),
+                    sea_orm::Value::Bool(Some(v)) => serde_json::Value::Bool(v),
+                    sea_orm::Value::Uuid(Some(v)) => serde_json::Value::String(v.to_string()),
+                    sea_orm::Value::ChronoDateTimeUtc(Some(v)) => serde_json::Value::String(v.to_rfc3339()),
+                    sea_orm::Value::ChronoDateTime(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::ChronoDate(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d").to_string()),
+                    sea_orm::Value::ChronoTime(Some(v)) => serde_json::Value::String(v.format("%H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::Json(Some(v)) => (*v).clone(),
+                    _ => serde_json::Value::Null,
+                }
+            })
+            .collect();
+        sea_orm::Value::Json(Some(Box::new(json_array)))
+    }
+}
+
+// Implement for BTreeSet<T> where T implements ToSeaOrmValue
+impl<T: ToSeaOrmValue + std::cmp::Ord> ToSeaOrmValue for std::collections::BTreeSet<T> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        let json_array: serde_json::Value = self.iter()
+            .map(|item| {
+                let sea_orm_value = item.to_sea_orm_value();
+                // Convert sea_orm::Value to serde_json::Value
+                match sea_orm_value {
+                    sea_orm::Value::TinyInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Int(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::TinyUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Unsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Float(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v as f64).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::Double(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::String(Some(v)) => serde_json::Value::String((*v).clone()),
+                    sea_orm::Value::Bool(Some(v)) => serde_json::Value::Bool(v),
+                    sea_orm::Value::Uuid(Some(v)) => serde_json::Value::String(v.to_string()),
+                    sea_orm::Value::ChronoDateTimeUtc(Some(v)) => serde_json::Value::String(v.to_rfc3339()),
+                    sea_orm::Value::ChronoDateTime(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::ChronoDate(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d").to_string()),
+                    sea_orm::Value::ChronoTime(Some(v)) => serde_json::Value::String(v.format("%H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::Json(Some(v)) => (*v).clone(),
+                    _ => serde_json::Value::Null,
+                }
+            })
+            .collect();
+        sea_orm::Value::Json(Some(Box::new(json_array)))
+    }
+}
+
+// Implement for HashMap<K, V> where V implements ToSeaOrmValue
+impl<K: ToString, V: ToSeaOrmValue> ToSeaOrmValue for std::collections::HashMap<K, V> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        let json_object: serde_json::Value = self.iter()
+            .map(|(k, v)| {
+                let key = k.to_string();
+                let sea_orm_value = v.to_sea_orm_value();
+                let value = match sea_orm_value {
+                    sea_orm::Value::TinyInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Int(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::TinyUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Unsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Float(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v as f64).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::Double(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::String(Some(v)) => serde_json::Value::String((*v).clone()),
+                    sea_orm::Value::Bool(Some(v)) => serde_json::Value::Bool(v),
+                    sea_orm::Value::Uuid(Some(v)) => serde_json::Value::String(v.to_string()),
+                    sea_orm::Value::ChronoDateTimeUtc(Some(v)) => serde_json::Value::String(v.to_rfc3339()),
+                    sea_orm::Value::ChronoDateTime(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::ChronoDate(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d").to_string()),
+                    sea_orm::Value::ChronoTime(Some(v)) => serde_json::Value::String(v.format("%H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::Json(Some(v)) => (*v).clone(),
+                    _ => serde_json::Value::Null,
+                };
+                (key, value)
+            })
+            .collect();
+        sea_orm::Value::Json(Some(Box::new(json_object)))
+    }
+}
+
+// Implement for BTreeMap<K, V> where V implements ToSeaOrmValue
+impl<K: ToString, V: ToSeaOrmValue> ToSeaOrmValue for std::collections::BTreeMap<K, V> {
+    fn to_sea_orm_value(&self) -> sea_orm::Value {
+        let json_object: serde_json::Value = self.iter()
+            .map(|(k, v)| {
+                let key = k.to_string();
+                let sea_orm_value = v.to_sea_orm_value();
+                let value = match sea_orm_value {
+                    sea_orm::Value::TinyInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Int(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigInt(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::TinyUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::SmallUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Unsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::BigUnsigned(Some(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                    sea_orm::Value::Float(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v as f64).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::Double(Some(v)) => serde_json::Value::Number(serde_json::Number::from_f64(v).unwrap_or(serde_json::Number::from(0))),
+                    sea_orm::Value::String(Some(v)) => serde_json::Value::String((*v).clone()),
+                    sea_orm::Value::Bool(Some(v)) => serde_json::Value::Bool(v),
+                    sea_orm::Value::Uuid(Some(v)) => serde_json::Value::String(v.to_string()),
+                    sea_orm::Value::ChronoDateTimeUtc(Some(v)) => serde_json::Value::String(v.to_rfc3339()),
+                    sea_orm::Value::ChronoDateTime(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::ChronoDate(Some(v)) => serde_json::Value::String(v.format("%Y-%m-%d").to_string()),
+                    sea_orm::Value::ChronoTime(Some(v)) => serde_json::Value::String(v.format("%H:%M:%S%.3f").to_string()),
+                    sea_orm::Value::Json(Some(v)) => (*v).clone(),
+                    _ => serde_json::Value::Null,
+                };
+                (key, value)
+            })
+            .collect();
+        sea_orm::Value::Json(Some(Box::new(json_object)))
+    }
+}
+
 // Implement for sea_orm::Value itself
 impl ToSeaOrmValue for sea_orm::Value {
     fn to_sea_orm_value(&self) -> sea_orm::Value {

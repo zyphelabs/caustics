@@ -18,6 +18,9 @@ pub mod prelude {
     pub use sea_orm::entity::prelude::*;
     pub use sea_orm::sea_query::{Condition, Expr, SimpleExpr};
     pub use heck::{ToSnakeCase, ToPascalCase};
+    
+    // Re-export caustics traits
+    pub use crate::ToSeaOrmValue;
 }
 
 pub mod hooks {

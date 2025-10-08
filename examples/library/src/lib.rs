@@ -72,6 +72,7 @@ mod tests {
         // Create a book with the author
         let book = book_client.create(
             "Test Book".to_string(),
+            vec!["Fantasy".to_string(), "Science Fiction".to_string()],
             now,
             now,
             author::id::equals(author.id),
@@ -81,6 +82,7 @@ mod tests {
         // Verify the book was created with correct field mapping
         assert_eq!(book.title, "Test Book");
         assert_eq!(book.author_id, author.id);
+        assert_eq!(book.genres, vec!["Fantasy".to_string(), "Science Fiction".to_string()]);
 
         // Test querying with camelCase column names
         let found_author = author_client.find_unique(author::id::equals(author.id))
@@ -97,6 +99,7 @@ mod tests {
 
         assert_eq!(author_books.len(), 1);
         assert_eq!(author_books[0].title, "Test Book");
+        assert_eq!(author_books[0].genres, vec!["Fantasy".to_string(), "Science Fiction".to_string()]);
 
         // Test that the camelCase column names are working by checking the database schema
         // This verifies that caustics correctly maps the field names to the database column names

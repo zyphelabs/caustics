@@ -53,6 +53,8 @@ pub mod book {
         pub id: Uuid,
         #[sea_orm(column_name = "bookTitle")]
         pub title: String,
+        #[sea_orm(column_name = "genres", column_type = "Json")]
+        pub genres: Vec<String>,
         #[sea_orm(column_name = "authorId")]
         pub author_id: Uuid,
         #[sea_orm(column_name = "createdAt")]

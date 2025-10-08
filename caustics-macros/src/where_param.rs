@@ -531,6 +531,20 @@ fn generate_where_params_to_condition_function(
                     is_primary_key,
                 ));
             }
+            FieldType::Vec => {
+                field_handlers.push(generate_vec_field_handler(
+                    &pascal_name,
+                    false,
+                    is_primary_key,
+                ));
+            }
+            FieldType::OptionVec => {
+                field_handlers.push(generate_vec_field_handler(
+                    &pascal_name,
+                    true,
+                    is_primary_key,
+                ));
+            }
             FieldType::Other => {
                 field_handlers.push(generate_generic_field_handler(&pascal_name, is_primary_key));
             }
@@ -910,6 +924,8 @@ pub enum FieldType {
     OptionUuid,
     Json,
     OptionJson,
+    Vec,
+    OptionVec,
     Other,
 }
 
@@ -929,6 +945,7 @@ pub fn detect_field_type(ty: &syn::Type) -> FieldType {
                     "NaiveDateTime" => FieldType::DateTime,
                     "NaiveDate" => FieldType::DateTime,
                     "Value" => FieldType::Json, // serde_json::Value
+                    "Vec" => FieldType::Vec, // Vec<T> fields - database-specific handling
                     "Option" => {
                         // Handle Option<T> types
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
@@ -941,6 +958,7 @@ pub fn detect_field_type(ty: &syn::Type) -> FieldType {
                                     FieldType::DateTime => FieldType::OptionDateTime,
                                     FieldType::Uuid => FieldType::OptionUuid,
                                     FieldType::Json => FieldType::OptionJson,
+                                    FieldType::Vec => FieldType::OptionVec,
                                     _ => FieldType::Other,
                                 }
                             } else {
@@ -1443,6 +1461,213 @@ fn generate_uuid_field_handler(
     }
 }
 
+/// Generate database-specific Vec field handler
+fn generate_vec_field_handler(
+    pascal_name: &proc_macro2::Ident,
+    is_nullable: bool,
+    is_primary_key: bool,
+) -> proc_macro2::TokenStream {
+    if is_nullable {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                caustics::FieldOp::Equals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v))
+                },
+                caustics::FieldOp::NotEquals(v) => {
+                    Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v))
+                },
+                caustics::FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                caustics::FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                caustics::FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                caustics::FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                caustics::FieldOp::InVec(vals) => {
+                    // Database-specific handling for Vec fields
+                    match database_backend {
+                        sea_orm::DatabaseBackend::Postgres => {
+                            // PostgreSQL: Use native array operators
+                            let mut conditions = Condition::any();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} @> ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        },
+                        _ => {
+                            // SQLite/MySQL: Use JSON functions
+                            let mut conditions = Condition::any();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("json_extract({}, '$') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        }
+                    }
+                },
+                caustics::FieldOp::NotInVec(vals) => {
+                    // Database-specific handling for Vec fields
+                    match database_backend {
+                        sea_orm::DatabaseBackend::Postgres => {
+                            // PostgreSQL: Use native array operators
+                            let mut conditions = Condition::all();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("NOT ({} @> ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        },
+                        _ => {
+                            // SQLite/MySQL: Use JSON functions
+                            let mut conditions = Condition::all();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("json_extract({}, '$') != ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        }
+                    }
+                },
+                caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
+                caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
+                // Vec-specific operations
+                caustics::FieldOp::JsonArrayContains(val) => {
+                    match database_backend {
+                        sea_orm::DatabaseBackend::Postgres => {
+                            Condition::all().add(
+                                sea_query::Expr::cust_with_values(
+                                    &format!("{} @> ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                    [val.to_sea_orm_value()]
+                                )
+                            )
+                        },
+                        _ => {
+                            Condition::all().add(
+                                sea_query::Expr::cust_with_values(
+                                    &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                    [sea_orm::Value::String(Some(Box::new(format!("%{}%", val))))]
+                                )
+                            )
+                        }
+                    }
+                },
+                // Catch-all for unsupported operations
+                _ => panic!("Unsupported FieldOp operation for Vec field type"),
+            }
+        }
+    } else {
+        quote! {
+            WhereParam::#pascal_name(op) => match op {
+                caustics::FieldOp::Equals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.eq(v)),
+                caustics::FieldOp::NotEquals(v) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.ne(v)),
+                caustics::FieldOp::Gt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gt(val)),
+                caustics::FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
+                caustics::FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
+                caustics::FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
+                caustics::FieldOp::InVec(vals) => {
+                    // Database-specific handling for Vec fields
+                    match database_backend {
+                        sea_orm::DatabaseBackend::Postgres => {
+                            // PostgreSQL: Use native array operators
+                            let mut conditions = Condition::any();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("{} @> ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        },
+                        _ => {
+                            // SQLite/MySQL: Use JSON functions
+                            let mut conditions = Condition::any();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("json_extract({}, '$') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        }
+                    }
+                },
+                caustics::FieldOp::NotInVec(vals) => {
+                    // Database-specific handling for Vec fields
+                    match database_backend {
+                        sea_orm::DatabaseBackend::Postgres => {
+                            // PostgreSQL: Use native array operators
+                            let mut conditions = Condition::all();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("NOT ({} @> ?)", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        },
+                        _ => {
+                            // SQLite/MySQL: Use JSON functions
+                            let mut conditions = Condition::all();
+                            for val in vals {
+                                conditions = conditions.add(
+                                    sea_query::Expr::cust_with_values(
+                                        &format!("json_extract({}, '$') != ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                        [val.clone()]
+                                    )
+                                );
+                            }
+                            Condition::all().add(conditions)
+                        }
+                    }
+                },
+                // Vec-specific operations
+                caustics::FieldOp::JsonArrayContains(val) => {
+                    match database_backend {
+                        sea_orm::DatabaseBackend::Postgres => {
+                            Condition::all().add(
+                                sea_query::Expr::cust_with_values(
+                                    &format!("{} @> ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                    [val.to_sea_orm_value()]
+                                )
+                            )
+                        },
+                        _ => {
+                            Condition::all().add(
+                                sea_query::Expr::cust_with_values(
+                                    &format!("json_extract({}, '$') LIKE ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                    [sea_orm::Value::String(Some(Box::new(format!("%{}%", val))))]
+                                )
+                            )
+                        }
+                    }
+                },
+                // Catch-all for unsupported operations
+                _ => panic!("Unsupported FieldOp operation for Vec field type"),
+            }
+        }
+    }
+}
+
 /// Generate database-agnostic JSON field handler
 fn generate_json_field_handler(
     pascal_name: &proc_macro2::Ident,
@@ -1462,8 +1687,32 @@ fn generate_json_field_handler(
                 caustics::FieldOp::Lt(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lt(val)),
                 caustics::FieldOp::Gte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.gte(val)),
                 caustics::FieldOp::Lte(val) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.lte(val)),
-                caustics::FieldOp::InVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_in(vals)),
-                caustics::FieldOp::NotInVec(vals) => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_in(vals)),
+                caustics::FieldOp::InVec(vals) => {
+                    // For JSON fields, we need to use JSON functions instead of IN operator
+                    let mut conditions = Condition::any();
+                    for val in vals {
+                        conditions = conditions.add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') = ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.clone()]
+                            )
+                        );
+                    }
+                    Condition::all().add(conditions)
+                },
+                caustics::FieldOp::NotInVec(vals) => {
+                    // For JSON fields, we need to use JSON functions instead of NOT IN operator
+                    let mut conditions = Condition::all();
+                    for val in vals {
+                        conditions = conditions.add(
+                            sea_query::Expr::cust_with_values(
+                                &format!("json_extract({}, '$') != ?", <Entity as EntityTrait>::Column::#pascal_name.to_string()),
+                                [val.clone()]
+                            )
+                        );
+                    }
+                    Condition::all().add(conditions)
+                },
                 caustics::FieldOp::IsNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_null()),
                 caustics::FieldOp::IsNotNull => Condition::all().add(<Entity as EntityTrait>::Column::#pascal_name.is_not_null()),
                 // JSON-specific operations - use database-agnostic SQL
