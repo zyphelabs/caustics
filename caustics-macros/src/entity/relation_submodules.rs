@@ -50,9 +50,9 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
 
         // Generate disconnect only for optional belongs_to (nullable FK on current entity)
         let disconnect_fn = if matches!(relation.kind, RelationKind::BelongsTo)
-            && relation.foreign_key_field.is_some()
+            && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
         {
-            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+            let fk_field_name = relation.get_first_fk_column_name();
             let is_optional = if let Some(field) = fields
                 .iter()
                 .find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name)
@@ -75,11 +75,13 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
         };
 
         // Get foreign key column information from relation metadata
-        let foreign_key_column_ident = match &relation.foreign_key_column {
-            Some(fk_col) => format_ident!("{}", fk_col.to_pascal_case()),
-            None => {
-                panic!("No foreign key column specified for relation '{}'.\n\nPlease add 'to' attribute with target column.\n\nExample:\n    #[sea_orm(\n        has_many = \"super::post::Entity\",\n        from = \"Column::UserId\",\n        to = \"super::post::Column::AuthorId\"\n    )]\n    posts: Vec<Post>,", relation.name)
-            }
+        let foreign_key_column_ident = if !relation.foreign_key_columns.is_empty() {
+            // Use the first foreign key column for composite keys
+            format_ident!("{}", relation.foreign_key_columns[0].to_pascal_case())
+        } else if let Some(fk_col) = &relation.foreign_key_column {
+            format_ident!("{}", fk_col.to_pascal_case())
+        } else {
+            panic!("No foreign key column specified for relation '{}'.\n\nPlease add 'to' attribute with target column.\n\nExample:\n    #[sea_orm(\n        has_many = \"super::post::Entity\",\n        from = \"Column::UserId\",\n        to = \"super::post::Column::AuthorId\"\n    )]\n    posts: Vec<Post>,", relation.name)
         };
 
         let order_by_relation_fn = if matches!(relation.kind, RelationKind::HasMany) {

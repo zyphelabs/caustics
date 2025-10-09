@@ -65,6 +65,21 @@ pub fn validate_foreign_key_column(
     }
 }
 
+/// Strictly validate that a relation has foreign key columns (for composite keys)
+/// Fails with clear error if no foreign key columns are specified
+pub fn validate_foreign_key_columns(
+    relation_name: &str,
+    foreign_key_columns: &[String],
+    span: Span,
+) -> Result<String, TokenStream> {
+    if foreign_key_columns.is_empty() {
+        Err(CausticsError::no_foreign_key_column(relation_name, span))
+    } else {
+        // Return the first foreign key column for backward compatibility
+        Ok(foreign_key_columns[0].clone())
+    }
+}
+
 /// Strictly validate that a relation has a primary key field specified
 /// Fails with clear error if no primary key field is specified
 pub fn validate_relation_primary_key(

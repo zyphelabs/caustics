@@ -560,15 +560,36 @@ fn generate_where_params_to_condition_function(
         let target = &relation.target;
 
         // Get the foreign key column identifier
-        let foreign_key_column_ident = match &relation.foreign_key_column {
-            Some(fk_col) => format_ident!("{}", fk_col.to_pascal_case()),
-            None => {
-                panic!("No foreign key column specified for relation '{}'.\n\nPlease add 'to' attribute with target column.\n\nExample:\n    #[sea_orm(\n        has_many = \"super::post::Entity\",\n        from = \"Column::UserId\",\n        to = \"super::post::Column::AuthorId\"\n    )]\n    posts: Vec<Post>,", relation.name)
+        // For BelongsTo relations, use the target entity's primary key column
+        // For HasMany relations, use the foreign key column from the target entity
+        let foreign_key_column_ident = match relation.kind {
+            crate::entity::RelationKind::BelongsTo => {
+                // For belongs_to, use the target entity's primary key column
+                if !relation.target_primary_key_columns.is_empty() {
+                    format_ident!("{}", relation.target_primary_key_columns[0].to_pascal_case())
+                } else if let Some(pk_field) = &relation.primary_key_field {
+                    format_ident!("{}", pk_field.to_pascal_case())
+                } else {
+                    panic!("No primary key column specified for relation '{}'.\n\nPlease add 'to' attribute with target column.\n\nExample:\n    #[sea_orm(\n        belongs_to = \"super::post::Entity\",\n        from = \"Column::UserId\",\n        to = \"super::post::Column::AuthorId\"\n    )]\n    posts: Vec<Post>,", relation.name)
+                }
+            }
+            crate::entity::RelationKind::HasMany => {
+                // For has_many, use the foreign key column from the target entity
+                if !relation.foreign_key_columns.is_empty() {
+                    format_ident!("{}", relation.foreign_key_columns[0].to_pascal_case())
+                } else if let Some(fk_col) = &relation.foreign_key_column {
+                    format_ident!("{}", fk_col.to_pascal_case())
+                } else {
+                    panic!("No foreign key column specified for relation '{}'.\n\nPlease add 'to' attribute with target column.\n\nExample:\n    #[sea_orm(\n        has_many = \"super::post::Entity\",\n        from = \"Column::UserId\",\n        to = \"super::post::Column::AuthorId\"\n    )]\n    posts: Vec<Post>,", relation.name)
+                }
             }
         };
 
         // Get the foreign key column name as string
-        let foreign_key_column_str = if let Some(fk_col) = &relation.foreign_key_column {
+        let foreign_key_column_str = if !relation.foreign_key_columns.is_empty() {
+            // Use the first foreign key column for composite keys
+            relation.foreign_key_columns[0].to_snake_case()
+        } else if let Some(fk_col) = &relation.foreign_key_column {
             // Convert PascalCase to snake_case for database column name
             fk_col.to_string().to_snake_case()
         } else if let Some(pk_field) = &relation.primary_key_field {

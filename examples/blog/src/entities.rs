@@ -8,7 +8,7 @@ pub mod user {
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "users")]
     pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false)]
+        #[sea_orm(primary_key, auto_increment = false, caustics_default)]
         pub id: Uuid,
         #[sea_orm(unique)]
         pub email: String,
@@ -49,7 +49,7 @@ pub mod post {
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "posts")]
     pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false)]
+        #[sea_orm(primary_key, auto_increment = false, caustics_default)]
         pub id: Uuid,
         pub title: String,
         #[sea_orm(nullable)]

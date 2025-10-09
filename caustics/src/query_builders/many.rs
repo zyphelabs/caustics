@@ -171,11 +171,11 @@ where
                 first_order
             };
 
-            // Inclusive comparator like PCR (cursor row included by default)
+            // Exclusive comparator for proper cursor pagination (cursor row excluded)
             let cmp_expr = match effective_order {
-                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
-                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lte(cursor_value.clone()),
-                _ => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
+                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
+                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lt(cursor_value.clone()),
+                _ => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
             };
 
             query = query.filter(Condition::all().add(cmp_expr));

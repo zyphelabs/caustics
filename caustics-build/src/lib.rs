@@ -61,8 +61,8 @@ fn type_id_to_string(type_id: std::any::TypeId) -> String {
         "str".to_string()
     } else if type_id == std::any::TypeId::of::<bool>() {
         "bool".to_string()
-    } else if type_id == std::any::TypeId::of::<caustics::uuid::Uuid>() {
-        "caustics::uuid::Uuid".to_string()
+    } else if type_id == std::any::TypeId::of::<uuid::Uuid>() {
+        "uuid::Uuid".to_string()
     } else if type_id == std::any::TypeId::of::<caustics::chrono::DateTime<caustics::chrono::Utc>>() {
         "caustics::chrono::DateTime<caustics::chrono::Utc>".to_string()
     } else if type_id == std::any::TypeId::of::<caustics::chrono::NaiveDateTime>() {
@@ -108,7 +108,7 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
                     "bool" => std::any::TypeId::of::<bool>(),
 
                     // UUID type
-                    "Uuid" => std::any::TypeId::of::<caustics::uuid::Uuid>(),
+                    "Uuid" => std::any::TypeId::of::<uuid::Uuid>(),
 
                     // DateTime types
                     "DateTime" => std::any::TypeId::of::<caustics::chrono::DateTime<caustics::chrono::Utc>>(),
@@ -151,12 +151,32 @@ fn get_type_id_from_ty(ty: &Type) -> std::any::TypeId {
     }
 }
 
+/// Extract type information from a syn::Type, detecting if it's Option<T> and returning the inner type
+fn extract_type_info(ty: &syn::Type) -> (syn::Type, bool) {
+    match ty {
+        syn::Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                if segment.ident == "Option" {
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                            return (inner_ty.clone(), true);
+                        }
+                    }
+                }
+            }
+            (ty.clone(), false)
+        }
+        _ => (ty.clone(), false),
+    }
+}
+
 /// Find the type of a field in a struct by looking through the struct definition
-fn find_field_type_in_struct(
+/// Returns (inner_type, is_optional)
+fn find_field_type_in_struct_with_optional(
     file: &syn::File,
     entity_name: &str,
     field_name: &str,
-) -> Option<String> {
+) -> Option<(String, bool)> {
     // Look for the Model struct within the module that matches the entity name
     for item in &file.items {
         if let Item::Mod(module) = item {
@@ -171,9 +191,8 @@ fn find_field_type_in_struct(
                                     if let Some(ident) = &field.ident {
                                         // Check if the field name matches directly
                                         if ident.to_string() == field_name {
-                                            return Some(type_id_to_string(get_type_id_from_ty(
-                                                &field.ty,
-                                            )));
+                                            let (inner_type, is_optional) = extract_type_info(&field.ty);
+                                            return Some((type_id_to_string(get_type_id_from_ty(&inner_type)), is_optional));
                                         }
 
                                         // Also check if the field has a column_name attribute that matches
@@ -202,13 +221,8 @@ fn find_field_type_in_struct(
                                                                                 + 1
                                                                                 + quote_end];
                                                                     if column_name == field_name {
-                                                                        return Some(
-                                                                            type_id_to_string(
-                                                                                get_type_id_from_ty(
-                                                                                    &field.ty,
-                                                                                ),
-                                                                            ),
-                                                                        );
+                                                                        let (inner_type, is_optional) = extract_type_info(&field.ty);
+                                                                        return Some((type_id_to_string(get_type_id_from_ty(&inner_type)), is_optional));
                                                                     }
                                                                 }
                                                             }
@@ -455,11 +469,13 @@ fn extract_entity_metadata(
                                             foreign_key_fields.push(fk_field.clone());
 
                                             // Find the type of this foreign key field by looking at the struct fields
-                                            if let Some(field_type) = find_field_type_in_struct(
+                                            if let Some((field_type, _is_optional)) = find_field_type_in_struct_with_optional(
                                                 &file,
                                                 entity_name,
                                                 fk_field,
                                             ) {
+                                                // Store the inner type, not the full type with Option<>
+                                                // The conversion functions expect just the inner type
                                                 foreign_key_types
                                                     .push((fk_field.clone(), field_type));
                                             }
@@ -730,6 +746,9 @@ fn generate_client_code(
 
         // Import heck traits for case conversion
         use caustics::prelude::ToPascalCase;
+        
+        // Import uuid crate for UUID types
+        use caustics::uuid;
 
         // Bring all extension traits into scope automatically (generated)
         #prelude_use
@@ -897,6 +916,9 @@ fn generate_client_code(
                         caustics::CausticsKey::NaiveDate(value) => Box::new(value),
                         caustics::CausticsKey::NaiveTime(value) => Box::new(value),
                         caustics::CausticsKey::Json(value) => Box::new(value),
+                        caustics::CausticsKey::Composite(_) | caustics::CausticsKey::OptionalComposite(_) => {
+                            panic!("Composite keys cannot be converted without metadata")
+                        }
                     }
                 }
             }
@@ -911,59 +933,17 @@ fn generate_client_code(
 
                     match field_type {
                         Some(type_id) => {
-                            // Use the unified conversion function
+                            // Use the unified conversion function for all types
                             caustics::convert_key_to_type_from_string::<()>(key, type_id)
                         },
                         None => {
-                            // No type info for this field, try to convert to the most appropriate type
-                            match key {
-                                caustics::CausticsKey::I8(value) => Box::new(value),
-                                caustics::CausticsKey::I16(value) => Box::new(value),
-                                caustics::CausticsKey::I32(value) => Box::new(value),
-                                caustics::CausticsKey::I64(value) => Box::new(value),
-                                caustics::CausticsKey::ISize(value) => Box::new(value),
-                                caustics::CausticsKey::U8(value) => Box::new(value),
-                                caustics::CausticsKey::U16(value) => Box::new(value),
-                                caustics::CausticsKey::U32(value) => Box::new(value),
-                                caustics::CausticsKey::U64(value) => Box::new(value),
-                                caustics::CausticsKey::USize(value) => Box::new(value),
-                                caustics::CausticsKey::F32(value) => Box::new(value),
-                                caustics::CausticsKey::F64(value) => Box::new(value),
-                                caustics::CausticsKey::String(value) => Box::new(value),
-                                caustics::CausticsKey::Bool(value) => Box::new(value),
-                                caustics::CausticsKey::Uuid(value) => Box::new(value),
-                                caustics::CausticsKey::DateTimeUtc(value) => Box::new(value),
-                                caustics::CausticsKey::NaiveDateTime(value) => Box::new(value),
-                                caustics::CausticsKey::NaiveDate(value) => Box::new(value),
-                                caustics::CausticsKey::NaiveTime(value) => Box::new(value),
-                                caustics::CausticsKey::Json(value) => Box::new(value),
-                            }
+                            // No type info for this field, use the unified conversion with generic type
+                            caustics::convert_key_to_type_from_string::<()>(key, "unknown")
                         }
                     }
                 } else {
-                    // No metadata available, return the key as-is
-                    match key {
-                        caustics::CausticsKey::I8(value) => Box::new(value),
-                        caustics::CausticsKey::I16(value) => Box::new(value),
-                        caustics::CausticsKey::I32(value) => Box::new(value),
-                        caustics::CausticsKey::I64(value) => Box::new(value),
-                        caustics::CausticsKey::ISize(value) => Box::new(value),
-                        caustics::CausticsKey::U8(value) => Box::new(value),
-                        caustics::CausticsKey::U16(value) => Box::new(value),
-                        caustics::CausticsKey::U32(value) => Box::new(value),
-                        caustics::CausticsKey::U64(value) => Box::new(value),
-                        caustics::CausticsKey::USize(value) => Box::new(value),
-                        caustics::CausticsKey::F32(value) => Box::new(value),
-                        caustics::CausticsKey::F64(value) => Box::new(value),
-                        caustics::CausticsKey::String(value) => Box::new(value),
-                        caustics::CausticsKey::Bool(value) => Box::new(value),
-                        caustics::CausticsKey::Uuid(value) => Box::new(value),
-                        caustics::CausticsKey::DateTimeUtc(value) => Box::new(value),
-                        caustics::CausticsKey::NaiveDateTime(value) => Box::new(value),
-                        caustics::CausticsKey::NaiveDate(value) => Box::new(value),
-                        caustics::CausticsKey::NaiveTime(value) => Box::new(value),
-                        caustics::CausticsKey::Json(value) => Box::new(value),
-                    }
+                    // No metadata available, use the unified conversion with generic type
+                    caustics::convert_key_to_type_from_string::<()>(key, "unknown")
                 }
             }
         }
@@ -987,7 +967,18 @@ fn generate_client_code(
         }
 
         pub fn __caustics_convert_key_for_foreign_key(entity: &str, field: &str, key: caustics::CausticsKey) -> Box<dyn std::any::Any + Send + Sync> {
-            <CompositeEntityRegistry as caustics::EntityTypeRegistry>::convert_key_for_foreign_key(&REGISTRY, entity, field, key)
+            // Convert PascalCase field name to snake_case for lookup
+            let field_snake = field.chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if c.is_uppercase() && i > 0 {
+                        format!("_{}", c.to_lowercase())
+                    } else {
+                        c.to_lowercase().to_string()
+                    }
+                })
+                .collect::<String>();
+            <CompositeEntityRegistry as caustics::EntityTypeRegistry>::convert_key_for_foreign_key(&REGISTRY, entity, &field_snake, key)
         }
 
         pub fn __caustics_get_primary_key_type(entity: &str) -> Option<&str> {
@@ -995,9 +986,20 @@ fn generate_client_code(
         }
 
         pub fn __caustics_get_foreign_key_type<'a>(entity: &'a str, field: &'a str) -> Option<&'static str> {
+            // Convert PascalCase field name to snake_case for lookup
+            let field_snake = field.chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if c.is_uppercase() && i > 0 {
+                        format!("_{}", c.to_lowercase())
+                    } else {
+                        c.to_lowercase().to_string()
+                    }
+                })
+                .collect::<String>();
             if let Some(metadata) = get_entity_metadata(entity) {
                 metadata.foreign_key_types.iter()
-                    .find(|(field_name, _)| *field_name == field)
+                    .find(|(field_name, _)| *field_name == field_snake)
                     .map(|(_, type_id)| *type_id)
             } else {
                 None
@@ -1141,8 +1143,8 @@ fn generate_client_code(
                     converted.downcast::<bool>().map(|v| caustics::sea_orm::Value::Bool(Some(*v)))
                         .map_err(|_| "Failed to downcast to bool".to_string())
                 },
-                "caustics::uuid::Uuid" => {
-                    converted.downcast::<caustics::uuid::Uuid>().map(|v| caustics::sea_orm::Value::Uuid(Some(Box::new(*v))))
+                "uuid::Uuid" => {
+                    converted.downcast::<uuid::Uuid>().map(|v| caustics::sea_orm::Value::Uuid(Some(Box::new(*v))))
                         .map_err(|_| "Failed to downcast to Uuid".to_string())
                 },
                 "caustics::chrono::DateTime<caustics::chrono::Utc>" => {
@@ -1261,8 +1263,15 @@ fn generate_client_code(
                             panic!("Failed to downcast to String for field {}", field);
                         }
                         },
-                        "caustics::uuid::Uuid" => {
-                        if let Ok(v) = converted.downcast::<caustics::uuid::Uuid>() {
+                        "uuid::Uuid" => {
+                        if let Ok(v) = converted.downcast::<uuid::Uuid>() {
+                            Box::new(caustics::sea_orm::ActiveValue::Set(*v))
+                        } else {
+                            panic!("Failed to downcast to Uuid for field {}", field);
+                        }
+                        },
+                        "Uuid" => {
+                        if let Ok(v) = converted.downcast::<uuid::Uuid>() {
                             Box::new(caustics::sea_orm::ActiveValue::Set(*v))
                         } else {
                             panic!("Failed to downcast to Uuid for field {}", field);
@@ -1319,8 +1328,11 @@ fn generate_client_code(
                     let string_value = *converted.downcast::<String>().expect("Failed to convert to String");
                     Box::new(caustics::sea_orm::ActiveValue::Set(string_value))
                 },
-                "caustics::uuid::Uuid" => {
-                Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<caustics::uuid::Uuid>().expect("Failed to convert to Uuid")))
+                "uuid::Uuid" => {
+                    Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid")))
+                },
+                "Uuid" => {
+                    Box::new(caustics::sea_orm::ActiveValue::Set(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid")))
                 },
                 _ => {
                     panic!("Unsupported foreign key type '{}' for field {} in entity {}", field_type, field, entity);
@@ -1368,8 +1380,11 @@ fn generate_client_code(
                     let string_value = *converted.downcast::<String>().expect("Failed to convert to String");
                     Box::new(caustics::sea_orm::ActiveValue::Set(Some(string_value)))
                 },
-                "caustics::uuid::Uuid" => {
-                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<caustics::uuid::Uuid>().expect("Failed to convert to Uuid"))))
+                "uuid::Uuid" => {
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid"))))
+                },
+                "Uuid" => {
+                Box::new(caustics::sea_orm::ActiveValue::Set(Some(*converted.downcast::<uuid::Uuid>().expect("Failed to convert to Uuid"))))
                 },
                 _ => {
                     panic!("Unsupported foreign key type '{}' for field {} in entity {}", field_type, field, entity);

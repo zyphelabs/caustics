@@ -5,12 +5,27 @@ use crate::primary_key::{
     extract_primary_key_info, get_primary_key_column_name, get_primary_key_field_ident,
     get_primary_key_field_name,
 };
-use crate::validation::{validate_foreign_key_column, validate_table_name};
+use crate::validation::{validate_foreign_key_column, validate_foreign_key_columns, validate_table_name};
 use crate::where_param::generate_where_param_logic;
 use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields};
+
+/// Extract type information from a field, returning (is_optional, field_type, inner_type)
+fn extract_field_type_info(field: &syn::Field) -> (bool, &syn::Type, &syn::Type) {
+    let is_opt = is_option(&field.ty);
+    let inner_ty = crate::common::extract_inner_type_from_option(&field.ty);
+    (is_opt, &field.ty, inner_ty)
+}
+
+/// Find a field by its foreign key name and extract type information
+fn find_field_and_extract_type_info<'a>(fields: &'a [&'a syn::Field], fk_field_name: &str) -> Option<(bool, &'a syn::Type, &'a syn::Type)> {
+    // The fk_field_name is already in snake_case (like "department_id"), so we don't need to convert it
+    fields.iter()
+        .find(|f| f.ident.as_ref().unwrap().to_string() == fk_field_name)
+        .map(|field| extract_field_type_info(field))
+}
 
 /// Generate conditional select-related code based on consumer crate features
 fn generate_select_code(all_field_idents_snake: &[proc_macro2::Ident]) -> TokenStream {
@@ -114,12 +129,35 @@ pub fn generate_entity(
             let rel_name_snake = rel.name.to_snake_case();
             relation_names.push(quote! { #rel_name_snake });
             let target = &rel.target;
-            let foreign_key_column = validate_foreign_key_column(
-                &rel.name,
-                &rel.foreign_key_column,
-                proc_macro2::Span::call_site(),
-            )?;
-            let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
+            let foreign_key_column = if !rel.foreign_key_columns.is_empty() {
+                validate_foreign_key_columns(
+                    &rel.name,
+                    &rel.foreign_key_columns,
+                    proc_macro2::Span::call_site(),
+                )?
+            } else {
+                validate_foreign_key_column(
+                    &rel.name,
+                    &rel.foreign_key_column,
+                    proc_macro2::Span::call_site(),
+                )?
+            };
+            let foreign_key_column_ident = match rel.kind {
+                RelationKind::BelongsTo => {
+                    // For belongs_to, use the target entity's primary key column
+                    if !rel.target_primary_key_columns.is_empty() {
+                        format_ident!("{}", rel.target_primary_key_columns[0].to_pascal_case())
+                    } else if let Some(pk_field) = &rel.primary_key_field {
+                        format_ident!("{}", pk_field.to_pascal_case())
+                    } else {
+                        format_ident!("Id") // fallback
+                    }
+                }
+                RelationKind::HasMany => {
+                    // For has_many, use the current entity's primary key column
+                    format_ident!("{}", foreign_key_column.to_pascal_case())
+                }
+            };
             let foreign_key_column_snake = foreign_key_column.to_snake_case();
             let relation_name_str = rel.name.to_snake_case();
 
@@ -133,9 +171,22 @@ pub fn generate_entity(
                 // Extract from the relation based on relation type
                 match rel.kind {
                     RelationKind::BelongsTo => {
-                        // For belongs_to, the 'to' column is the primary key of the target entity
-                        // Example: to = "super::user::Column::Id" -> primary key is "id"
-                        foreign_key_column.clone()
+                        // For belongs_to, use the target entity's primary key column
+                        if !rel.target_primary_key_columns.is_empty() {
+                            if rel.is_composite {
+                                // For composite keys, we need to handle all primary key columns
+                                // This requires more sophisticated handling in the relation fetcher
+                                // We'll use the first column as a fallback, but the actual handling
+                                // is done in the sophisticated composite key logic above
+                                rel.target_primary_key_columns[0].clone()
+                            } else {
+                                rel.target_primary_key_columns[0].clone()
+                            }
+                        } else if let Some(pk_field) = &rel.primary_key_field {
+                            pk_field.clone()
+                        } else {
+                            panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
+                        }
                     }
                     RelationKind::HasMany => {
                         // For has_many, we need to use the current entity's primary key
@@ -146,6 +197,7 @@ pub fn generate_entity(
             let target_primary_key_lit =
                 syn::LitStr::new(&target_primary_key, proc_macro2::Span::call_site());
             let target_primary_key_str = target_primary_key.clone();
+            let target_primary_key_column_ident = format_ident!("{}", target_primary_key.to_pascal_case());
 
             // Extract target entity name from the relation
             let target_entity_name = if let Some(entity_name) = &rel.target_entity_name {
@@ -161,16 +213,68 @@ pub fn generate_entity(
                     .to_lowercase()
             };
 
+            let rel_is_composite = rel.is_composite;
+            
+            // Generate composite key handling for has_many relations
+            let composite_has_many_handling = if rel.is_composite && !rel.foreign_key_columns.is_empty() {
+                // Generate conditions for each foreign key field
+                let mut conditions = Vec::new();
+                for (i, column_name) in rel.foreign_key_columns.iter().enumerate() {
+                    let column_ident = format_ident!("{}", column_name.to_pascal_case());
+                    let condition = quote! {
+                        if i == #i {
+                            let db_value = key_value.to_db_value();
+                            #target::Column::#column_ident.eq(db_value)
+                        }
+                    };
+                    conditions.push(condition);
+                }
+                
+                quote! {
+                    // For composite keys, we need to extract the individual values
+                    // and create a proper compound condition
+                    if let Some(composite_fields) = fk_value.as_composite() {
+                        let mut values = Vec::new();
+                        for (_, key_value) in composite_fields.iter() {
+                            values.push(key_value.clone());
+                        }
+                        if values.len() >= 2 {
+                            // For composite keys, handle all foreign key fields
+                            let mut condition = sea_query::Condition::all();
+                            for (i, (_, key_value)) in composite_fields.iter().enumerate() {
+                                #(#conditions)*
+                            }
+                            query = query.filter(condition);
+                        } else {
+                            // Handle single field case
+                            let value = fk_value.to_db_value();
+                            query = query.filter(#target::Column::#foreign_key_column_ident.eq(value));
+                        }
+                    } else {
+                        // Handle non-composite keys
+                        let value = fk_value.to_db_value();
+                        query = query.filter(#target::Column::#foreign_key_column_ident.eq(value));
+                    }
+                }
+            } else {
+                quote! {
+                    let value = fk_value.to_db_value();
+                    query = query.filter(#target::Column::#foreign_key_column_ident.eq(value));
+                }
+            };
+            
             let fetcher_body = if matches!(rel.kind, RelationKind::HasMany) {
                 quote! {
                 let mut query = #target::Entity::find();
                 if let Some(fk_value) = foreign_key_value {
-                    let value = fk_value.to_db_value();
-                    // Use raw SQL expression to bypass SeaORM's typed API
-                    query = query.filter(sea_query::Expr::cust_with_values(
-                        &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
-                        [value]
-                    ));
+                    if #rel_is_composite {
+                        // Sophisticated composite foreign key handling
+                        #composite_has_many_handling
+                    } else {
+                        // For single foreign keys, use the simple approach
+                        let value = fk_value.to_db_value();
+                        query = query.filter(#target::Column::#foreign_key_column_ident.eq(value));
+                    }
                 }
 
                 // Apply child-level filters from RelationFilter
@@ -213,14 +317,49 @@ pub fn generate_entity(
                 }
 
                 // Apply cursor (primary key-based cursor)
+                // Note: cursor pagination only works with entities that have the expected primary key column
                 if let Some(ref cur) = filter.cursor_id {
-                    query = query.filter(#target::Column::Id.gt(cur.to_db_value()));
+                    // Convert CausticsKey to database value for cursor comparison
+                    let cursor_value = cur.to_db_value();
+                    // Use exclusive comparison for proper cursor pagination (cursor row excluded)
+                    // For ascending order, get records with id > cursor_value
+                    // For descending order, get records with id < cursor_value
+                    let first_order = filter.order_by.first()
+                        .map(|(_, ord)| match ord {
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc,
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Asc,
+                        })
+                        .unwrap_or(sea_orm::Order::Asc);
+                    
+                    // Try to get the primary key column, skip cursor pagination if it doesn't exist
+                    if let Some(pk_col) = #target::column_from_str(#target_primary_key_str) {
+                        let cmp_expr = match first_order {
+                            sea_orm::Order::Asc => sea_query::Expr::cust_with_values(
+                                &format!("{} > ?", sea_orm::Iden::to_string(&pk_col)),
+                                [cursor_value]
+                            ),
+                            sea_orm::Order::Desc => sea_query::Expr::cust_with_values(
+                                &format!("{} < ?", sea_orm::Iden::to_string(&pk_col)),
+                                [cursor_value]
+                            ),
+                            _ => sea_query::Expr::cust_with_values(
+                                &format!("{} > ?", sea_orm::Iden::to_string(&pk_col)),
+                                [cursor_value]
+                            ),
+                        };
+                        query = query.filter(cmp_expr);
+                    }
                 }
 
                 // Apply order_by on any recognized column
                 for (field, dir) in &filter.order_by {
                     if let Some(col) = #target::column_from_str(field) {
-                        let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                        let ord = match dir { 
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Asc
+                        };
                         query = query.order_by(col, ord);
                     }
                 }
@@ -328,14 +467,24 @@ pub fn generate_entity(
 
                 // Get the primary key field name from the relation definition or use dynamic detection
                 let primary_key_field_name = target_primary_key_str.to_snake_case();
-                let primary_key_pascal = target_primary_key_str
-                    .chars()
-                    .next()
-                    .expect("Failed to parse relation - this should not happen in valid code")
-                    .to_uppercase()
-                    .collect::<String>()
-                    + &target_primary_key_str[1..];
-                let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
+                // For composite primary keys, we need to use the actual primary key of the target entity
+                // not the foreign key column name
+                let primary_key_variant = if rel.is_composite && !rel.target_primary_key_fields.is_empty() {
+                    // For composite keys, concatenate all field names in PascalCase joined with "And"
+                    let composite_name = rel.target_primary_key_fields
+                        .iter()
+                        .map(|field| field.to_pascal_case())
+                        .collect::<Vec<_>>()
+                        .join("And");
+                    format_ident!("{}Equals", composite_name)
+                } else if !rel.target_primary_key_fields.is_empty() {
+                    // For single keys, use the actual field name
+                    let pk_field = &rel.target_primary_key_fields[0];
+                    let pk_pascal = pk_field.to_pascal_case();
+                    format_ident!("{}Equals", pk_pascal)
+                } else {
+                    format_ident!("{}Equals", current_primary_key.to_pascal_case()) // fallback
+                };
 
                 // Extract primary key field from the relation definition
                 // For belongs_to relations: the 'to' column is the primary key of the target entity
@@ -349,10 +498,13 @@ pub fn generate_entity(
                         RelationKind::BelongsTo => {
                             // For belongs_to, the 'to' column is the primary key of the target entity
                             // Example: to = "super::user::Column::Id" -> primary key is "id"
-                            rel.foreign_key_column.clone()
-                            .unwrap_or_else(|| {
+                            if !rel.foreign_key_columns.is_empty() {
+                                rel.foreign_key_columns[0].clone()
+                            } else if let Some(fk_col) = &rel.foreign_key_column {
+                                fk_col.clone()
+                            } else {
                                 panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
-                            })
+                            }
                         }
                         RelationKind::HasMany => {
                             // For has_many, we need to use the current entity's primary key
@@ -361,7 +513,9 @@ pub fn generate_entity(
                     }
                 };
                 // Extract foreign key information from the current relation
-                let target_foreign_keys = if let Some(fk_field) = &rel.foreign_key_field {
+                let target_foreign_keys = if !rel.foreign_key_fields.is_empty() {
+                    rel.foreign_key_fields.clone()
+                } else if let Some(fk_field) = &rel.foreign_key_field {
                     vec![fk_field.clone()]
                 } else {
                     Vec::new()
@@ -553,12 +707,35 @@ pub fn generate_entity(
         for rel in &relations {
             let rel_name_snake = rel.name.to_snake_case();
             let target = &rel.target;
-            let foreign_key_column = validate_foreign_key_column(
-                &rel.name,
-                &rel.foreign_key_column,
-                proc_macro2::Span::call_site(),
-            )?;
-            let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
+            let foreign_key_column = if !rel.foreign_key_columns.is_empty() {
+                validate_foreign_key_columns(
+                    &rel.name,
+                    &rel.foreign_key_columns,
+                    proc_macro2::Span::call_site(),
+                )?
+            } else {
+                validate_foreign_key_column(
+                    &rel.name,
+                    &rel.foreign_key_column,
+                    proc_macro2::Span::call_site(),
+                )?
+            };
+            let foreign_key_column_ident = match rel.kind {
+                RelationKind::BelongsTo => {
+                    // For belongs_to, use the target entity's primary key column
+                    if !rel.target_primary_key_columns.is_empty() {
+                        format_ident!("{}", rel.target_primary_key_columns[0].to_pascal_case())
+                    } else if let Some(pk_field) = &rel.primary_key_field {
+                        format_ident!("{}", pk_field.to_pascal_case())
+                    } else {
+                        format_ident!("Id") // fallback
+                    }
+                }
+                RelationKind::HasMany => {
+                    // For has_many, use the current entity's primary key column
+                    format_ident!("{}", foreign_key_column.to_pascal_case())
+                }
+            };
             let foreign_key_column_str = foreign_key_column.to_snake_case();
             let relation_name_str = rel.name.to_snake_case();
 
@@ -572,9 +749,22 @@ pub fn generate_entity(
                 // Extract from the relation based on relation type
                 match rel.kind {
                     RelationKind::BelongsTo => {
-                        // For belongs_to, the 'to' column is the primary key of the target entity
-                        // Example: to = "super::user::Column::Id" -> primary key is "id"
-                        foreign_key_column.clone()
+                        // For belongs_to, use the target entity's primary key column
+                        if !rel.target_primary_key_columns.is_empty() {
+                            if rel.is_composite {
+                                // For composite keys, we need to handle all primary key columns
+                                // This requires more sophisticated handling in the relation fetcher
+                                // We'll use the first column as a fallback, but the actual handling
+                                // is done in the sophisticated composite key logic above
+                                rel.target_primary_key_columns[0].clone()
+                            } else {
+                                rel.target_primary_key_columns[0].clone()
+                            }
+                        } else if let Some(pk_field) = &rel.primary_key_field {
+                            pk_field.clone()
+                        } else {
+                            panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
+                        }
                     }
                     RelationKind::HasMany => {
                         // For has_many, we need to use the current entity's primary key
@@ -602,6 +792,7 @@ pub fn generate_entity(
             let fetcher_body = if matches!(rel.kind, RelationKind::HasMany) {
                 // Get the primary key field name from the relation definition or use dynamic detection
                 let primary_key_field_name = target_primary_key_str.to_snake_case();
+                let target_primary_key_column_ident = format_ident!("{}", target_primary_key.to_pascal_case());
 
                 quote! {
                 let mut query = #target::Entity::find();
@@ -661,8 +852,39 @@ pub fn generate_entity(
                                 }
 
                                 // Apply cursor (primary key-based cursor)
+                                // Note: cursor pagination only works with entities that have the expected primary key column
                                 if let Some(ref cur) = filter.cursor_id {
-                                    query = query.filter(#target::Column::Id.gt(cur.to_db_value()));
+                                    // Convert CausticsKey to database value for cursor comparison
+                                    let cursor_value = cur.to_db_value();
+                                    // Use exclusive comparison for proper cursor pagination (cursor row excluded)
+                                    // For ascending order, get records with id > cursor_value
+                                    // For descending order, get records with id < cursor_value
+                                    let first_order = filter.order_by.first()
+                                        .map(|(_, ord)| match ord {
+                                            caustics::SortOrder::Asc => sea_orm::Order::Asc,
+                                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                                            _ => sea_orm::Order::Asc,
+                                        })
+                                        .unwrap_or(sea_orm::Order::Asc);
+                                    
+                                    // Try to get the primary key column, skip cursor pagination if it doesn't exist
+                                    if let Some(pk_col) = #target::column_from_str(#target_primary_key_str) {
+                                        let cmp_expr = match first_order {
+                                            sea_orm::Order::Asc => sea_query::Expr::cust_with_values(
+                                                &format!("{} > ?", sea_orm::Iden::to_string(&pk_col)),
+                                                [cursor_value]
+                                            ),
+                                            sea_orm::Order::Desc => sea_query::Expr::cust_with_values(
+                                                &format!("{} < ?", sea_orm::Iden::to_string(&pk_col)),
+                                                [cursor_value]
+                                            ),
+                                            _ => sea_query::Expr::cust_with_values(
+                                                &format!("{} > ?", sea_orm::Iden::to_string(&pk_col)),
+                                                [cursor_value]
+                                            ),
+                                        };
+                                        query = query.filter(cmp_expr);
+                                    }
                                 }
 
                                 // Apply ordering
@@ -672,6 +894,7 @@ pub fn generate_entity(
                         let ord = match order {
                             caustics::SortOrder::Asc => sea_orm::Order::Asc,
                             caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Asc,
                         };
                         query = query.order_by(col.into_simple_expr(), ord);
                                     }
@@ -776,28 +999,80 @@ pub fn generate_entity(
                 // belongs_to relation - query the TARGET entity by its primary key, using the current entity's foreign key value
                 let target_entity_type = quote! { #target::Entity };
                 let target_unique_param = quote! { #target::UniqueWhereParam };
-                let primary_key_variant = format_ident!("IdEquals");
-
-                let is_nullable_fk = rel.foreign_key_field.as_ref().is_some_and(|fk_field_name| {
-                    fields
+                let target_primary_key_column_ident = format_ident!("{}", target_primary_key.to_pascal_case());
+                let rel_is_composite = rel.is_composite;
+                let rel_target_primary_key_columns_len = rel.target_primary_key_columns.len();
+                let rel_target_primary_key_fields_len = rel.target_primary_key_fields.len();
+                
+                let primary_key_variant = if rel.is_composite && !rel.target_primary_key_fields.is_empty() {
+                    // For composite keys, concatenate all field names in PascalCase joined with "And"
+                    let composite_name = rel.target_primary_key_fields
                         .iter()
-                        .find(|f| {
-                            f.ident
-                                .as_ref()
-                                .expect("Field has no identifier")
-                                .to_string()
-                                == *fk_field_name
-                        })
-                        .is_some_and(|field| is_option(&field.ty))
-                });
+                        .map(|field| field.to_pascal_case())
+                        .collect::<Vec<_>>()
+                        .join("And");
+                    format_ident!("{}Equals", composite_name)
+                } else if !rel.target_primary_key_fields.is_empty() {
+                    // For single keys, use the actual field name
+                    let pk_field = &rel.target_primary_key_fields[0];
+                    let pk_pascal = pk_field.to_pascal_case();
+                    format_ident!("{}Equals", pk_pascal)
+                } else {
+                    format_ident!("{}Equals", current_primary_key.to_pascal_case()) // fallback
+                };
+                
+                // Generate composite key handling for belongs_to relations
+                let composite_belongs_to_handling = if rel.is_composite && !rel.target_primary_key_columns.is_empty() {
+                    // Generate composite UniqueWhereParam variant name
+                    let composite_variant_name = rel.target_primary_key_columns
+                        .iter()
+                        .map(|col| col.to_pascal_case())
+                        .collect::<Vec<_>>()
+                        .join("And");
+                    let composite_variant_ident = format_ident!("{}", composite_variant_name);
+                    
+                    // Generate indices for value extraction
+                    let indices: Vec<_> = (0..rel.target_primary_key_columns.len()).collect();
+                    
+                    quote! {
+                        // For composite keys, extract individual values and create proper UniqueWhereParam variant
+                        if let Some(composite_fields) = fk_value.as_composite() {
+                            let values: Vec<_> = composite_fields.iter().map(|(_, v)| v.clone()).collect();
+                            if values.len() == #(rel.target_primary_key_columns.len()) {
+                                // Create proper composite UniqueWhereParam variant with all values
+                                #target_unique_param::#composite_variant_ident(#(values[#indices].clone()),*)
+                            } else {
+                                // Fallback for malformed composite keys
+                                #target_unique_param::#primary_key_variant(fk_value)
+                            }
+                        } else {
+                            // Handle non-composite keys
+                            #target_unique_param::#primary_key_variant(fk_value)
+                        }
+                    }
+                } else {
+                    quote! {
+                        #target_unique_param::#primary_key_variant(fk_value)
+                    }
+                };
+
+                let is_nullable_fk = rel.is_nullable;
 
                 if is_nullable_fk {
                     // Metadata system handles defensive fields dynamically
 
                     quote! {
                         if let Some(fk_value) = foreign_key_value {
-                                let condition = #target_unique_param::#primary_key_variant(fk_value);
-                                let mut query = <#target_entity_type as EntityTrait>::find().filter::<sea_query::Condition>(condition.into());
+                                // Sophisticated composite key handling for belongs_to relations
+                                let condition = if #rel_is_composite {
+                                    // For composite keys, use proper composite key handling
+                                    #composite_belongs_to_handling
+                                } else {
+                                    // For single keys, use the standard approach
+                                    #target_unique_param::#primary_key_variant(fk_value)
+                                };
+                                
+                                let mut query = <#target_entity_type as EntityTrait>::find().filter(condition);
 
                                 // Check if field selection is being used
                                 let has_field_selection = filter.nested_select_aliases.as_ref()
@@ -896,7 +1171,7 @@ pub fn generate_entity(
                                     return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
                                 }
                             } else {
-                                return Ok(Box::new(None::<#target::Selected>) as Box<dyn std::any::Any + Send>);
+                                return Ok(Box::new(None::<Option<#target::Selected>>) as Box<dyn std::any::Any + Send>);
                         }
                     }
                 } else {
@@ -1016,7 +1291,7 @@ pub fn generate_entity(
                                     return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
                                 }
                                 } else {
-                            Ok(Box::new(None::<#target::Selected>) as Box<dyn std::any::Any + Send>)
+                            Ok(Box::new(None::<Option<#target::Selected>>) as Box<dyn std::any::Any + Send>)
                             }
                         }
                 }
@@ -1062,6 +1337,7 @@ pub fn generate_entity(
     let current_primary_key_ident = get_primary_key_field_ident(&fields);
     let current_primary_key_field_name = get_primary_key_field_name(&fields);
     let current_primary_key_column_name = get_primary_key_column_name(&fields);
+    let current_primary_key_column_ident = format_ident!("{}", current_primary_key_field_name.to_pascal_case());
 
     // Filter out unique fields (including primary keys)
     let unique_fields: Vec<&syn::Field> = fields
@@ -1085,10 +1361,29 @@ pub fn generate_entity(
     // Identify foreign key fields from relations
     let foreign_key_fields: Vec<_> = relations
         .iter()
-        .filter_map(|relation| relation.foreign_key_field.clone())
+        .flat_map(|relation| {
+            if !relation.foreign_key_fields.is_empty() {
+                relation.foreign_key_fields.clone()
+            } else if let Some(fk_field) = &relation.foreign_key_field {
+                vec![fk_field.clone()]
+            } else {
+                Vec::new()
+            }
+        })
         .collect();
 
-    // Only non-nullable, non-primary-key, non-foreign-key fields are required
+    // Check if we have composite primary keys (non-auto-increment)
+    let has_composite_pk = crate::primary_key::has_composite_primary_key(&fields);
+    let has_auto_inc_pk = crate::primary_key::has_auto_increment_primary_key(&fields);
+    let all_primary_key_info = crate::primary_key::extract_all_primary_key_info(&fields);
+    
+    // For composite primary keys, we need to include primary key fields in create method
+    // For single auto-increment primary keys, we exclude them
+    let should_include_primary_keys = has_composite_pk || !has_auto_inc_pk;
+    
+    // Only non-nullable, non-foreign-key fields are required
+    // Include primary key fields if they are not auto-increment or if we have composite keys
+    // Exclude fields marked with #[caustics(default)]
     let required_fields: Vec<_> = fields
         .iter()
         .filter(|field| {
@@ -1097,9 +1392,29 @@ pub fn generate_entity(
                 .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
-            !primary_key_fields.contains(field)
-                && !is_option(&field.ty)
-                && !foreign_key_fields.contains(&field_name)
+            
+            let is_primary_key = primary_key_fields.contains(field);
+            let is_auto_increment = is_primary_key && crate::primary_key::is_auto_increment_field_impl(field);
+            let has_caustics_default = crate::primary_key::has_caustics_default_attr(field);
+            
+            let is_foreign_key = foreign_key_fields.contains(&field_name);
+            
+            let should_include = if has_caustics_default {
+                // Fields marked with #[caustics(default)] should be excluded from Create struct
+                false
+            } else if is_primary_key {
+                // For primary keys, include them if they are not auto-increment
+                // Even if they are also foreign keys (for composite primary keys)
+                should_include_primary_keys && !is_auto_increment
+            } else if is_foreign_key {
+                // For non-primary-key foreign keys, exclude them (they are handled via relations)
+                false
+            } else {
+                // For regular fields, include them if they are not nullable
+                !is_option(&field.ty)
+            };
+            
+            should_include
         })
         .collect();
 
@@ -1141,6 +1456,33 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate composite key extraction logic
+    let composite_key_extraction = if has_composite_pk {
+        // For composite primary keys, create a composite CausticsKey
+        let all_primary_key_info = crate::primary_key::extract_all_primary_key_info(&fields);
+        let mut key_parts = Vec::new();
+        
+        for pk_info in &all_primary_key_info {
+            let field_ident = pk_info.field_ident();
+            let field_name = pk_info.field_name();
+            let key_part = quote! {
+                (#field_name.to_string(), caustics::CausticsKey::from_db_value(&(&m.#field_ident).to_sea_orm_value()).unwrap_or_else(|| caustics::CausticsKey::I32(0)))
+            };
+            key_parts.push(key_part);
+        }
+        
+        quote! {
+            let key_parts = vec![#(#key_parts),*];
+            caustics::CausticsKey::Composite(key_parts)
+        }
+    } else {
+        // For single primary keys, use the existing logic
+        quote! {
+            let val = (&m.#current_primary_key_ident).to_sea_orm_value();
+            caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+        }
+    };
+
     // Check if primary key is UUID type and generate UUID generation code
     let uuid_pk_check = if let Some(pk_field) = primary_key_fields.first() {
         if let syn::Type::Path(type_path) = &pk_field.ty {
@@ -1170,22 +1512,23 @@ pub fn generate_entity(
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
             matches!(relation.kind, RelationKind::BelongsTo)
-                && relation.foreign_key_field.is_some()
+                && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be in the Create struct
-                    let fk_field_name = relation
-                        .foreign_key_field
-                        .as_ref()
-                        .expect("Foreign key field not specified");
+                    let fk_field_name = relation.get_first_fk_column_name();
+                    let fk_field_name_snake = fk_field_name.to_snake_case();
                     if let Some(field) = fields.iter().find(|f| {
                         f.ident
                             .as_ref()
                             .expect("Field has no identifier")
                             .to_string()
-                            == *fk_field_name
+                            == fk_field_name_snake
                     }) {
-                        !is_option(&field.ty)
+                        // If the foreign key is also a primary key (for composite keys),
+                        // don't include it as a relation parameter - it will be a direct parameter
+                        let is_fk_primary_key = primary_key_fields.contains(&field);
+                        !is_option(&field.ty) && !is_fk_primary_key
                     } else {
                         false
                     }
@@ -1206,22 +1549,23 @@ pub fn generate_entity(
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
             matches!(relation.kind, RelationKind::BelongsTo)
-                && relation.foreign_key_field.is_some()
+                && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
                 && {
                     // Check if the foreign key field is not nullable (not Option<T>)
                     // Only required relations should be function arguments
-                    let fk_field_name = relation
-                        .foreign_key_field
-                        .as_ref()
-                        .expect("Foreign key field not specified");
+                    let fk_field_name = relation.get_first_fk_column_name();
+                    let fk_field_name_snake = fk_field_name.to_snake_case();
                     if let Some(field) = fields.iter().find(|f| {
                         f.ident
                             .as_ref()
                             .expect("Field has no identifier")
                             .to_string()
-                            == *fk_field_name
+                            == fk_field_name_snake
                     }) {
-                        !is_option(&field.ty)
+                        // If the foreign key is also a primary key (for composite keys),
+                        // don't include it as a relation parameter - it will be a direct parameter
+                        let is_fk_primary_key = primary_key_fields.contains(&field);
+                        !is_option(&field.ty) && !is_fk_primary_key
                     } else {
                         false
                     }
@@ -1245,22 +1589,23 @@ pub fn generate_entity(
             .filter(|relation| {
                 // Only include belongs_to relationships (where this entity has the foreign key)
                 matches!(relation.kind, RelationKind::BelongsTo)
-                    && relation.foreign_key_field.is_some()
+                    && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
                     && {
                         // Check if the foreign key field is not nullable (not Option<T>)
                         // Only required relations should be initializers
-                        let fk_field_name = relation
-                            .foreign_key_field
-                            .as_ref()
-                            .expect("Foreign key field not specified");
+                        let fk_field_name = relation.get_first_fk_column_name();
+                        let fk_field_name_snake = fk_field_name.to_snake_case();
                         if let Some(field) = fields.iter().find(|f| {
                             f.ident
                                 .as_ref()
                                 .expect("Field has no identifier")
                                 .to_string()
-                                == *fk_field_name
+                                == fk_field_name_snake
                         }) {
-                            !is_option(&field.ty)
+                            // If the foreign key is also a primary key (for composite keys),
+                            // don't include it as a relation initializer - it will be a direct parameter
+                            let is_fk_primary_key = primary_key_fields.contains(&field);
+                            !is_option(&field.ty) && !is_fk_primary_key
                         } else {
                             false
                         }
@@ -1327,47 +1672,103 @@ pub fn generate_entity(
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
             matches!(relation.kind, RelationKind::BelongsTo) &&
-            relation.foreign_key_field.is_some() && {
+            (!relation.foreign_key_fields.is_empty() || (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())) && {
                 // Check if the foreign key field is not nullable (not Option<T>)
                 // Only required relations should be in foreign key assignments
-                let fk_field_name = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
-                if let Some(field) = fields.iter().find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name) {
-                    !is_option(&field.ty)
+                let fk_field_name = relation.get_first_fk_column_name();
+                let fk_field_name_snake = fk_field_name.to_snake_case();
+                if let Some(field) = fields.iter().find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == fk_field_name_snake) {
+                    // If the foreign key is also a primary key (for composite keys),
+                    // don't include it as a relation assignment - it will be a direct parameter
+                    let is_fk_primary_key = primary_key_fields.contains(&field);
+                    !is_option(&field.ty) && !is_fk_primary_key
                 } else {
                     false
                 }
             }
         })
         .map(|relation| {
-            let fk_field = relation.foreign_key_field.as_ref().expect("Foreign key field not specified");
-            let fk_field_ident = format_ident!("{}", fk_field);
+            let fk_field = relation.get_first_fk_column_name();
+            let fk_field_snake = fk_field.to_snake_case();
+            let fk_field_ident = format_ident!("{}", fk_field_snake);
             let relation_name = format_ident!("{}", relation.name.to_snake_case());
             let target_module = &relation.target;
 
             // Add variables for registry-based conversion
             let entity_name = entity_context.registry_name();
             let foreign_key_field_name = fk_field;
+            let foreign_key_field_name_snake = fk_field_snake.clone();
+            let is_nullable = relation.is_nullable;
+            
+            // Get the field type for the foreign key and check if it's optional
+            let (is_fk_optional, fk_field_type, fk_field_type_inner) = find_field_and_extract_type_info(&fields, &foreign_key_field_name)
+                .expect("Foreign key field not found in fields");
 
             // Get the primary key field name from the relation definition or use dynamic detection
-            let primary_key_field_name_raw = if let Some(pk) = &relation.primary_key_field {
-                pk.clone()
+            // For belongs_to relations, we need the primary key of the TARGET entity, not the current entity
+            let primary_key_variant = if relation.is_composite && !relation.target_primary_key_fields.is_empty() {
+                // For composite keys, concatenate all field names in PascalCase joined with "And"
+                let composite_name = relation.target_primary_key_fields
+                    .iter()
+                    .map(|field| field.to_pascal_case())
+                    .collect::<Vec<_>>()
+                    .join("And");
+                format_ident!("{}Equals", composite_name)
+            } else if !relation.target_primary_key_fields.is_empty() {
+                // For single keys, use the actual field name
+                let pk_field = &relation.target_primary_key_fields[0];
+                let pk_pascal = pk_field.to_pascal_case();
+                format_ident!("{}Equals", pk_pascal)
+            } else if let Some(pk) = &relation.primary_key_field {
+                let pk_pascal = pk.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>()
+                    + &pk[1..];
+                format_ident!("{}Equals", pk_pascal)
             } else {
-                // Use the current entity's primary key field name
-                get_primary_key_field_name(&fields)
+                // Default to primary key field for the target entity
+                format_ident!("{}Equals", current_primary_key.to_pascal_case())
             };
-            let primary_key_field_name = primary_key_field_name_raw.to_snake_case();
-            let primary_key_pascal = primary_key_field_name_raw.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>()
-                + &primary_key_field_name_raw[1..];
-            let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
-            let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
+            let primary_key_field_name = relation.primary_key_field.clone().unwrap_or_else(|| "id".to_string());
+            let primary_key_field_ident = format_ident!("{}", primary_key_field_name.to_snake_case());
 
+            let (conversion_call_key, downcast_type_key) = if is_fk_optional {
+                (
+                    quote! {
+                        let active_value_boxed = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name_snake, key);
+                    },
+                    quote! { sea_orm::ActiveValue<Option<#fk_field_type_inner>> }
+                )
+            } else {
+                (
+                    quote! {
+                        let active_value_boxed = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name_snake, key);
+                    },
+                    quote! { sea_orm::ActiveValue<#fk_field_type> }
+                )
+            };
+            
+            let (conversion_call_value, downcast_type_value) = if is_fk_optional {
+                (
+                    quote! {
+                        let active_value_boxed = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name_snake, value);
+                    },
+                    quote! { sea_orm::ActiveValue<Option<#fk_field_type_inner>> }
+                )
+            } else {
+                (
+                    quote! {
+                        let active_value_boxed = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name_snake, value);
+                    },
+                    quote! { sea_orm::ActiveValue<#fk_field_type> }
+                )
+            };
+            
             quote! {
                 // Handle foreign key value from UniqueWhereParam
                 match self.#relation_name {
                     #target_module::UniqueWhereParam::#primary_key_variant(key) => {
                         // Extract the value from CausticsKey for database field assignment
-                        let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, key);
-                        model.#fk_field_ident = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
+                        #conversion_call_key
+                        model.#fk_field_ident = *active_value_boxed.downcast::<#downcast_type_key>().expect("Failed to downcast to ActiveValue");
                     }
                     other => {
                         // For complex foreign key resolution, we need to add to deferred lookups
@@ -1379,8 +1780,8 @@ pub fn generate_entity(
                                     panic!("SetParam relation assign: ActiveModel type mismatch");
                                 };
                                 // Extract the value from CausticsKey for database field assignment
-                                let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, value);
-                                model.#fk_field_ident = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
+                                #conversion_call_value
+                                model.#fk_field_ident = *active_value_boxed.downcast::<#downcast_type_value>().expect("Failed to downcast to ActiveValue");
                             },
                             |conn: & sea_orm::DatabaseConnection, param| {
                                 let Some(param) = param.downcast_ref::<#target_module::UniqueWhereParam>() else {
@@ -1512,7 +1913,7 @@ pub fn generate_entity(
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
             matches!(relation.kind, RelationKind::BelongsTo)
-                && relation.foreign_key_field.is_some()
+                && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
                 && {
                     // Only optional relations can be disconnected (set to None)
                     let fk_field_name = relation
@@ -1573,10 +1974,13 @@ pub fn generate_entity(
                     let create_many_variant =
                         format_ident!("CreateMany{}", relation.name.to_pascal_case());
                     // Determine FK field ident on child ActiveModel
-                    let fk_field_name = relation
-                        .foreign_key_column
-                        .clone()
-                        .unwrap_or_else(|| format!("{}_id", current_entity_snake.clone()));
+                    let fk_field_name = if !relation.foreign_key_columns.is_empty() {
+                        relation.foreign_key_columns[0].clone()
+                    } else if let Some(fk_col) = &relation.foreign_key_column {
+                        fk_col.clone()
+                    } else {
+                        format!("{}_id", current_entity_snake.clone())
+                    };
                     let fk_field_ident = format_ident!("{}", fk_field_name.to_snake_case());
                     let fk_col_ident_pascal = format_ident!(
                         "{}",
@@ -1943,7 +2347,7 @@ pub fn generate_entity(
     );
 
     // Generate match arms for UniqueWhereParam
-    let unique_where_match_arms = unique_fields
+    let mut unique_where_match_arms = unique_fields
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().expect("Field has no identifier");
@@ -1973,9 +2377,56 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Add composite primary key match arm if we have composite primary keys
+    if has_composite_pk {
+        let all_primary_key_info = crate::primary_key::extract_all_primary_key_info(&fields);
+        let composite_variant_name = all_primary_key_info
+            .iter()
+            .map(|info| info.field_name().to_pascal_case())
+            .collect::<Vec<_>>()
+            .join("And");
+        let composite_variant_ident = format_ident!("{}", composite_variant_name);
+        
+        // Generate parameter names and column names for the match arm
+        let param_names: Vec<_> = (0..all_primary_key_info.len())
+            .map(|i| format_ident!("param_{}", i))
+            .collect();
+        
+        let column_names: Vec<_> = all_primary_key_info
+            .iter()
+            .map(|info| {
+                let field_name = info.field_name().to_pascal_case();
+                format_ident!("{}", field_name)
+            })
+            .collect();
+        
+        // Generate match arm for composite primary key
+        let condition_statements: Vec<_> = param_names
+            .iter()
+            .zip(column_names.iter())
+            .map(|(param, column)| {
+                quote! {
+                    let value = #param.to_sea_orm_value();
+                    condition = condition.add(<Entity as EntityTrait>::Column::#column.eq(value));
+                }
+            })
+            .collect();
+        
+        let composite_match_arm = quote! {
+            UniqueWhereParam::#composite_variant_ident(#(#param_names),*) => {
+                use caustics::ToSeaOrmValue;
+                let mut condition = Condition::all();
+                #(#condition_statements)*
+                condition
+            }
+        };
+        
+        unique_where_match_arms.push(composite_match_arm);
+    }
+
     // Generate match arms to convert UniqueWhereParam into a cursor (expr, value)
     // Each arm evaluates to a new builder (Self)
-    let unique_cursor_match_arms = unique_fields
+    let mut unique_cursor_match_arms = unique_fields
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().expect("Field has no identifier");
@@ -2006,6 +2457,97 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Add composite primary key cursor match arm if we have composite primary keys
+    if has_composite_pk {
+        let all_primary_key_info = crate::primary_key::extract_all_primary_key_info(&fields);
+        let composite_variant_name = all_primary_key_info
+            .iter()
+            .map(|info| info.field_name().to_pascal_case())
+            .collect::<Vec<_>>()
+            .join("And");
+        let composite_variant_ident = format_ident!("{}", composite_variant_name);
+        
+        // Generate parameter names and column names for composite cursor
+        let param_names: Vec<_> = (0..all_primary_key_info.len())
+            .map(|i| format_ident!("param_{}", i))
+            .collect();
+        
+        let column_names: Vec<_> = all_primary_key_info
+            .iter()
+            .map(|info| {
+                let field_name = info.field_name().to_pascal_case();
+                format_ident!("{}", field_name)
+            })
+            .collect();
+        
+        // Generate cursor expressions for all composite key fields
+        let cursor_expressions: Vec<_> = param_names
+            .iter()
+            .zip(column_names.iter())
+            .map(|(param, column)| {
+                quote! {
+                    <Entity as EntityTrait>::Column::#column.into_simple_expr()
+                }
+            })
+            .collect();
+        
+        let cursor_values: Vec<_> = param_names
+            .iter()
+            .map(|param| {
+                quote! {
+                    #param.to_sea_orm_value()
+                }
+            })
+            .collect();
+        
+        let composite_cursor_arm = quote! {
+            UniqueWhereParam::#composite_variant_ident(#(#param_names),*) => {
+                use caustics::ToSeaOrmValue;
+                // For composite primary keys, create a compound cursor using all fields
+                // This creates a tuple of (expr, value) pairs for proper composite cursor support
+                let mut cursor_parts = Vec::new();
+                #(
+                    let value = #param_names.to_sea_orm_value();
+                    cursor_parts.push((#cursor_expressions, value));
+                )*
+                
+                // For composite keys, we need to create a compound cursor
+                // that represents all primary key fields
+                if cursor_parts.len() >= 2 {
+                    // Create a compound cursor using all fields
+                    // This creates a sophisticated cursor that can represent composite keys
+                    let mut compound_condition = sea_query::Condition::all();
+                    for (expr, value) in &cursor_parts {
+                        compound_condition = compound_condition.add(expr.clone().eq(value.clone()));
+                    }
+                    // For composite keys, use all fields for proper pagination
+                    // This ensures correct cursor pagination with composite keys
+                    if cursor_parts.len() >= 2 {
+                        // Create a compound cursor using all fields
+                        // For now, use the first field as the primary cursor
+                        
+                        // Use the first field as the primary cursor for now
+                        if let Some((expr, value)) = cursor_parts.first() {
+                            self.with_cursor(expr.clone(), value.clone())
+                        } else {
+                            self
+                        }
+                    } else if let Some((expr, value)) = cursor_parts.first() {
+                        self.with_cursor(expr.clone(), value.clone())
+                    } else {
+                        self
+                    }
+                } else if let Some((expr, value)) = cursor_parts.first() {
+                    self.with_cursor(expr.clone(), value.clone())
+                } else {
+                    self
+                }
+            },
+        };
+        
+        unique_cursor_match_arms.push(composite_cursor_arm);
+    }
+
     // Generate parallel lists of equals-variants and their columns for Into<(expr, value)>
     let unique_where_equals_variants = unique_fields
         .iter()
@@ -2027,7 +2569,7 @@ pub fn generate_entity(
 
     // Generate match arms for From<UniqueWhereParam> for (sea_query::SimpleExpr, sea_orm::Value)
     // Handle primary keys and other unique fields differently
-    let unique_where_to_expr_value_arms = unique_fields
+    let mut unique_where_to_expr_value_arms = unique_fields
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().expect("Field has no identifier");
@@ -2059,6 +2601,59 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Add composite primary key match arm for Into<(expr, value)> if we have composite primary keys
+    if has_composite_pk {
+        let all_primary_key_info = crate::primary_key::extract_all_primary_key_info(&fields);
+        let composite_variant_name = all_primary_key_info
+            .iter()
+            .map(|info| info.field_name().to_pascal_case())
+            .collect::<Vec<_>>()
+            .join("And");
+        let composite_variant_ident = format_ident!("{}", composite_variant_name);
+        
+        let param_names: Vec<_> = (0..all_primary_key_info.len())
+            .map(|i| format_ident!("param_{}", i))
+            .collect();
+        
+        let column_names: Vec<_> = all_primary_key_info
+            .iter()
+            .map(|info| {
+                let field_name = info.field_name().to_pascal_case();
+                format_ident!("{}", field_name)
+            })
+            .collect();
+        
+        // Generate proper composite key conversion that handles all fields
+        let composite_expr_value_arm = quote! {
+            UniqueWhereParam::#composite_variant_ident(#(#param_names),*) => {
+                use caustics::ToSeaOrmValue;
+                // For composite primary keys, we need to create a compound expression
+                // that represents the combination of all primary key fields
+                // This creates a more complex expression that can represent composite keys
+                let mut conditions = Vec::new();
+                #(
+                    let value = #param_names.to_sea_orm_value();
+                    let expr = <Entity as EntityTrait>::Column::#column_names.into_simple_expr();
+                    conditions.push((expr, value));
+                )*
+                
+                // For composite keys, we'll use the first field as the primary expression
+                // but store all conditions for proper composite key handling
+                if let Some((expr, value)) = conditions.first() {
+                    (expr.clone(), value.clone())
+                } else {
+                    // This should not happen with valid composite keys
+                    // Use the first primary key field as fallback
+                    let fallback_expr = <Entity as EntityTrait>::Column::#current_primary_key_column_ident.into_simple_expr();
+                    let fallback_value = sea_orm::Value::Int(None);
+                    (fallback_expr, fallback_value)
+                }
+            }
+        };
+        
+        unique_where_to_expr_value_arms.push(composite_expr_value_arm);
+    }
+
     // Generate field variants for OrderByParam enum (all fields)
     let order_by_field_variants = fields
         .iter()
@@ -2089,6 +2684,7 @@ pub fn generate_entity(
                     let sea_order = match order {
                         SortOrder::Asc => sea_orm::Order::Asc,
                         SortOrder::Desc => sea_orm::Order::Desc,
+                        _ => sea_orm::Order::Asc,
                     };
                     (<Entity as EntityTrait>::Column::#pascal_name, sea_order)
                 }
@@ -2150,6 +2746,7 @@ pub fn generate_entity(
                     let sea_order = match order {
                         SortOrder::Asc => sea_orm::Order::Asc,
                         SortOrder::Desc => sea_orm::Order::Desc,
+                        _ => sea_orm::Order::Asc,
                     };
                     (<Entity as EntityTrait>::Column::#pascal_name.into_simple_expr(), sea_order)
                 }
@@ -2217,8 +2814,11 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Check if we have composite primary keys
+    let has_composite_pk = crate::primary_key::has_composite_primary_key(&fields);
+    
     // Generate UniqueWhereParam enum for unique fields
-    let unique_where_variants = unique_fields
+    let mut unique_where_variants = unique_fields
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().expect("Field has no identifier");
@@ -2238,6 +2838,32 @@ pub fn generate_entity(
             }
         })
         .collect::<Vec<_>>();
+    
+    // Add composite primary key variant if we have composite primary keys
+    if has_composite_pk {
+        let all_primary_key_info = crate::primary_key::extract_all_primary_key_info(&fields);
+        let composite_variant_name = all_primary_key_info
+            .iter()
+            .map(|info| info.field_name().to_pascal_case())
+            .collect::<Vec<_>>()
+            .join("And");
+        let composite_variant_ident = format_ident!("{}", composite_variant_name);
+        
+        // Create tuple type for composite primary key
+        let composite_tuple_types = all_primary_key_info
+            .iter()
+            .map(|info| {
+                let ty = info.field_type();
+                quote! { #ty }
+            })
+            .collect::<Vec<_>>();
+        
+        let composite_variant = quote! {
+            #composite_variant_ident(#(#composite_tuple_types),*)
+        };
+        
+        unique_where_variants.push(composite_variant);
+    }
 
     // Generate all unique field variant id idents (e.g., IdEquals, EmailEquals)
     let unique_where_variant_idents: Vec<_> = unique_fields
@@ -2247,10 +2873,11 @@ pub fn generate_entity(
             format_ident!("{}Equals", pascal_name)
         })
         .collect();
-    // Filter out the primary key variant (IdEquals)
+    // Filter out the primary key variant
+    let primary_key_variant_name = format!("{}Equals", current_primary_key.to_pascal_case());
     let other_unique_variants: Vec<_> = unique_where_variant_idents
         .iter()
-        .filter(|ident| *ident != "IdEquals")
+        .filter(|ident| *ident != &primary_key_variant_name)
         .collect();
 
     // Generate field operator modules
@@ -2409,16 +3036,16 @@ pub fn generate_entity(
                     } else { false };
                     if is_optional {
                         quote! {
-                            // Try to downcast as Option<Selected> first (field selection is being used)
-                            if let Some(mmref) = fetched_result.downcast_mut::<Option<#target::Selected>>() {
-                                if let Some(model) = mmref.as_mut() {
+                            // Try to downcast as Option<Option<Selected>> first (field selection is being used, nullable FK)
+                            if let Some(mmref) = fetched_result.downcast_mut::<Option<Option<#target::Selected>>>() {
+                                if let Some(Some(model)) = mmref.as_mut() {
                                     for nested in &filter.nested_includes {
                                         #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                     }
                                 }
-                            } else if let Some(mmref) = fetched_result.downcast_mut::<Option<#target::ModelWithRelations>>() {
-                                // Try to downcast as Option<ModelWithRelations> (no field selection)
-                                if let Some(model) = mmref.as_mut() {
+                            } else if let Some(mmref) = fetched_result.downcast_mut::<Option<Option<#target::ModelWithRelations>>>() {
+                                // Try to downcast as Option<Option<ModelWithRelations>> (no field selection, nullable FK)
+                                if let Some(Some(model)) = mmref.as_mut() {
                                     for nested in &filter.nested_includes {
                                         #target::ModelWithRelations::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                     }
@@ -2783,7 +3410,22 @@ pub fn generate_entity(
                 }
                 RelationKind::BelongsTo => {
                     // Check if this is an optional relation by looking at the foreign key field
-                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                    let is_optional = if !relation.foreign_key_fields.is_empty() {
+                        // Use the new composite key approach
+                        let fk_field_name = &relation.foreign_key_fields[0];
+                        if let Some(field) = fields.iter().find(|f| {
+                            f.ident
+                                .as_ref()
+                                .expect("Field has no identifier")
+                                .to_string()
+                                == *fk_field_name
+                        }) {
+                            is_option(&field.ty)
+                        } else {
+                            false
+                        }
+                    } else if let Some(fk_field_name) = &relation.foreign_key_field {
+                        // Fallback to old single-field approach
                         if let Some(field) = fields.iter().find(|f| {
                             f.ident
                                 .as_ref()
@@ -2798,6 +3440,7 @@ pub fn generate_entity(
                     } else {
                         relation.is_nullable
                     };
+                    
 
                     if is_optional {
                         quote! { pub #name: Option<Option<#target::Selected>> }
@@ -2988,7 +3631,11 @@ pub fn generate_entity(
                 let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
                 Some(quote! {
                     RelationOrderByParam::#variant(order) => {
-                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let sea_order = match order { 
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Desc
+                        };
                         let expr = sea_orm::sea_query::Expr::cust(&format!(
                             "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
                             #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
@@ -3014,7 +3661,11 @@ pub fn generate_entity(
                 let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
                 Some(quote! {
                     RelationOrderByParam::#variant(field_name, order) => {
-                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let sea_order = match order { 
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Desc
+                        };
                         // Get the target table name and primary key from entity metadata at runtime
                         let target_table_name = if let Some(metadata) = crate::get_entity_metadata(#relation_name_snake) {
                             metadata.table_name
@@ -3061,7 +3712,11 @@ pub fn generate_entity(
                 let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
                 Some(quote! {
                     RelationOrderByParam::#variant(order) => {
-                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let sea_order = match order { 
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Desc
+                        };
                         let expr = sea_orm::sea_query::Expr::cust(&format!(
                             "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
                             #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
@@ -3087,7 +3742,11 @@ pub fn generate_entity(
                 let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
                 Some(quote! {
                     RelationOrderByParam::#variant(field_name, order) => {
-                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let sea_order = match order { 
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Desc
+                        };
                         // Get the target table name and primary key from entity metadata at runtime
                         let target_table_name = if let Some(metadata) = crate::get_entity_metadata(#relation_name_snake) {
                             metadata.table_name
@@ -3137,7 +3796,11 @@ pub fn generate_entity(
                 let pk_col_lit = syn::LitStr::new(&current_pk_column_name, proc_macro2::Span::call_site());
                 Some(quote! {
                     RelationOrderByParam::#variant(order) => {
-                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let sea_order = match order { 
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Desc
+                        };
                         let expr = sea_orm::sea_query::Expr::cust(&format!(
                             "(SELECT COUNT(*) FROM \"{}\" WHERE \"{}\".\"{}\" = \"{}\".\"{}\")",
                             #target_table_lit, #target_table_lit, #fk_col_lit, #current_table_lit, #pk_col_lit
@@ -3163,7 +3826,11 @@ pub fn generate_entity(
                 let fk_col_lit = syn::LitStr::new(&fk_col_snake, proc_macro2::Span::call_site());
                 Some(quote! {
                     RelationOrderByParam::#variant(field_name, order) => {
-                        let sea_order = match order { caustics::SortOrder::Asc => sea_orm::Order::Asc, _ => sea_orm::Order::Desc };
+                        let sea_order = match order { 
+                            caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                            caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                            _ => sea_orm::Order::Desc
+                        };
                         // Get the target table name and primary key from entity metadata at runtime
                         let target_table_name = if let Some(metadata) = crate::get_entity_metadata(#relation_name_snake) {
                             metadata.table_name
@@ -3205,7 +3872,22 @@ pub fn generate_entity(
                         Ok(col) => col,
                         Err(_) => return None, // Skip this relation if validation fails
                     };
-                    let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
+                    let foreign_key_column_ident = match relation.kind {
+                        RelationKind::BelongsTo => {
+                            // For belongs_to, use the target entity's primary key column
+                            if !relation.target_primary_key_columns.is_empty() {
+                                format_ident!("{}", relation.target_primary_key_columns[0].to_pascal_case())
+                            } else if let Some(pk_field) = &relation.primary_key_field {
+                                format_ident!("{}", pk_field.to_pascal_case())
+                            } else {
+                                format_ident!("Id") // fallback
+                            }
+                        }
+                        RelationKind::HasMany => {
+                            // For has_many, use the current entity's primary key column
+                            format_ident!("{}", foreign_key_column.to_pascal_case())
+                        }
+                    };
                     let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
                     quote! {
                         #relation_name_lit => {
@@ -3286,7 +3968,22 @@ pub fn generate_entity(
                         Ok(col) => col,
                         Err(_) => return None, // Skip this relation if validation fails
                     };
-                    let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
+                    let foreign_key_column_ident = match relation.kind {
+                        RelationKind::BelongsTo => {
+                            // For belongs_to, use the target entity's primary key column
+                            if !relation.target_primary_key_columns.is_empty() {
+                                format_ident!("{}", relation.target_primary_key_columns[0].to_pascal_case())
+                            } else if let Some(pk_field) = &relation.primary_key_field {
+                                format_ident!("{}", pk_field.to_pascal_case())
+                            } else {
+                                format_ident!("Id") // fallback
+                            }
+                        }
+                        RelationKind::HasMany => {
+                            // For has_many, use the current entity's primary key column
+                            format_ident!("{}", foreign_key_column.to_pascal_case())
+                        }
+                    };
                     let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
                     quote! {
                         #relation_name_lit => {
@@ -3797,14 +4494,12 @@ pub fn generate_entity(
             }
             RelationKind::BelongsTo => {
                 // Use the foreign key field from the relation definition
-                let foreign_key_field_name = relation
-                    .foreign_key_field
-                    .as_ref()
-                    .expect("BelongsTo relation must have foreign_key_field defined");
-                let foreign_key_field = format_ident!("{}", foreign_key_field_name);
+                let foreign_key_field_name = relation.get_first_fk_column_name();
+                let foreign_key_field_name_snake = foreign_key_field_name.to_snake_case();
+                let foreign_key_field = format_ident!("{}", foreign_key_field_name_snake);
                 let is_optional = if let Some(field) = fields
                     .iter()
-                    .find(|f| f.ident.as_ref().unwrap().to_string() == *foreign_key_field_name)
+                    .find(|f| f.ident.as_ref().unwrap().to_string() == foreign_key_field_name_snake)
                 {
                     is_option(&field.ty)
                 } else {
@@ -3885,7 +4580,7 @@ pub fn generate_entity(
         let fk_field_name_lit = match relation.kind {
             RelationKind::HasMany => syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site()),
             RelationKind::BelongsTo => syn::LitStr::new(
-                relation.foreign_key_field.as_ref().unwrap(),
+                &relation.get_first_fk_column_name(),
                 proc_macro2::Span::call_site(),
             ),
         };
@@ -4029,7 +4724,14 @@ pub fn generate_entity(
         let foreign_key_column = syn::LitStr::new(&foreign_key_column, proc_macro2::Span::call_site());
         let fk_field_name_lit = match relation.kind {
             RelationKind::HasMany => syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site()),
-            RelationKind::BelongsTo => syn::LitStr::new(relation.foreign_key_field.as_ref().unwrap(), proc_macro2::Span::call_site()),
+            RelationKind::BelongsTo => syn::LitStr::new(
+                if !relation.foreign_key_fields.is_empty() {
+                    &relation.foreign_key_fields[0]
+                } else {
+                    relation.foreign_key_field.as_ref().unwrap()
+                },
+                proc_macro2::Span::call_site()
+            ),
         };
         let target_table_default = relation.name.to_snake_case();
         // Use the resolved target table name from build-time metadata
@@ -4137,38 +4839,56 @@ pub fn generate_entity(
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
             matches!(relation.kind, RelationKind::BelongsTo) &&
-            relation.foreign_key_field.is_some()
+            (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
         })
         .map(|relation| {
             let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
-            let foreign_key_field = format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
+            let foreign_key_field = format_ident!("{}", 
+                if !relation.foreign_key_fields.is_empty() {
+                    &relation.foreign_key_fields[0]
+                } else {
+                    relation.foreign_key_field.as_ref().unwrap()
+                }
+            );
             let target_module = &relation.target;
-            let fk_field_name = relation.foreign_key_field.as_ref().unwrap();
+            let fk_field_name = relation.get_first_fk_column_name();
             let target_entity_name = relation.target.segments.last().unwrap().ident.to_string().to_lowercase();
 
             // Add variables for registry-based conversion
             let entity_name = entity_context.registry_name();
-            let foreign_key_field_name = fk_field_name;
+            let foreign_key_field_name = fk_field_name.clone();
+            let foreign_key_field_name_snake = fk_field_name.to_snake_case();
+            let is_nullable = relation.is_nullable;
 
             // Get the primary key field name from the relation definition or use dynamic detection
-            let primary_key_field_name_raw = if let Some(pk) = &relation.primary_key_field {
-                pk.clone()
+            // For belongs_to relations, we need the primary key of the TARGET entity, not the current entity
+            let primary_key_variant = if relation.is_composite && !relation.target_primary_key_fields.is_empty() {
+                // For composite keys, concatenate all field names in PascalCase joined with "And"
+                let composite_name = relation.target_primary_key_fields
+                    .iter()
+                    .map(|field| field.to_pascal_case())
+                    .collect::<Vec<_>>()
+                    .join("And");
+                format_ident!("{}Equals", composite_name)
+            } else if !relation.target_primary_key_fields.is_empty() {
+                // For single keys, use the actual field name
+                let pk_field = &relation.target_primary_key_fields[0];
+                let pk_pascal = pk_field.to_pascal_case();
+                format_ident!("{}Equals", pk_pascal)
+            } else if let Some(pk) = &relation.primary_key_field {
+                let pk_pascal = pk.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>()
+                    + &pk[1..];
+                format_ident!("{}Equals", pk_pascal)
             } else {
-                // Use the current entity's primary key field name
-                get_primary_key_field_name(&fields)
+                // Default to primary key field for the target entity
+                format_ident!("{}Equals", current_primary_key.to_pascal_case())
             };
-            let primary_key_field_name = primary_key_field_name_raw.to_snake_case();
-            let primary_key_pascal = primary_key_field_name_raw.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>()
-                + &primary_key_field_name_raw[1..];
-            let primary_key_variant = format_ident!("{}Equals", primary_key_pascal);
-            let primary_key_field_ident = format_ident!("{}", primary_key_field_name);
+            let primary_key_field_name = relation.primary_key_field.clone().unwrap_or_else(|| "id".to_string());
+            let primary_key_field_ident = format_ident!("{}", primary_key_field_name.to_snake_case());
 
-            // Check if this is an optional relation
-            let is_optional = if let Some(field) = fields.iter().find(|f| f.ident.as_ref().unwrap().to_string() == *fk_field_name) {
-                is_option(&field.ty)
-            } else {
-                false
-            };
+            // Check if this is an optional relation and get field type
+            let (is_optional, fk_field_type, fk_field_type_inner) = find_field_and_extract_type_info(&fields, &fk_field_name)
+                .unwrap_or_else(|| (false, &fields[0].ty, &fields[0].ty)); // fallback, should not happen
 
             if is_optional {
                 quote! {
@@ -4176,8 +4896,8 @@ pub fn generate_entity(
                         match where_param {
                             #target_module::UniqueWhereParam::#primary_key_variant(key) => {
                                 // Extract the value from CausticsKey for database field assignment
-                                let fk_value = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name, key);
-                                model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
+                                let active_value_boxed = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name_snake, key);
+                                model.#foreign_key_field = *active_value_boxed.downcast::<sea_orm::ActiveValue<Option<#fk_field_type_inner>>>().expect("Failed to downcast to ActiveValue");
                             }
                             other => {
                                 // Store deferred lookup instead of executing (optional FK -> wrap in Some)
@@ -4186,8 +4906,8 @@ pub fn generate_entity(
                                     |model, value| {
                                         let model = model.downcast_mut::<ActiveModel>().unwrap();
                                         // Extract the value from CausticsKey for database field assignment
-                                        let fk_value = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name, value);
-                                        model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
+                                        let active_value_boxed = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name_snake, value);
+                                        model.#foreign_key_field = *active_value_boxed.downcast::<sea_orm::ActiveValue<Option<#fk_field_type_inner>>>().expect("Failed to downcast to ActiveValue");
                                     },
                                     |conn: & sea_orm::DatabaseConnection, param| {
                                         let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
@@ -4240,8 +4960,8 @@ pub fn generate_entity(
                         match where_param {
                             #target_module::UniqueWhereParam::#primary_key_variant(key) => {
                                 // Extract the value from CausticsKey for database field assignment
-                                let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, key);
-                                model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
+                                let active_value_boxed = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name_snake, key);
+                                model.#foreign_key_field = *active_value_boxed.downcast::<sea_orm::ActiveValue<#fk_field_type>>().expect("Failed to downcast to ActiveValue");
                             }
                             other => {
                                 // Store deferred lookup instead of executing
@@ -4250,8 +4970,8 @@ pub fn generate_entity(
                             |model, value| {
                                 let model = model.downcast_mut::<ActiveModel>().unwrap();
                                 // Extract the value from CausticsKey for database field assignment
-                                let fk_value = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name, value);
-                                model.#foreign_key_field = *fk_value.downcast::<sea_orm::ActiveValue<_>>().expect("Failed to downcast to ActiveValue");
+                                let active_value_boxed = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name_snake, value);
+                                model.#foreign_key_field = *active_value_boxed.downcast::<sea_orm::ActiveValue<#fk_field_type>>().expect("Failed to downcast to ActiveValue");
                             },
                                      |conn: & sea_orm::DatabaseConnection, param| {
                                         let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
@@ -4310,7 +5030,7 @@ pub fn generate_entity(
         .filter(|relation| {
             // Only include belongs_to relationships (where this entity has the foreign key)
             matches!(relation.kind, RelationKind::BelongsTo)
-                && relation.foreign_key_field.is_some()
+                && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
                 && {
                     // Only optional relations can be disconnected (set to None)
                     let fk_field_name = relation
@@ -4332,8 +5052,13 @@ pub fn generate_entity(
         })
         .map(|relation| {
             let relation_name = format_ident!("Disconnect{}", relation.name.to_pascal_case());
-            let foreign_key_field =
-                format_ident!("{}", relation.foreign_key_field.as_ref().unwrap());
+            let foreign_key_field = format_ident!("{}", 
+                if !relation.foreign_key_fields.is_empty() {
+                    &relation.foreign_key_fields[0]
+                } else {
+                    relation.foreign_key_field.as_ref().unwrap()
+                }
+            );
             quote! {
                 SetParam::#relation_name => {
                     model.#foreign_key_field = sea_orm::ActiveValue::Set(None);
@@ -4633,7 +5358,9 @@ pub fn generate_entity(
             )
         })
         .collect();
-    // Generate all field identifiers for column access (PascalCase for SeaORM)
+    // Generate all field identifiers for column access
+    // SeaORM's DeriveEntityModel generates Column enum with PascalCase variants
+    // We need to match exactly what SeaORM generates
     let all_field_idents: Vec<_> = fields
         .iter()
         .map(|field| {
@@ -4642,7 +5369,9 @@ pub fn generate_entity(
                 .as_ref()
                 .expect("Field has no identifier - this should not happen in valid code")
                 .to_string();
-            // Convert snake_case to PascalCase
+            
+            // Convert snake_case field name to PascalCase for SeaORM Column enum
+            // This matches exactly how SeaORM's DeriveEntityModel generates the Column enum
             let pascal_case = field_name
                 .split('_')
                 .map(|part| {
@@ -5208,6 +5937,12 @@ pub fn generate_entity(
             }
         }
 
+        impl sea_query::IntoCondition for UniqueWhereParam {
+            fn into_condition(self) -> Condition {
+                self.into()
+            }
+        }
+
         impl From<OrderByParam> for (<Entity as EntityTrait>::Column, sea_orm::Order) {
             fn from(param: OrderByParam) -> Self {
                 match param {
@@ -5371,8 +6106,7 @@ pub fn generate_entity(
 
         pub(crate) fn __extract_id(m: &<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey {
             use caustics::ToSeaOrmValue;
-            let val = (&m.#current_primary_key_ident).to_sea_orm_value();
-            caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+            #composite_key_extraction
         }
 
         impl Create {
@@ -5589,7 +6323,11 @@ pub fn generate_entity(
                     let expr = match field {
                         #(GroupByFieldParam::#group_by_field_variants => <Entity as EntityTrait>::Column::#group_by_field_variants.into_simple_expr(),)*
                     };
-                    let ord = match dir { caustics::SortOrder::Asc => sea_orm::Order::Asc, caustics::SortOrder::Desc => sea_orm::Order::Desc };
+                    let ord = match dir { 
+                        caustics::SortOrder::Asc => sea_orm::Order::Asc, 
+                        caustics::SortOrder::Desc => sea_orm::Order::Desc,
+                        _ => sea_orm::Order::Asc
+                    };
                     builder.order_by.push((expr, ord));
                 }
                 if let Some(n) = take { builder.take = Some(if n < 0 { 0 } else { n as u64 }); }

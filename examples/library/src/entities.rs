@@ -9,8 +9,8 @@ pub mod author {
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "authors")]
     pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false, column_name = "authorId")]
-        pub id: String,
+        #[sea_orm(primary_key, auto_increment = true, column_name = "authorId")]
+        pub id: i32,
         #[sea_orm(column_name = "firstName")]
         pub first_name: String,
         #[sea_orm(column_name = "lastName")]
@@ -49,14 +49,14 @@ pub mod book {
     #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "books")]
     pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false, column_name = "bookId")]
-        pub id: String,
-        #[sea_orm(column_name = "bookTitle")]
+        #[sea_orm(primary_key, auto_increment = false, column_name = "bookTitle")]
         pub title: String,
+        #[sea_orm(primary_key, auto_increment = false, column_name = "authorId")]
+        pub author_id: i32,
+        #[sea_orm(column_name = "publicationYear")]
+        pub publication_year: i32,
         #[sea_orm(column_name = "genres", column_type = "Json")]
-        pub genres: Vec<String>,
-        #[sea_orm(column_name = "authorId")]
-        pub author_id: String,
+        pub genres: serde_json::Value,
         #[sea_orm(column_name = "createdAt")]
         pub created_at: DateTime<Utc>,
         #[sea_orm(column_name = "updatedAt")]
@@ -78,6 +78,7 @@ pub mod book {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
 
 
 #[caustics]

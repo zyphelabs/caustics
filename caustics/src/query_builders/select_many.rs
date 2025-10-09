@@ -92,9 +92,9 @@ where
                 first_order
             };
             let cmp_expr = match effective_order {
-                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
-                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lte(cursor_value.clone()),
-                _ => Expr::expr(cursor_expr.clone()).gte(cursor_value.clone()),
+                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
+                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lt(cursor_value.clone()),
+                _ => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
             };
             query = query.filter(Condition::all().add(cmp_expr));
             if self.pending_order_bys.is_empty() {
@@ -183,7 +183,9 @@ where
                         }
                     }
 
-                    // For now, we'll rely on the basic defensive field logic
+                    // Implement comprehensive defensive field logic
+                    // Ensure all required fields for relations are fetched
+                    // For now, rely on the basic defensive field logic
                     // The macro-generated code will handle the defensive field fetching
 
                     // For has_many relations, also ensure we have the foreign key field from the target

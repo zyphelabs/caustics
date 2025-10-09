@@ -37,6 +37,10 @@ pub enum CausticsKey {
     NaiveTime(chrono::NaiveTime),
     // JSON
     Json(serde_json::Value),
+    
+    // Composite key types
+    Composite(Vec<(String, CausticsKey)>),
+    OptionalComposite(Option<Vec<(String, CausticsKey)>>),
 }
 
 impl CausticsKey {
@@ -141,6 +145,22 @@ impl CausticsKey {
             Self::NaiveTime(value) => Value::String(Some(Box::new(value.to_string()))),
             // JSON
             Self::Json(value) => Value::Json(Some(Box::new(value.clone()))),
+            // Composite keys - fallback to first key's value or null
+            Self::Composite(fields) => {
+                if let Some((_, first_key)) = fields.first() {
+                    first_key.to_db_value()
+                } else {
+                    Value::String(None)
+                }
+            }
+            Self::OptionalComposite(Some(fields)) => {
+                if let Some((_, first_key)) = fields.first() {
+                    first_key.to_db_value()
+                } else {
+                    Value::String(None)
+                }
+            }
+            Self::OptionalComposite(None) => Value::String(None),
         }
     }
 
@@ -212,6 +232,53 @@ impl CausticsKey {
             _ => None,
         }
     }
+
+    // Composite key methods
+    pub fn composite(fields: Vec<(String, CausticsKey)>) -> Self {
+        Self::Composite(fields)
+    }
+
+    pub fn optional_composite(fields: Option<Vec<(String, CausticsKey)>>) -> Self {
+        Self::OptionalComposite(fields)
+    }
+
+    pub fn as_composite(&self) -> Option<&Vec<(String, CausticsKey)>> {
+        match self {
+            CausticsKey::Composite(fields) => Some(fields),
+            CausticsKey::OptionalComposite(Some(fields)) => Some(fields),
+            _ => None,
+        }
+    }
+
+    pub fn is_optional_composite(&self) -> bool {
+        matches!(self, CausticsKey::OptionalComposite(_))
+    }
+
+    pub fn to_db_conditions(&self) -> Vec<(String, sea_orm::Value)> {
+        match self {
+            CausticsKey::Composite(fields) => {
+                fields.iter()
+                    .map(|(name, key)| (name.clone(), key.to_db_value()))
+                    .collect()
+            }
+            CausticsKey::OptionalComposite(Some(fields)) => {
+                fields.iter()
+                    .map(|(name, key)| (name.clone(), key.to_db_value()))
+                    .collect()
+            }
+            CausticsKey::OptionalComposite(None) => Vec::new(),
+            _ => vec![("".to_string(), self.to_db_value())],
+        }
+    }
+
+    pub fn to_composite_db_values(&self) -> Vec<sea_orm::Value> {
+        match self {
+            CausticsKey::Composite(fields) => fields.iter().map(|(_, key)| key.to_db_value()).collect(),
+            CausticsKey::OptionalComposite(Some(fields)) => fields.iter().map(|(_, key)| key.to_db_value()).collect(),
+            CausticsKey::OptionalComposite(None) => Vec::new(),
+            _ => vec![self.to_db_value()],
+        }
+    }
 }
 
 impl Eq for CausticsKey {}
@@ -245,6 +312,20 @@ impl std::hash::Hash for CausticsKey {
             CausticsKey::NaiveTime(value) => value.hash(state),
             // JSON
             CausticsKey::Json(value) => value.to_string().hash(state),
+            // Composite keys - hash all components
+            CausticsKey::Composite(fields) => {
+                for (name, key) in fields {
+                    name.hash(state);
+                    key.hash(state);
+                }
+            }
+            CausticsKey::OptionalComposite(Some(fields)) => {
+                for (name, key) in fields {
+                    name.hash(state);
+                    key.hash(state);
+                }
+            }
+            CausticsKey::OptionalComposite(None) => "None".hash(state),
         }
     }
 }
@@ -278,6 +359,20 @@ impl fmt::Display for CausticsKey {
             Self::NaiveTime(value) => write!(f, "{}", value),
             // JSON
             Self::Json(value) => write!(f, "{}", value),
+            // Composite keys
+            Self::Composite(fields) => {
+                let field_strings: Vec<String> = fields.iter()
+                    .map(|(name, key)| format!("{}:{}", name, key))
+                    .collect();
+                write!(f, "Composite({})", field_strings.join(", "))
+            }
+            Self::OptionalComposite(Some(fields)) => {
+                let field_strings: Vec<String> = fields.iter()
+                    .map(|(name, key)| format!("{}:{}", name, key))
+                    .collect();
+                write!(f, "OptionalComposite({})", field_strings.join(", "))
+            }
+            Self::OptionalComposite(None) => write!(f, "OptionalComposite(None)"),
         }
     }
 }
@@ -1141,6 +1236,20 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
             CausticsKey::NaiveDate(value) => Box::new(value.format("%Y-%m-%d").to_string()),
             CausticsKey::NaiveTime(value) => Box::new(value.format("%H:%M:%S").to_string()),
             CausticsKey::Json(value) => Box::new(value.to_string()),
+            // Composite keys - convert to string representation
+            CausticsKey::Composite(fields) => {
+                let field_strings: Vec<String> = fields.iter()
+                    .map(|(name, key)| format!("{}:{}", name, key))
+                    .collect();
+                Box::new(format!("Composite({})", field_strings.join(", ")))
+            }
+            CausticsKey::OptionalComposite(Some(fields)) => {
+                let field_strings: Vec<String> = fields.iter()
+                    .map(|(name, key)| format!("{}:{}", name, key))
+                    .collect();
+                Box::new(format!("OptionalComposite({})", field_strings.join(", ")))
+            }
+            CausticsKey::OptionalComposite(None) => Box::new("OptionalComposite(None)".to_string()),
         },
         "bool" => match key {
             CausticsKey::Bool(value) => Box::new(value),
@@ -1159,14 +1268,14 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
             CausticsKey::String(value) => Box::new(value.parse::<bool>().unwrap_or(false)),
             _ => Box::new(false),
         },
-        "uuid::Uuid" => match key {
+        "uuid::Uuid" | "Uuid" => match key {
             CausticsKey::Uuid(value) => Box::new(value),
             CausticsKey::String(value) => {
                 Box::new(value.parse::<Uuid>().unwrap_or_else(|_| Uuid::new_v4()))
             }
             _ => Box::new(Uuid::new_v4()),
         },
-        "chrono::DateTime<chrono::Utc>" => match key {
+        "chrono::DateTime<chrono::Utc>" | "caustics::chrono::DateTime<caustics::chrono::Utc>" => match key {
             CausticsKey::DateTimeUtc(value) => Box::new(value),
             CausticsKey::String(value) => Box::new(
                 value
@@ -1175,7 +1284,7 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
             ),
             _ => Box::new(chrono::Utc::now()),
         },
-        "chrono::NaiveDateTime" => match key {
+        "chrono::NaiveDateTime" | "caustics::chrono::NaiveDateTime" => match key {
             CausticsKey::NaiveDateTime(value) => Box::new(value),
             CausticsKey::String(value) => {
                 Box::new(value.parse::<chrono::NaiveDateTime>().unwrap_or_else(|_| {
@@ -1184,7 +1293,7 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
             }
             _ => Box::new(chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()),
         },
-        "chrono::NaiveDate" => match key {
+        "chrono::NaiveDate" | "caustics::chrono::NaiveDate" => match key {
             CausticsKey::NaiveDate(value) => Box::new(value),
             CausticsKey::String(value) => Box::new(
                 value
@@ -1193,7 +1302,7 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
             ),
             _ => Box::new(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
         },
-        "chrono::NaiveTime" => match key {
+        "chrono::NaiveTime" | "caustics::chrono::NaiveTime" => match key {
             CausticsKey::NaiveTime(value) => Box::new(value),
             CausticsKey::String(value) => Box::new(
                 value
@@ -1202,7 +1311,7 @@ pub fn convert_key_to_type_from_string<T: 'static + Default + Send + Sync>(
             ),
             _ => Box::new(chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
         },
-        "serde_json::Value" => match key {
+        "serde_json::Value" | "caustics::serde_json::Value" => match key {
             CausticsKey::Json(value) => Box::new(value),
             CausticsKey::String(value) => Box::new(
                 serde_json::from_str::<serde_json::Value>(&value)
@@ -1493,6 +1602,20 @@ pub fn convert_key_to_type<T: 'static + Default + Send + Sync>(
             CausticsKey::NaiveDate(value) => Box::new(value.to_string()),
             CausticsKey::NaiveTime(value) => Box::new(value.to_string()),
             CausticsKey::Json(value) => Box::new(value.to_string()),
+            // Composite keys - convert to string representation
+            CausticsKey::Composite(fields) => {
+                let field_strings: Vec<String> = fields.iter()
+                    .map(|(name, key)| format!("{}:{}", name, key))
+                    .collect();
+                Box::new(format!("Composite({})", field_strings.join(", ")))
+            }
+            CausticsKey::OptionalComposite(Some(fields)) => {
+                let field_strings: Vec<String> = fields.iter()
+                    .map(|(name, key)| format!("{}:{}", name, key))
+                    .collect();
+                Box::new(format!("OptionalComposite({})", field_strings.join(", ")))
+            }
+            CausticsKey::OptionalComposite(None) => Box::new("OptionalComposite(None)".to_string()),
         },
         // Boolean type
         type_id if type_id == std::any::TypeId::of::<bool>() => match key {

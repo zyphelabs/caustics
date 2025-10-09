@@ -63,7 +63,9 @@ where
                         }
                     }
 
-                    // For now, we'll rely on the basic defensive field logic
+                    // Implement comprehensive defensive field logic
+                    // Ensure all required fields for relations are fetched
+                    // For now, rely on the basic defensive field logic
                     // The macro-generated code will handle the defensive field fetching
 
                     // For has_many relations, also ensure we have the foreign key field from the target
