@@ -27,7 +27,7 @@ where
                             + Send
                             + 'b,
                     >,
-                > + Send,
+                > + Send + Sync,
         >,
     >,
     pub _phantom: std::marker::PhantomData<(Entity, ActiveModel, ModelWithRelations)>,

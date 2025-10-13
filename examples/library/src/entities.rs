@@ -26,9 +26,9 @@ pub mod author {
     }
 
     #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    #[allow(unreachable_code)]
     pub enum Relation {
         #[sea_orm(has_many = "super::book::Entity", from = "Column::Id", to = "super::book::Column::AuthorId")]
+        /// #[caustics(field_name="published_works")]
         Books,
     }
 
@@ -58,13 +58,14 @@ pub mod book {
         #[sea_orm(column_name = "genres", column_type = "Json")]
         pub genres: serde_json::Value,
         #[sea_orm(column_name = "createdAt")]
+        /// #[caustics(default)]
         pub created_at: DateTime<Utc>,
         #[sea_orm(column_name = "updatedAt")]
+        /// #[caustics(default)]
         pub updated_at: DateTime<Utc>,
     }
 
     #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    #[allow(unreachable_code)]
     pub enum Relation {
         #[sea_orm(belongs_to = "super::author::Entity", from = "Column::AuthorId", to = "super::author::Column::Id")]
         Author,

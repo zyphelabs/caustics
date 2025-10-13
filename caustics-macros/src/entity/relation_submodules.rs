@@ -1,6 +1,6 @@
 use crate::common::is_option;
 use crate::entity::types::{Relation, RelationKind};
-use heck::{ToPascalCase, ToSnakeCase};
+use inflector::Inflector;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -10,10 +10,11 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
 
     for relation in relations {
         let relation_name = &relation.name;
-        let relation_name_ident = format_ident!("{}", relation_name.to_lowercase());
-        let relation_name_lower = relation_name.to_lowercase();
-        let relation_name_lower_ident = format_ident!("{}", relation_name_lower);
-        let relation_name_str = relation_name.to_snake_case();
+        let relation_field_name = relation.get_field_name();
+        let relation_name_ident = format_ident!("{}", relation_field_name.to_snake_case());
+        let relation_name_snake = relation_field_name.to_snake_case();
+        let relation_name_snake_ident = format_ident!("{}", relation_name_snake);
+        let relation_name_str = relation_field_name;
         let relation_name_lit =
             syn::LitStr::new(&relation_name_str, proc_macro2::Span::call_site());
         let target = &relation.target;

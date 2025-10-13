@@ -1942,3 +1942,34 @@ fn generate_primary_key_operations(
     }
 }
 
+/// Detect the specific datetime type from the syn::Type
+pub fn detect_datetime_type(ty: &syn::Type) -> Option<&'static str> {
+    match ty {
+        syn::Type::Path(path) => {
+            if let Some(segment) = path.path.segments.last() {
+                match segment.ident.to_string().as_str() {
+                    "NaiveDateTime" => Some("NaiveDateTime"),
+                    "NaiveDate" => Some("NaiveDate"),
+                    "DateTime" => Some("DateTime"),
+                    "Option" => {
+                        // Handle Option<T> types
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                                detect_datetime_type(inner_ty)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+

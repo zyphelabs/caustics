@@ -1506,6 +1506,86 @@ pub fn generate_entity(
         quote! {}
     };
 
+    // Check if we have any datetime fields with caustics_default attribute
+    let has_datetime_defaults = fields
+        .iter()
+        .filter(|field| crate::primary_key::has_caustics_default_attr(field))
+        .any(|field| {
+            let field_type = crate::where_param::detect_field_type(&field.ty);
+            matches!(field_type, crate::where_param::FieldType::DateTime | crate::where_param::FieldType::OptionDateTime)
+        });
+
+    // Generate default values for fields with caustics_default attribute
+    let caustics_default_assignments = fields
+        .iter()
+        .filter(|field| crate::primary_key::has_caustics_default_attr(field))
+        .map(|field| {
+            let field_ident = field.ident.as_ref().expect("Field has no identifier");
+            let field_type = crate::where_param::detect_field_type(&field.ty);
+            
+            match field_type {
+                crate::where_param::FieldType::DateTime | crate::where_param::FieldType::OptionDateTime => {
+                    let datetime_type = crate::where_param::detect_datetime_type(&field.ty);
+                    match datetime_type {
+                        Some("NaiveDateTime") => {
+                            quote! {
+                                if model.#field_ident == sea_orm::ActiveValue::NotSet {
+                                    model.#field_ident = sea_orm::ActiveValue::Set(now_naive);
+                                }
+                            }
+                        },
+                        Some("NaiveDate") => {
+                            quote! {
+                                if model.#field_ident == sea_orm::ActiveValue::NotSet {
+                                    model.#field_ident = sea_orm::ActiveValue::Set(now_naive.date());
+                                }
+                            }
+                        },
+                        _ => {
+                            quote! {
+                                if model.#field_ident == sea_orm::ActiveValue::NotSet {
+                                    model.#field_ident = sea_orm::ActiveValue::Set(now_utc);
+                                }
+                            }
+                        }
+                    }
+                },
+                crate::where_param::FieldType::Vec | crate::where_param::FieldType::OptionVec => {
+                    quote! {
+                        if model.#field_ident == sea_orm::ActiveValue::NotSet {
+                            model.#field_ident = sea_orm::ActiveValue::Set(Vec::new());
+                        }
+                    }
+                },
+                crate::where_param::FieldType::Boolean | crate::where_param::FieldType::OptionBoolean => {
+                    quote! {
+                        if model.#field_ident == sea_orm::ActiveValue::NotSet {
+                            model.#field_ident = sea_orm::ActiveValue::Set(false);
+                        }
+                    }
+                },
+                crate::where_param::FieldType::Json | crate::where_param::FieldType::OptionJson => {
+                    quote! {
+                        if model.#field_ident == sea_orm::ActiveValue::NotSet {
+                            model.#field_ident = sea_orm::ActiveValue::Set(serde_json::Value::Object(serde_json::Map::new()));
+                        }
+                    }
+                },
+                _ => quote! {}
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate datetime capture code if needed
+    let datetime_capture = if has_datetime_defaults {
+        quote! {
+            let now_utc = chrono::Utc::now();
+            let now_naive = now_utc.naive_utc();
+        }
+    } else {
+        quote! {}
+    };
+
     // Generate foreign key relation fields for Create struct
     let foreign_key_relation_fields = relations
         .iter()
@@ -1535,7 +1615,7 @@ pub fn generate_entity(
                 }
         })
         .map(|relation| {
-            let relation_name = format_ident!("{}", relation.name.to_snake_case());
+            let relation_name = format_ident!("{}", relation.get_field_name());
             let target_module = &relation.target;
             quote! {
                 pub #relation_name: #target_module::UniqueWhereParam
@@ -1572,7 +1652,7 @@ pub fn generate_entity(
                 }
         })
         .map(|relation| {
-            let relation_name = format_ident!("{}", relation.name.to_snake_case());
+            let relation_name = format_ident!("{}", relation.get_field_name());
             let target_module = &relation.target;
             quote! {
                 #relation_name: #target_module::UniqueWhereParam
@@ -1612,7 +1692,7 @@ pub fn generate_entity(
                     }
             })
             .map(|relation| {
-                let relation_name = format_ident!("{}", relation.name.to_snake_case());
+                let relation_name = format_ident!("{}", relation.get_field_name());
                 quote! { #relation_name }
             })
             .collect::<Vec<_>>()
@@ -1691,7 +1771,7 @@ pub fn generate_entity(
             let fk_field = relation.get_first_fk_column_name();
             let fk_field_snake = fk_field.to_snake_case();
             let fk_field_ident = format_ident!("{}", fk_field_snake);
-            let relation_name = format_ident!("{}", relation.name.to_snake_case());
+            let relation_name = format_ident!("{}", relation.get_field_name());
             let target_module = &relation.target;
 
             // Add variables for registry-based conversion
@@ -2000,7 +2080,7 @@ pub fn generate_entity(
                     let is_fk_nullable_lit =
                         syn::LitBool::new(false, proc_macro2::Span::call_site());
                     // Table/column literals for handler
-                    let relation_name_snake = relation.name.to_snake_case();
+                    let relation_name_snake = relation.get_field_name();
                     // Use the resolved target table name from build-time metadata
                     let target_table_name_expr = quote! { #relation_name_snake };
                     let current_table_name = relation
@@ -2074,7 +2154,7 @@ pub fn generate_entity(
                                 &'b sea_orm::DatabaseConnection,
                                 caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
-                            + Send
+                            + Send + Sync
                     > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: caustics::CausticsKey| {
                         let items_arc2 = std::sync::Arc::clone(&items_arc_for_conn);
                         Box::pin(async move {
@@ -2103,7 +2183,7 @@ pub fn generate_entity(
                                 &'b sea_orm::DatabaseTransaction,
                                 caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
-                            + Send
+                            + Send + Sync
                     > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: caustics::CausticsKey| {
                         let items_arc3 = std::sync::Arc::clone(&items_arc_for_txn);
                         Box::pin(async move {
@@ -2147,7 +2227,7 @@ pub fn generate_entity(
                                 &'b sea_orm::DatabaseConnection,
                                 caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
-                            + Send
+                            + Send + Sync
                     > = Box::new(move |conn: &sea_orm::DatabaseConnection, parent_id: caustics::CausticsKey| {
                         let items_arc2 = std::sync::Arc::clone(&items_arc_for_conn);
                         Box::pin(async move {
@@ -2176,7 +2256,7 @@ pub fn generate_entity(
                                 &'b sea_orm::DatabaseTransaction,
                                 caustics::CausticsKey,
                             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + Send + 'b>>
-                            + Send
+                            + Send + Sync
                     > = Box::new(move |txn: &sea_orm::DatabaseTransaction, parent_id: caustics::CausticsKey| {
                         let items_arc3 = std::sync::Arc::clone(&items_arc_for_txn);
                         Box::pin(async move {
@@ -2890,7 +2970,7 @@ pub fn generate_entity(
     let relation_names_snake_lits: Vec<_> = relations
         .iter()
         .map(|relation| {
-            let name_str = relation.name.to_snake_case();
+            let name_str = relation.get_field_name();
             syn::LitStr::new(&name_str, proc_macro2::Span::call_site())
         })
         .collect();
@@ -3170,7 +3250,7 @@ pub fn generate_entity(
         relations
             .iter()
             .map(|relation| {
-                let name = format_ident!("{}", relation.name.to_snake_case());
+                let name = format_ident!("{}", relation.get_field_name());
                 let target = &relation.target;
                 match relation.kind {
                     RelationKind::HasMany => {
@@ -3216,41 +3296,41 @@ pub fn generate_entity(
     } else {
         relations
             .iter()
-            .map(|relation| {
-                let name = format_ident!("{}", relation.name.to_snake_case());
-                let target = &relation.target;
-                match relation.kind {
-                    RelationKind::HasMany => {
-                        quote! { #name: Option<Vec<#target::ModelWithRelations>> }
-                    }
-                    RelationKind::BelongsTo => {
-                        // Check if this is an optional relation by looking at the foreign key field
-                        let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
-                            if let Some(field) = fields.iter().find(|f| {
-                                f.ident
-                                    .as_ref()
-                                    .expect("Field has no identifier")
-                                    .to_string()
-                                    == *fk_field_name
-                            }) {
-                                is_option(&field.ty)
-                            } else {
-                                false
-                            }
+        .map(|relation| {
+            let name = format_ident!("{}", relation.get_field_name());
+            let target = &relation.target;
+            match relation.kind {
+                RelationKind::HasMany => {
+                    quote! { #name: Option<Vec<#target::ModelWithRelations>> }
+                }
+                RelationKind::BelongsTo => {
+                    // Check if this is an optional relation by looking at the foreign key field
+                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                        if let Some(field) = fields.iter().find(|f| {
+                            f.ident
+                                .as_ref()
+                                .expect("Field has no identifier")
+                                .to_string()
+                                == *fk_field_name
+                        }) {
+                            is_option(&field.ty)
                         } else {
                             false
-                        };
-
-                        if is_optional {
-                            // For optional relations: Option<Option<ModelWithRelations>>
-                            quote! { #name: Option<Option<#target::ModelWithRelations>> }
-                        } else {
-                            // For required relations: Option<ModelWithRelations>
-                            quote! { #name: Option<#target::ModelWithRelations> }
                         }
+                    } else {
+                        false
+                    };
+
+                    if is_optional {
+                        // For optional relations: Option<Option<ModelWithRelations>>
+                        quote! { #name: Option<Option<#target::ModelWithRelations>> }
+                    } else {
+                        // For required relations: Option<ModelWithRelations>
+                        quote! { #name: Option<#target::ModelWithRelations> }
                     }
                 }
-            })
+            }
+        })
             .collect::<Vec<_>>()
     };
 
@@ -3260,10 +3340,10 @@ pub fn generate_entity(
     } else {
         relations
             .iter()
-            .map(|relation| {
-                let name = format_ident!("{}", relation.name.to_snake_case());
-                quote! { #name }
-            })
+        .map(|relation| {
+            let name = format_ident!("{}", relation.get_field_name());
+            quote! { #name }
+        })
             .collect::<Vec<_>>()
     };
 
@@ -3273,10 +3353,10 @@ pub fn generate_entity(
     } else {
         relations
             .iter()
-            .map(|relation| {
-                let name = format_ident!("{}", relation.name.to_snake_case());
-                quote! { #name: None }
-            })
+        .map(|relation| {
+            let name = format_ident!("{}", relation.get_field_name());
+            quote! { #name: None }
+        })
             .collect::<Vec<_>>()
     };
 
@@ -3367,7 +3447,7 @@ pub fn generate_entity(
     // Generate relation field names for to_model_with_relations function
     let relation_names = relations
         .iter()
-        .map(|relation| format_ident!("{}", relation.name.to_snake_case()))
+        .map(|relation| format_ident!("{}", relation.get_field_name()))
         .collect::<Vec<_>>();
 
     // Generate per-field row extraction statements using snake_case aliases
@@ -3402,7 +3482,7 @@ pub fn generate_entity(
     let selected_relation_fields = relations
         .iter()
         .map(|relation| {
-            let name = format_ident!("{}", relation.name.to_snake_case());
+            let name = format_ident!("{}", relation.get_field_name());
             let target = &relation.target;
             match relation.kind {
                 RelationKind::HasMany => {
@@ -3552,7 +3632,7 @@ pub fn generate_entity(
         .iter()
         .filter_map(|relation| {
             if matches!(relation.kind, RelationKind::HasMany) {
-                let name = format_ident!("{}", relation.name.to_snake_case());
+                let name = format_ident!("{}", relation.get_field_name());
                 Some(quote! { pub #name: Option<i32> })
             } else {
                 None
@@ -3583,7 +3663,7 @@ pub fn generate_entity(
         .iter()
         .filter_map(|relation| {
             if matches!(relation.kind, RelationKind::HasMany) {
-                let fn_name = format_ident!("{}_count", relation.name.to_snake_case());
+                let fn_name = format_ident!("{}_count", relation.get_field_name());
                 Some(fn_name)
             } else {
                 None
@@ -3613,7 +3693,7 @@ pub fn generate_entity(
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
                 // Use the resolved target table name from build-time metadata
-                let relation_name_snake = relation.name.to_snake_case();
+                let relation_name_snake = relation.get_field_name();
                 let target_table_name_expr = quote! { #relation_name_snake };
                 let current_table_name = relation
                     .current_table_name.clone()
@@ -3645,7 +3725,7 @@ pub fn generate_entity(
                 })
             } else if matches!(relation.kind, RelationKind::BelongsTo) {
                 let variant = format_ident!("{}Field", relation.name.to_pascal_case());
-                let relation_name_snake = relation.name.to_snake_case();
+                let relation_name_snake = relation.get_field_name();
                 let current_table_name = relation
                     .current_table_name.clone()
                     .unwrap_or_else(|| {
@@ -3694,7 +3774,7 @@ pub fn generate_entity(
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
                 // Use the resolved target table name from build-time metadata
-                let relation_name_snake = relation.name.to_snake_case();
+                let relation_name_snake = relation.get_field_name();
                 let target_table_name_expr = quote! { #relation_name_snake };
                 let current_table_name = relation
                     .current_table_name.clone()
@@ -3726,7 +3806,7 @@ pub fn generate_entity(
                 })
             } else if matches!(relation.kind, RelationKind::BelongsTo) {
                 let variant = format_ident!("{}Field", relation.name.to_pascal_case());
-                let relation_name_snake = relation.name.to_snake_case();
+                let relation_name_snake = relation.get_field_name();
                 let current_table_name = relation
                     .current_table_name.clone()
                     .unwrap_or_else(|| {
@@ -3778,7 +3858,7 @@ pub fn generate_entity(
             if matches!(relation.kind, RelationKind::HasMany) {
                 let variant = format_ident!("{}Count", relation.name.to_pascal_case());
                 // Use the resolved target table name from build-time metadata
-                let relation_name_snake = relation.name.to_snake_case();
+                let relation_name_snake = relation.get_field_name();
                 let target_table_name_expr = quote! { #relation_name_snake };
                 let current_table_name = relation
                     .current_table_name.clone()
@@ -3810,7 +3890,7 @@ pub fn generate_entity(
                 })
             } else if matches!(relation.kind, RelationKind::BelongsTo) {
                 let variant = format_ident!("{}Field", relation.name.to_pascal_case());
-                let relation_name_snake = relation.name.to_snake_case();
+                let relation_name_snake = relation.get_field_name();
                 let current_table_name = relation
                     .current_table_name.clone()
                     .unwrap_or_else(|| {
@@ -3859,7 +3939,7 @@ pub fn generate_entity(
     let relation_count_match_arms = relations
         .iter()
         .filter_map(|relation| {
-            let relation_name_snake = relation.name.to_snake_case();
+            let relation_name_snake = relation.get_field_name();
             let relation_name_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
             let target = &relation.target;
             match relation.kind {
@@ -3888,7 +3968,7 @@ pub fn generate_entity(
                             format_ident!("{}", foreign_key_column.to_pascal_case())
                         }
                     };
-                    let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
+                    let count_field_ident = format_ident!("{}", relation.get_field_name());
                     quote! {
                         #relation_name_lit => {
                             if let Some(fkv) = foreign_key_value {
@@ -3955,7 +4035,7 @@ pub fn generate_entity(
     let relation_count_match_arms_selected = relations
         .iter()
         .filter_map(|relation| {
-            let relation_name_snake = relation.name.to_snake_case();
+            let relation_name_snake = relation.get_field_name();
             let relation_name_lit = syn::LitStr::new(&relation_name_snake, proc_macro2::Span::call_site());
             let target = &relation.target;
             match relation.kind {
@@ -3984,7 +4064,7 @@ pub fn generate_entity(
                             format_ident!("{}", foreign_key_column.to_pascal_case())
                         }
                     };
-                    let count_field_ident = format_ident!("{}", relation.name.to_snake_case());
+                    let count_field_ident = format_ident!("{}", relation.get_field_name());
                     quote! {
                         #relation_name_lit => {
                             if let Some(fkv) = foreign_key_value_any.clone() {
@@ -4430,8 +4510,8 @@ pub fn generate_entity(
         Vec::new()
     } else {
         relations.iter().map(|relation| {
-        let rel_field = format_ident!("{}", relation.name.to_snake_case());
-        let name_str = relation.name.to_snake_case();
+        let rel_field = format_ident!("{}", relation.get_field_name());
+        let name_str = relation.get_field_name();
         let name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
         let target = &relation.target;
 
@@ -4479,7 +4559,7 @@ pub fn generate_entity(
                 } else {
                     // Use the relation name + "_id" pattern
                     // This is also dynamic and works with any relation name
-                    format!("{}_id", relation.name.to_snake_case())
+                    format!("{}_id", relation.get_field_name())
                 };
                 (
                     quote! { model.#id_field },
@@ -4546,7 +4626,7 @@ pub fn generate_entity(
             syn::LitStr::new(&foreign_key_column, proc_macro2::Span::call_site());
 
         // Get additional metadata from relation
-        let fallback_table_name = relation.name.to_snake_case();
+        let fallback_table_name = relation.get_field_name();
         // Use the resolved target table name from build-time metadata
         let target_table_name_expr = quote! { #fallback_table_name };
         let current_table_name = relation
@@ -4696,8 +4776,8 @@ pub fn generate_entity(
         Vec::new()
     } else {
         relations.iter().map(|relation| {
-        let rel_field = format_ident!("{}", relation.name.to_snake_case());
-        let name_str = relation.name.to_snake_case();
+        let rel_field = format_ident!("{}", relation.get_field_name());
+        let name_str = relation.get_field_name();
         let name = syn::LitStr::new(&name_str, proc_macro2::Span::call_site());
         let target = &relation.target;
 
@@ -4733,7 +4813,7 @@ pub fn generate_entity(
                 proc_macro2::Span::call_site()
             ),
         };
-        let target_table_default = relation.name.to_snake_case();
+        let target_table_default = relation.get_field_name();
         // Use the resolved target table name from build-time metadata
         let target_table_name_expr = quote! { #target_table_default };
         let current_primary_key_field_name_lit = syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site());
@@ -5455,7 +5535,7 @@ pub fn generate_entity(
     let from_model_relation_conversions = relations
         .iter()
         .map(|relation| {
-            let name = format_ident!("{}", relation.name.to_snake_case());
+            let name = format_ident!("{}", relation.get_field_name());
             match relation.kind {
                 RelationKind::HasMany => {
                     // Model doesn't have relation fields, so start as None
@@ -5492,7 +5572,7 @@ pub fn generate_entity(
     let from_model_relation_conversions = relations
         .iter()
         .map(|relation| {
-            let name = format_ident!("{}", relation.name.to_snake_case());
+            let name = format_ident!("{}", relation.get_field_name());
             match relation.kind {
                 RelationKind::HasMany => {
                     // Model doesn't have relation fields, so start as None
@@ -6115,8 +6195,14 @@ pub fn generate_entity(
                 let mut deferred_lookups = Vec::new();
                 let mut post_insert_ops: Vec<caustics::PostInsertOp<'static>> = Vec::new();
 
+                // Capture current time once for all datetime defaults
+                #datetime_capture
+
                 // Generate UUID for UUID primary keys if not already set
                 #uuid_pk_check
+
+                // Generate default values for fields with caustics_default attribute
+                #(#caustics_default_assignments)*
 
                 #(#required_assigns)*
                 #(#foreign_key_assigns)*
@@ -6402,7 +6488,7 @@ pub fn generate_entity(
             {
                 let metadata_provider = get_registry();
                 let cond: Condition = condition.into();
-                let cond_arc = Arc::new(cond.clone());
+                let cond_arc = std::sync::Arc::new(cond.clone());
                 let resolver: Box<
                     dyn for<'b> Fn(
                             &'b C,
@@ -6412,12 +6498,11 @@ pub fn generate_entity(
                                     + Send
                                     + 'b,
                             >,
-                        > + Send,
+                        > + Send + Sync,
                 > = Box::new({
-                    let cond_arc_outer = Arc::clone(&cond_arc);
+                    let cond_arc_clone = cond_arc.clone();
                     move |conn: &C| {
-                        // Clone the Arc inside the Fn each call to preserve Fn semantics
-                        let cond_arc_inner = Arc::clone(&cond_arc_outer);
+                        let cond_arc_inner = cond_arc_clone.clone();
                         let fut = async move {
                             use sea_orm::{EntityTrait, QueryFilter};
                             let cond_local = (*cond_arc_inner).clone();

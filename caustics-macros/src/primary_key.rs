@@ -41,19 +41,33 @@ pub fn is_auto_increment_field_impl(field: &Field) -> bool {
     true
 }
 
-/// Check if a field is marked with #[sea_orm(caustics_default)]
+/// Check if a field is marked with #[sea_orm(caustics_default)] or // #[caustics(default)]
 pub fn has_caustics_default_attr(field: &Field) -> bool {
-    field.attrs.iter().any(|attr| {
+    let result = field.attrs.iter().any(|attr| {
         if let syn::Meta::List(meta) = &attr.meta {
             if meta.path.is_ident("sea_orm") {
                 meta.tokens.to_string().contains("caustics_default")
             } else {
                 false
             }
+        } else if let syn::Meta::NameValue(nv) = &attr.meta {
+            if nv.path.is_ident("doc") {
+                if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                    let value = lit.value();
+                    value.trim().starts_with("#[caustics(default)]")
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         } else {
             false
         }
-    })
+    });
+    
+    
+    result
 }
 
 /// Information about a primary key field

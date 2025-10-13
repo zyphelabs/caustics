@@ -213,3 +213,18 @@ pub fn caustics_derive(_input: TokenStream) -> TokenStream {
 pub fn select_struct(input: TokenStream) -> TokenStream {
     select_struct::select_struct(input)
 }
+
+/// A simple attribute macro that does nothing but allows the attribute to be used
+/// The actual parsing is done in the relation extraction code
+#[proc_macro_attribute]
+pub fn caustics_fieldname(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // Just return the input unchanged - this is just to allow the attribute to be recognized
+    input
+}
+
+/// A simple attribute macro for custom field names that works with SeaORM
+#[proc_macro_attribute]
+pub fn fieldname(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // Just return the input unchanged - this is just to allow the attribute to be recognized
+    input
+}

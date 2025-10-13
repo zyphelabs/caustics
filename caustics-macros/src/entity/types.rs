@@ -49,6 +49,9 @@ pub struct Relation {
     // NEW: Composite relation metadata
     pub is_composite: bool,
     pub composite_key_mapping: Vec<(String, String)>, // (from_field, to_field)
+    
+    // Custom field name for the relation
+    pub custom_field_name: Option<String>,
 }
 
 impl Relation {
@@ -98,6 +101,21 @@ impl Relation {
                 .map(|field| field.to_pascal_case())
                 .collect::<Vec<_>>()
                 .join("And")
+        }
+    }
+
+    /// Get the field name for this relation, using custom name if provided, otherwise pluralizing for HasMany
+    pub fn get_field_name(&self) -> String {
+        use inflector::Inflector;
+        
+        if let Some(custom_name) = &self.custom_field_name {
+            custom_name.clone()
+        } else if matches!(self.kind, RelationKind::HasMany) {
+            // For HasMany relations, pluralize the relation name
+            self.name.to_snake_case().to_plural()
+        } else {
+            // For BelongsTo relations, use the relation name as-is
+            self.name.to_snake_case()
         }
     }
 }

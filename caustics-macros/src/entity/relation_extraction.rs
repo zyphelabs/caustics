@@ -27,6 +27,7 @@ pub fn extract_relations(
                 }
             }
 
+
             // Initialize relation with new composite fields
             let mut relation = Relation {
                 name: variant.ident.to_string(),
@@ -50,6 +51,7 @@ pub fn extract_relations(
                 current_table_name: Some(current_table_name.to_string()),
                 is_composite: false,
                 composite_key_mapping: Vec::new(),
+                custom_field_name: None,
             };
 
             // Process all sea_orm attributes for this variant
@@ -132,11 +134,31 @@ pub fn extract_relations(
                 }
             }
             
-            // If we found any foreign key fields, populate the relation
+                // If we found any foreign key fields, populate the relation
             if !relation.foreign_key_fields.is_empty() {
                 // Set is_composite only if we have multiple fields
                 if relation.foreign_key_fields.len() > 1 {
                     relation.is_composite = true;
+                }
+                
+                // Check for caustics field_name in comments
+                for attr in &variant.attrs {
+                    if let syn::Meta::NameValue(nv) = &attr.meta {
+                        if nv.path.is_ident("doc") {
+                            if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                let value = lit.value();
+                                if value.trim().starts_with("#[caustics(field_name=\"") {
+                                    if let Some(start) = value.find("field_name=\"") {
+                                        let start_pos = start + 12; // Length of "field_name=\""
+                                        if let Some(end) = value[start_pos..].find("\"") {
+                                            let field_name = &value[start_pos..start_pos + end];
+                                            relation.custom_field_name = Some(field_name.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 // Populate the old single-field approach for backward compatibility
