@@ -334,42 +334,66 @@ Books,
 - **Custom Names**: Override the default naming with your own field names
 - **BelongsTo Relations**: Remain singular by default (e.g., `Author` becomes `author`)
 
+### 3. `#[caustics(nullable)]` - Nullable HasOne Relations
+
+The `#[caustics(nullable)]` attribute allows you to mark has_one relations as optional, meaning the related record may not exist. This is particularly useful for optional one-to-one relationships.
+
+#### Syntax
+```rust
+#[sea_orm(has_one = "super::profile::Entity", from = "Column::Id", to = "super::profile::Column::AuthorId")]
+/// #[caustics(field_name="profile", nullable)]
+Profile,
+```
+
+#### Features
+- **Optional Relations**: Marks has_one relations as nullable, allowing them to be `None`
+- **Type Safety**: Returns `Option<Option<Box<Selected>>>` where:
+  - `None` = relation not fetched
+  - `Some(None)` = relation fetched but no record exists  
+  - `Some(Some(record))` = relation fetched and record exists
+- **Database Flexibility**: Allows for optional one-to-one relationships in your schema
+
 #### Example
 ```rust
 #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    // Default behavior - automatically becomes "books" field
-    #[sea_orm(has_many = "super::book::Entity", from = "Column::Id", to = "super::book::Column::AuthorId")]
-    Books,
+    // Required has_one relation
+    #[sea_orm(has_one = "super::api_key::Entity", from = "Column::Id", to = "super::api_key::Column::AuthorId")]
+    /// #[caustics(field_name="access_key")]
+    ApiKey,
     
-    // Custom field name - becomes "published_works" field
-    #[sea_orm(has_many = "super::book::Entity", from = "Column::Id", to = "super::book::Column::AuthorId")]
-    /// #[caustics(field_name="published_works")]
-    PublishedBooks,
-    
-    // BelongsTo relation - remains singular "author"
-    #[sea_orm(belongs_to = "super::author::Entity", from = "Column::AuthorId", to = "super::author::Column::Id")]
-    Author,
+    // Optional has_one relation
+    #[sea_orm(has_one = "super::profile::Entity", from = "Column::Id", to = "super::profile::Column::AuthorId")]
+    /// #[caustics(field_name="profile", nullable)]
+    Profile,
 }
 ```
 
 #### Generated Client Usage
 ```rust
-// Access relations with custom field names
-let author = client
+// Fetch author with optional profile
+let author_with_profile = client
     .author()
     .find_unique(author::id::equals(1))
-    .with(author::published_works::fetch())  // Custom field name
+    .with(author::profile::include(|rel| rel))
     .exec()
     .await?;
 
-// Default pluralization still works
-let author_with_books = client
-    .author()
-    .find_unique(author::id::equals(1))
-    .with(author::books::fetch())  // Default pluralized name
-    .exec()
-    .await?;
+// Handle the nullable relation
+match author_with_profile.profile {
+    Some(Some(profile)) => {
+        // Profile exists and was fetched
+        println!("Bio: {:?}", profile.bio);
+    }
+    Some(None) => {
+        // Profile was fetched but doesn't exist
+        println!("No profile found");
+    }
+    None => {
+        // Profile relation was not fetched
+        println!("Profile not included in query");
+    }
+}
 ```
 
 ## Basic Operations

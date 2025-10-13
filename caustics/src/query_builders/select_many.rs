@@ -169,7 +169,7 @@ where
         if !self.relations_to_fetch.is_empty() {
             for rf in &self.relations_to_fetch {
                 if let Some(desc) = Selected::get_relation_descriptor(rf.relation) {
-                    let needed_alias = if desc.is_has_many {
+                    let needed_alias = if desc.is_has_many || desc.is_has_one {
                         desc.current_primary_key_field_name
                     } else {
                         desc.foreign_key_field_name
@@ -188,8 +188,8 @@ where
                     // For now, rely on the basic defensive field logic
                     // The macro-generated code will handle the defensive field fetching
 
-                    // For has_many relations, also ensure we have the foreign key field from the target
-                    if desc.is_has_many {
+                    // For has_many and has_one relations, also ensure we have the foreign key field from the target
+                    if desc.is_has_many || desc.is_has_one {
                         // Add any additional fields that might be needed for relation filtering
                         if let Some(nested_aliases) = &rf.nested_select_aliases {
                             for nested_alias in nested_aliases {

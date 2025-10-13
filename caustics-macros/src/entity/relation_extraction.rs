@@ -52,6 +52,9 @@ pub fn extract_relations(
                 is_composite: false,
                 composite_key_mapping: Vec::new(),
                 custom_field_name: None,
+                
+                // For has_one relations: whether the target entity's foreign key is optional
+                target_fk_is_optional: None,
             };
 
             // Process all sea_orm attributes for this variant
@@ -75,6 +78,12 @@ pub fn extract_relations(
                                     relation.kind = RelationKind::HasMany;
                                 }
                             }
+                            Some("has_one") => {
+                                if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
+                                    belongs_to_target = Some(parse_target_path(&lit.value()));
+                                    relation.kind = RelationKind::HasOne;
+                                }
+                            }
                             Some("from") => {
                                 if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
                                     from_field = Some(extract_field_name(&lit.value()));
@@ -83,6 +92,16 @@ pub fn extract_relations(
                             Some("to") => {
                                 if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
                                     to_field = Some(extract_field_name(&lit.value()));
+                                }
+                            }
+                            Some("nullable") => {
+                                if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Bool(lit), .. }) = &nv.value {
+                                    relation.is_nullable = lit.value();
+                                }
+                            }
+                            Some("target_fk_optional") => {
+                                if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Bool(lit), .. }) = &nv.value {
+                                    relation.target_fk_is_optional = Some(lit.value());
                                 }
                             }
                             _ => {}
@@ -141,19 +160,25 @@ pub fn extract_relations(
                     relation.is_composite = true;
                 }
                 
-                // Check for caustics field_name in comments
+                    // Check for caustics field_name in comments
                 for attr in &variant.attrs {
                     if let syn::Meta::NameValue(nv) = &attr.meta {
                         if nv.path.is_ident("doc") {
                             if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit), .. }) = &nv.value {
                                 let value = lit.value();
-                                if value.trim().starts_with("#[caustics(field_name=\"") {
+                                if value.trim().starts_with("#[caustics(") {
+                                    // Parse caustics attributes from doc comment
                                     if let Some(start) = value.find("field_name=\"") {
                                         let start_pos = start + 12; // Length of "field_name=\""
                                         if let Some(end) = value[start_pos..].find("\"") {
                                             let field_name = &value[start_pos..start_pos + end];
                                             relation.custom_field_name = Some(field_name.to_string());
                                         }
+                                    }
+                                    
+                                    // Parse nullable attribute for has_one relations
+                                    if value.contains("nullable") {
+                                        relation.target_fk_is_optional = Some(true);
                                     }
                                 }
                             }

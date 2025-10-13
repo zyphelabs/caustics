@@ -52,6 +52,9 @@ pub struct Relation {
     
     // Custom field name for the relation
     pub custom_field_name: Option<String>,
+    
+    // For has_one relations: whether the target entity's foreign key is optional
+    pub target_fk_is_optional: Option<bool>,
 }
 
 impl Relation {
@@ -114,7 +117,7 @@ impl Relation {
             // For HasMany relations, pluralize the relation name
             self.name.to_snake_case().to_plural()
         } else {
-            // For BelongsTo relations, use the relation name as-is
+            // For BelongsTo and HasOne relations, use the relation name as-is (singular)
             self.name.to_snake_case()
         }
     }
@@ -124,4 +127,5 @@ impl Relation {
 pub enum RelationKind {
     HasMany,
     BelongsTo,
+    HasOne,
 }

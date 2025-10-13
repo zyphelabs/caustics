@@ -1,6 +1,6 @@
 use library::*;
 use sea_orm::{Database, DatabaseConnection, DbErr, ConnectionTrait};
-use library::entities::{author, book};
+use library::entities::{author, book, api_key, profile};
 use caustics::SortOrder;
 
 async fn setup_db() -> Result<DatabaseConnection, DbErr> {
@@ -21,6 +21,16 @@ async fn setup_db() -> Result<DatabaseConnection, DbErr> {
     let mut book_table = schema.create_table_from_entity(library::entities::book::Entity);
     book_table.if_not_exists();
     db.execute(db.get_database_backend().build(&book_table)).await?;
+
+    // Create API key table
+    let mut api_key_table = schema.create_table_from_entity(library::entities::api_key::Entity);
+    api_key_table.if_not_exists();
+    db.execute(db.get_database_backend().build(&api_key_table)).await?;
+
+    // Create profiles table
+    let mut profile_table = schema.create_table_from_entity(library::entities::profile::Entity);
+    profile_table.if_not_exists();
+    db.execute(db.get_database_backend().build(&profile_table)).await?;
 
     Ok(db)
 }
@@ -685,7 +695,6 @@ async fn test_custom_field_name_verification() -> Result<(), DbErr> {
 
     let now = chrono::Utc::now();
 
-    // Create an author
     let author = author_client.create(
         "Test".to_string(),
         "Author".to_string(),
@@ -695,7 +704,6 @@ async fn test_custom_field_name_verification() -> Result<(), DbErr> {
         vec![]
     ).exec().await?;
 
-    // Create a book for the author
     let _book = book_client.create(
         "Test Book".to_string(),
         author.id,
@@ -704,16 +712,305 @@ async fn test_custom_field_name_verification() -> Result<(), DbErr> {
         vec![]
     ).exec().await?;
 
-    // Test that the custom field name is working by checking if we can access
-    // the relation using the custom field name "published_works"
-    // This test verifies that the custom field name is actually being used
-    // in the generated client code
+    let author_with_books = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).with(author::published_works::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+    assert!(author_with_books.published_works.is_some());
+    let books = author_with_books.published_works.unwrap();
+    assert_eq!(books.len(), 1);
+    assert_eq!(books[0].title, "Test Book");
+    assert_eq!(books[0].author_id, author.id);
+    assert_eq!(books[0].publication_year, 2023);
+
+    let book_with_author = book_client.find_first(vec![
+        book::title::equals("Test Book".to_string())
+    ]).with(book::author::include(|rel| rel)).exec().await?
+        .expect("Book should exist");
+
+    assert!(book_with_author.author.is_some());
+    let loaded_author = book_with_author.author.unwrap();
+    assert_eq!(loaded_author.id, author.id);
+    assert_eq!(loaded_author.first_name, "Test");
+    assert_eq!(loaded_author.last_name, "Author");
+    assert_eq!(loaded_author.email, "test@example.com");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_has_one_relation_compilation() -> Result<(), DbErr> {
+    let db = setup_db().await?;
+    let client = CausticsClient::new(db.clone());
     
-    // The actual verification would happen in the generated client code
-    // where the relation field should be named "published_works" instead of "books"
-    // This is a placeholder test that confirms the feature is implemented
+    let author_client = client.author();
+    let api_key_client = client.api_key();
+
+    let now = chrono::Utc::now();
+    let author = author_client.create(
+        "John".to_string(),
+        "Doe".to_string(),
+        "john.doe@example.com".to_string(),
+        now,
+        now,
+        vec![author::date_of_birth::set(Some(now))]
+    ).exec().await?;
+
+    let author_without_api_key = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).exec().await?
+        .expect("Author should exist");
+
+    assert!(author_without_api_key.access_key.is_none());
+
+    let api_key_id = "test-key-123";
+    let api_key_value = "secret-key-value";
+    let allowed_origins = "https://example.com";
+    let options = serde_json::json!({"permissions": ["read", "write"]});
     
-    println!("Custom field name test completed - the relation should be accessible as 'published_works'");
+    let _api_key = api_key_client.create(
+        api_key_id.to_string(),
+        api_key_value.to_string(),
+        allowed_origins.to_string(),
+        options,
+        now.naive_utc(),
+        now.naive_utc(),
+        false,
+        author::id::equals(author.id),
+        vec![]
+    ).exec().await?;
+
+    // Debug: check if the api_key was created
+    let created_api_key = api_key_client.find_first(vec![]).exec().await?;
+    assert!(created_api_key.is_some());
+
+    let author_with_api_key = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).with(author::access_key::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+
+    assert!(author_with_api_key.access_key.is_some());
+    let loaded_api_key = author_with_api_key.access_key.unwrap();
     
+    assert_eq!(loaded_api_key.id, api_key_id);
+    assert_eq!(loaded_api_key.key, api_key_value);
+    assert_eq!(loaded_api_key.allowed_origins, allowed_origins);
+    assert_eq!(loaded_api_key.author_id, author.id);
+    assert_eq!(loaded_api_key.deleted, false);
+    assert!(loaded_api_key.deleted_at.is_none());
+
+    let api_key_with_author = api_key_client.find_first(vec![
+        api_key::id::equals(api_key_id.to_string())
+    ]).with(api_key::author::include(|rel| rel)).exec().await?
+        .expect("API key should exist");
+    
+    assert!(api_key_with_author.author.is_some());
+    let loaded_author = api_key_with_author.author.unwrap();
+    assert_eq!(loaded_author.id, author.id);
+    assert_eq!(loaded_author.first_name, "John");
+    assert_eq!(loaded_author.last_name, "Doe");
+    assert_eq!(loaded_author.email, "john.doe@example.com");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_nullable_has_one_relation() -> Result<(), DbErr> {
+    let db = setup_db().await?;
+    let client = CausticsClient::new(db.clone());
+    
+    let author_client = client.author();
+    let profile_client = client.profile();
+
+    let now = chrono::Utc::now();
+    
+    // Create an author without a profile
+    let author = author_client.create(
+        "Jane".to_string(),
+        "Smith".to_string(),
+        "jane.smith@example.com".to_string(),
+        now,
+        now,
+        vec![author::date_of_birth::set(Some(now))]
+    ).exec().await?;
+
+    // Test 1: Author without profile - should have Some(None)
+    let author_without_profile = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).with(author::profile::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+    assert!(author_without_profile.profile.is_some());
+    assert!(author_without_profile.profile.as_ref().unwrap().is_none());
+
+    // Test 2: Create a profile for the author
+    let profile = profile_client.create(
+        now.naive_utc(),
+        now.naive_utc(),
+        author::id::equals(author.id),
+        vec![
+            profile::bio::set(Some("Software engineer and tech enthusiast".to_string())),
+            profile::website::set(Some("https://janesmith.dev".to_string())),
+            profile::twitter_handle::set(Some("@janesmith".to_string())),
+            profile::location::set(Some("San Francisco, CA".to_string())),
+            profile::avatar_url::set(Some("https://avatars.com/janesmith.jpg".to_string())),
+        ]
+    ).exec().await?;
+
+    // Test 3: Author with profile - should have Some(Some(profile))
+    let author_with_profile = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).with(author::profile::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+    assert!(author_with_profile.profile.is_some());
+    assert!(author_with_profile.profile.as_ref().unwrap().is_some());
+    let loaded_profile = author_with_profile.profile.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(loaded_profile.id, profile.id);
+    assert_eq!(loaded_profile.author_id, author.id);
+    assert_eq!(loaded_profile.bio, Some("Software engineer and tech enthusiast".to_string()));
+    assert_eq!(loaded_profile.website, Some("https://janesmith.dev".to_string()));
+    assert_eq!(loaded_profile.twitter_handle, Some("@janesmith".to_string()));
+    assert_eq!(loaded_profile.location, Some("San Francisco, CA".to_string()));
+    assert_eq!(loaded_profile.avatar_url, Some("https://avatars.com/janesmith.jpg".to_string()));
+
+
+    // Test 4: Profile with author (belongs_to relation)
+    let profile_with_author = profile_client.find_first(vec![
+        profile::id::equals(profile.id)
+    ]).with(profile::author::include(|rel| rel)).exec().await?
+        .expect("Profile should exist");
+
+    assert!(profile_with_author.author.is_some());
+    let loaded_author = profile_with_author.author.unwrap();
+    assert_eq!(loaded_author.id, author.id);
+    assert_eq!(loaded_author.first_name, "Jane");
+    assert_eq!(loaded_author.last_name, "Smith");
+    assert_eq!(loaded_author.email, "jane.smith@example.com");
+
+    // Test 5: Create another author without a profile to test multiple authors
+    let author2 = author_client.create(
+        "Bob".to_string(),
+        "Johnson".to_string(),
+        "bob.johnson@example.com".to_string(),
+        now,
+        now,
+        vec![]
+    ).exec().await?;
+
+    let author2_without_profile = author_client.find_first(vec![
+        author::id::equals(author2.id)
+    ]).with(author::profile::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+    assert!(author2_without_profile.profile.is_some());
+    assert!(author2_without_profile.profile.as_ref().unwrap().is_none());
+
+    // Test 6: Update profile to test nullable fields
+    let updated_profile = profile_client.update(
+        profile::id::equals(profile.id),
+        vec![
+            profile::bio::set(Some("Senior software engineer and open source contributor".to_string())),
+            profile::website::set(None), // Make website nullable
+            profile::twitter_handle::set(Some("@janesmith_dev".to_string())),
+        ]
+    ).exec().await?;
+
+    assert_eq!(updated_profile.bio, Some("Senior software engineer and open source contributor".to_string()));
+    assert_eq!(updated_profile.website, None);
+    assert_eq!(updated_profile.twitter_handle, Some("@janesmith_dev".to_string()));
+
+    // Test 7: Verify the updated profile is correctly loaded
+    let author_with_updated_profile = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).with(author::profile::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+    assert!(author_with_updated_profile.profile.is_some());
+    assert!(author_with_updated_profile.profile.as_ref().unwrap().is_some());
+    let final_profile = author_with_updated_profile.profile.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(final_profile.bio, Some("Senior software engineer and open source contributor".to_string()));
+    assert_eq!(final_profile.website, None);
+    assert_eq!(final_profile.twitter_handle, Some("@janesmith_dev".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_nullable_has_one_with_optional_target_fk() -> Result<(), DbErr> {
+    let db = setup_db().await?;
+    let client = CausticsClient::new(db.clone());
+    
+    let author_client = client.author();
+    let profile_client = client.profile();
+
+    let now = chrono::Utc::now();
+    
+    // Create an author
+    let author = author_client.create(
+        "Test".to_string(),
+        "Author".to_string(),
+        "test.author@example.com".to_string(),
+        now,
+        now,
+        vec![]
+    ).exec().await?;
+
+    // Test 1: Author without profile - should have Some(None) when relation is fetched
+    // This demonstrates the Option<Option<Box<>>> type:
+    // - First Option: whether the relation was fetched
+    // - Second Option: whether the related record exists
+    let author_without_profile = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).with(author::profile::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+    // The profile field should be Some(None) - relation was fetched but no profile exists
+    // With nullable, this should be Option<Option<Box<>>>
+    assert!(author_without_profile.profile.is_some());
+    assert!(author_without_profile.profile.as_ref().unwrap().is_none());
+    
+
+    // Test 2: Create a profile for the author
+    let profile = profile_client.create(
+        now.naive_utc(),
+        now.naive_utc(),
+        author::id::equals(author.id),
+        vec![
+            profile::bio::set(Some("Test bio".to_string())),
+            profile::website::set(Some("https://test.com".to_string())),
+            profile::twitter_handle::set(Some("@test".to_string())),
+            profile::location::set(Some("Test City".to_string())),
+            profile::avatar_url::set(Some("https://test.com/avatar.jpg".to_string())),
+        ]
+    ).exec().await?;
+
+    // Test 3: Author with profile - should have Some(Some(profile)) when relation is fetched
+    let author_with_profile = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).with(author::profile::include(|rel| rel)).exec().await?
+        .expect("Author should exist");
+
+    // The profile field should be Some(Some(profile)) - relation was fetched and profile exists
+    assert!(author_with_profile.profile.is_some());
+    assert!(author_with_profile.profile.as_ref().unwrap().is_some());
+    
+    let loaded_profile = author_with_profile.profile.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(loaded_profile.id, profile.id);
+    assert_eq!(loaded_profile.bio, Some("Test bio".to_string()));
+    
+
+    // Test 4: Author without fetching the relation - should have None
+    let author_without_relation = author_client.find_first(vec![
+        author::id::equals(author.id)
+    ]).exec().await?
+        .expect("Author should exist");
+
+    // The profile field should be None - relation was not fetched
+    assert!(author_without_relation.profile.is_none());
+    
+
     Ok(())
 }

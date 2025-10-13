@@ -181,7 +181,9 @@ fn find_field_type_in_struct_with_optional(
     for item in &file.items {
         if let Item::Mod(module) = item {
             // Check if this module matches our entity
-            if module.ident.to_string().to_lowercase() == entity_name.to_lowercase() {
+            let module_name = module.ident.to_string().to_lowercase();
+            let entity_name_lower = entity_name.to_lowercase();
+            if module_name == entity_name_lower {
                 if let Some((_, items)) = &module.content {
                     for module_item in items {
                         if let Item::Struct(struct_item) = module_item {
@@ -358,14 +360,16 @@ fn extract_entity_metadata(
 
                                 for attr in &variant.attrs {
                                     if attr.path().is_ident("sea_orm") {
-                                        // Parse #[sea_orm(has_many = "...", from = "...", to = "...")]
+                                        // Parse #[sea_orm(has_many/has_one/belongs_to = "...", from = "...", to = "...")]
                                         let attr_str = attr.to_token_stream().to_string();
 
-                                        // Extract relation kind (has_many or belongs_to)
+                                        // Extract relation kind (has_many, belongs_to, or has_one)
                                         if attr_str.contains("has_many") {
                                             relation_kind = "HasMany".to_string();
                                         } else if attr_str.contains("belongs_to") {
                                             relation_kind = "BelongsTo".to_string();
+                                        } else if attr_str.contains("has_one") {
+                                            relation_kind = "HasOne".to_string();
                                         }
 
                                         // Extract target entity from has_many/belongs_to = "super::entity::Entity"
@@ -431,6 +435,37 @@ fn extract_entity_metadata(
                                                     }
                                                 }
                                             }
+                                        } else if let Some(start) = attr_str.find("has_one") {
+                                            if let Some(equals) = attr_str[start..].find('=') {
+                                                let after_equals = &attr_str[start + equals + 1..];
+                                                if let Some(quote_start) = after_equals.find('"') {
+                                                    if let Some(quote_end) =
+                                                        after_equals[quote_start + 1..].find('"')
+                                                    {
+                                                        let target_path = &after_equals[quote_start
+                                                            + 1
+                                                            ..quote_start + 1 + quote_end];
+                                                        // Extract entity name from "super::entity::Entity"
+                                                        // The path is like "super::api_key::Entity", we want "api_key"
+                                                        if let Some(last_colon) =
+                                                            target_path.rfind("::")
+                                                        {
+                                                            let entity_part =
+                                                                &target_path[..last_colon];
+                                                            if let Some(second_last_colon) =
+                                                                entity_part.rfind("::")
+                                                            {
+                                                                target_entity = entity_part
+                                                                    [second_last_colon + 2..]
+                                                                    .to_string();
+                                                            } else {
+                                                                target_entity =
+                                                                    entity_part.to_string();
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         // Extract foreign key field from from = "Column::FieldName"
@@ -457,12 +492,40 @@ fn extract_entity_metadata(
                                                 }
                                             }
                                         }
+
+                                        // For has_one and has_many relations, extract the 'to' field instead of 'from'
+                                        if relation_kind == "HasOne" || relation_kind == "HasMany" {
+                                            if let Some(start) = attr_str.find("to") {
+                                                if let Some(equals) = attr_str[start..].find('=') {
+                                                    let after_equals = &attr_str[start + equals + 1..];
+                                                    if let Some(quote_start) = after_equals.find('"') {
+                                                        if let Some(quote_end) =
+                                                            after_equals[quote_start + 1..].find('"')
+                                                        {
+                                                            let column_str = &after_equals[quote_start
+                                                                + 1
+                                                                ..quote_start + 1 + quote_end];
+                                                            if let Some(field_name) =
+                                                                column_str.split("::").nth(1)
+                                                            {
+                                                                // Convert PascalCase to snake_case for database field names
+                                                                let snake_case_name =
+                                                                    field_name.to_snake_case();
+                                                                foreign_key_field =
+                                                                    Some(snake_case_name);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
                                 if !target_entity.is_empty() {
-                                    // Only collect foreign key fields from belongs_to relations, not has_many relations
+                                    // Only collect foreign key fields from belongs_to relations, not has_many or has_one relations
                                     // In has_many relations, the 'from' field refers to the primary key of the current entity
+                                    // In has_one relations, the 'from' field refers to the primary key of the current entity
                                     // In belongs_to relations, the 'from' field refers to the foreign key in the current entity
                                     if relation_kind == "BelongsTo" {
                                         if let Some(ref fk_field) = foreign_key_field {
@@ -471,7 +534,7 @@ fn extract_entity_metadata(
                                             // Find the type of this foreign key field by looking at the struct fields
                                             if let Some((field_type, _is_optional)) = find_field_type_in_struct_with_optional(
                                                 &file,
-                                                entity_name,
+                                                module_name,
                                                 fk_field,
                                             ) {
                                                 // Store the inner type, not the full type with Option<>

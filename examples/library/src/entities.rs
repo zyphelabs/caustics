@@ -30,11 +30,29 @@ pub mod author {
         #[sea_orm(has_many = "super::book::Entity", from = "Column::Id", to = "super::book::Column::AuthorId")]
         /// #[caustics(field_name="published_works")]
         Books,
+        #[sea_orm(has_one = "super::api_key::Entity", from = "Column::Id", to = "super::api_key::Column::AuthorId")]
+        /// #[caustics(field_name="access_key")]
+        ApiKey,
+        #[sea_orm(has_one = "super::profile::Entity", from = "Column::Id", to = "super::profile::Column::AuthorId")]
+        /// #[caustics(field_name="profile", nullable)]
+        Profile,
     }
 
     impl Related<super::book::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::Books.def()
+        }
+    }
+
+    impl Related<super::api_key::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::ApiKey.def()
+        }
+    }
+
+    impl Related<super::profile::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Profile.def()
         }
     }
 
@@ -88,13 +106,15 @@ pub mod api_key {
     use caustics::prelude::*;
 
     #[derive(Caustics, Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-    #[sea_orm(table_name = "ApiKey", schema_name = "api")]
+    #[sea_orm(table_name = "ApiKey")]
         pub struct Model {
-        #[sea_orm(primary_key)]
+        #[sea_orm(primary_key, auto_increment = false)]
         pub id: String,
         pub key: String,
         pub allowed_origins: String,
         pub options: serde_json::Value,
+        #[sea_orm(column_name = "authorId")]
+        pub author_id: i32,
         pub created_at: NaiveDateTime,
         pub updated_at: NaiveDateTime,
         pub deleted: bool,
@@ -102,7 +122,52 @@ pub mod api_key {
     }
 
     #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
+    pub enum Relation {
+        #[sea_orm(belongs_to = "super::author::Entity", from = "Column::AuthorId", to = "super::author::Column::Id")]
+        Author,
+    }
+
+    impl Related<super::author::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Author.def()
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+#[caustics]
+pub mod profile {
+    use caustics_macros::Caustics;
+    use caustics::prelude::*;
+
+    #[derive(Caustics, Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "profiles")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = true)]
+        pub id: i32,
+        #[sea_orm(column_name = "authorId")]
+        pub author_id: i32,
+        pub bio: Option<String>,
+        pub website: Option<String>,
+        pub twitter_handle: Option<String>,
+        pub location: Option<String>,
+        pub avatar_url: Option<String>,
+        pub created_at: NaiveDateTime,
+        pub updated_at: NaiveDateTime,
+    }
+
+    #[derive(Caustics, Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(belongs_to = "super::author::Entity", from = "Column::AuthorId", to = "super::author::Column::Id")]
+        Author,
+    }
+
+    impl Related<super::author::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Author.def()
+        }
+    }
 
     impl ActiveModelBehavior for ActiveModel {}
 }

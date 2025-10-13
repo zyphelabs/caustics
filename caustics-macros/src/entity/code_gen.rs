@@ -153,8 +153,8 @@ pub fn generate_entity(
                         format_ident!("Id") // fallback
                     }
                 }
-                RelationKind::HasMany => {
-                    // For has_many, use the current entity's primary key column
+                RelationKind::HasMany | RelationKind::HasOne => {
+                    // For has_many and has_one, use the current entity's primary key column
                     format_ident!("{}", foreign_key_column.to_pascal_case())
                 }
             };
@@ -188,8 +188,8 @@ pub fn generate_entity(
                             panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
                         }
                     }
-                    RelationKind::HasMany => {
-                        // For has_many, we need to use the current entity's primary key
+                    RelationKind::HasMany | RelationKind::HasOne => {
+                        // For has_many and has_one, we need to use the current entity's primary key
                         current_primary_key.clone()
                     }
                 }
@@ -506,8 +506,8 @@ pub fn generate_entity(
                                 panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
                             }
                         }
-                        RelationKind::HasMany => {
-                            // For has_many, we need to use the current entity's primary key
+                        RelationKind::HasMany | RelationKind::HasOne => {
+                            // For has_many and has_one, we need to use the current entity's primary key
                             current_primary_key.clone()
                         }
                     }
@@ -605,6 +605,58 @@ pub fn generate_entity(
                                 }
                             } else {
                                 return Ok(Box::new(None::<#target_entity::ModelWithRelations>) as Box<dyn std::any::Any + Send>);
+                        }
+                    }
+                } else if matches!(rel.kind, RelationKind::HasOne) {
+                    // HasOne relation - similar to HasMany but returns a single object
+                    let target_primary_key_column_ident = format_ident!("{}", target_primary_key.to_pascal_case());
+                    
+                    // Check if this is an optional has_one relation
+                    let is_optional = rel.target_fk_is_optional.unwrap_or(rel.is_nullable);
+                    
+                    if is_optional {
+                        quote! {
+                        let mut query = #target::Entity::find();
+                        if let Some(fk_value) = foreign_key_value {
+                            let value = fk_value.to_db_value();
+                            // Use raw SQL expression to bypass SeaORM's typed API
+                            query = query.filter(sea_query::Expr::cust_with_values(
+                                &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
+                                [value]
+                            ));
+                        }
+
+                        // For has_one, we only want the first result
+                        query = query.limit(1);
+
+                        // No field selection - return Selected objects with all fields
+                        let opt_model = query.one(conn).await?;
+                        let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                        // For optional has_one, return Option<Option<Selected>> where:
+                        // - None = relation not fetched
+                        // - Some(None) = relation fetched but no record exists
+                        // - Some(Some(record)) = relation fetched and record exists
+                        return Ok(Box::new(Some(with_rel)) as Box<dyn std::any::Any + Send>);
+                        }
+                    } else {
+                        quote! {
+                        let mut query = #target::Entity::find();
+                        if let Some(fk_value) = foreign_key_value {
+                            let value = fk_value.to_db_value();
+                            // Use raw SQL expression to bypass SeaORM's typed API
+                            query = query.filter(sea_query::Expr::cust_with_values(
+                                &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
+                                [value]
+                            ));
+                        }
+
+                        // For has_one, we only want the first result
+                        query = query.limit(1);
+
+                        // No field selection - return Selected objects with all fields
+                        let opt_model = query.one(conn).await?;
+                        let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                        return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
                         }
                     }
                 } else {
@@ -731,8 +783,8 @@ pub fn generate_entity(
                         format_ident!("Id") // fallback
                     }
                 }
-                RelationKind::HasMany => {
-                    // For has_many, use the current entity's primary key column
+                RelationKind::HasMany | RelationKind::HasOne => {
+                    // For has_many and has_one, use the current entity's primary key column
                     format_ident!("{}", foreign_key_column.to_pascal_case())
                 }
             };
@@ -766,8 +818,8 @@ pub fn generate_entity(
                             panic!("No primary key field could be determined for relation '{}'. Please specify 'to' attribute with target column.", rel.name)
                         }
                     }
-                    RelationKind::HasMany => {
-                        // For has_many, we need to use the current entity's primary key
+                    RelationKind::HasMany | RelationKind::HasOne => {
+                        // For has_many and has_one, we need to use the current entity's primary key
                         current_primary_key.clone()
                     }
                 }
@@ -793,6 +845,7 @@ pub fn generate_entity(
                 // Get the primary key field name from the relation definition or use dynamic detection
                 let primary_key_field_name = target_primary_key_str.to_snake_case();
                 let target_primary_key_column_ident = format_ident!("{}", target_primary_key.to_pascal_case());
+                let is_has_one = matches!(rel.kind, RelationKind::HasOne);
 
                 quote! {
                 let mut query = #target::Entity::find();
@@ -995,6 +1048,58 @@ pub fn generate_entity(
                     Ok(Box::new(Some(vec_with_rel)) as Box<dyn std::any::Any + Send>)
                 }
                         }
+            } else if matches!(rel.kind, RelationKind::HasOne) {
+                // HasOne relation - similar to HasMany but returns a single object
+                let foreign_key_column_ident = format_ident!("{}", foreign_key_column.to_pascal_case());
+                
+                // Check if this is an optional has_one relation
+                let is_optional = rel.target_fk_is_optional.unwrap_or(rel.is_nullable);
+                
+                if is_optional {
+                    quote! {
+                    let mut query = #target::Entity::find();
+                    if let Some(fk_value) = foreign_key_value {
+                        let value = fk_value.to_db_value();
+                        // Use raw SQL expression to bypass SeaORM's typed API
+                        query = query.filter(sea_query::Expr::cust_with_values(
+                            &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
+                            [value]
+                        ));
+                    }
+
+                    // For has_one, we only want the first result
+                    query = query.limit(1);
+
+                    // No field selection - return Selected objects with all fields
+                    let opt_model = query.one(conn).await?;
+                    let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                    // For optional has_one, return Option<Option<Selected>> where:
+                    // - None = relation not fetched
+                    // - Some(None) = relation fetched but no record exists
+                    // - Some(Some(record)) = relation fetched and record exists
+                    Ok(Box::new(Some(with_rel)) as Box<dyn std::any::Any + Send>)
+                    }
+                } else {
+                    quote! {
+                    let mut query = #target::Entity::find();
+                    if let Some(fk_value) = foreign_key_value {
+                        let value = fk_value.to_db_value();
+                        // Use raw SQL expression to bypass SeaORM's typed API
+                        query = query.filter(sea_query::Expr::cust_with_values(
+                            &format!("{} = ?", sea_orm::Iden::to_string(&#target::Column::#foreign_key_column_ident)),
+                            [value]
+                        ));
+                    }
+
+                    // For has_one, we only want the first result
+                    query = query.limit(1);
+
+                    // No field selection - return Selected objects with all fields
+                    let opt_model = query.one(conn).await?;
+                    let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                    Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>)
+                    }
+                }
             } else {
                 // belongs_to relation - query the TARGET entity by its primary key, using the current entity's foreign key value
                 let target_entity_type = quote! { #target::Entity };
@@ -1980,7 +2085,7 @@ pub fn generate_entity(
                         #relation_name(#target_module::UniqueWhereParam)
                     })
                 }
-                RelationKind::HasMany => Some(quote! {
+                RelationKind::HasMany | RelationKind::HasOne => Some(quote! {
                     #relation_name(#target_module::UniqueWhereParam)
                 }),
             }
@@ -2049,7 +2154,7 @@ pub fn generate_entity(
         .iter()
         .filter_map(|relation| {
             match relation.kind {
-                RelationKind::HasMany => {
+                RelationKind::HasMany | RelationKind::HasOne => {
                     let create_variant = format_ident!("Create{}", relation.name.to_pascal_case());
                     let create_many_variant =
                         format_ident!("CreateMany{}", relation.name.to_pascal_case());
@@ -3005,9 +3110,15 @@ pub fn generate_entity(
                         }
                     }
                 }
-                RelationKind::BelongsTo => {
+                RelationKind::BelongsTo | RelationKind::HasOne => {
                     // Determine optional vs required
-                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                    // For HasOne, FK is in target entity, so we can't check nullability here
+                    // But we can check if the relation is explicitly marked as nullable
+                    let is_optional = if matches!(relation.kind, RelationKind::HasOne) {
+                        // For has_one relations, check if the target entity's foreign key is optional
+                        // Use the target_fk_is_optional flag if available, otherwise fall back to is_nullable
+                        relation.target_fk_is_optional.unwrap_or(relation.is_nullable)
+                    } else if let Some(fk_field_name) = &relation.foreign_key_field {
                         if let Some(field) = fields
                             .iter()
                             .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
@@ -3104,9 +3215,15 @@ pub fn generate_entity(
                         }
                     }
                 }
-                RelationKind::BelongsTo => {
+                RelationKind::BelongsTo | RelationKind::HasOne => {
                     // Determine optional vs required
-                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                    // For HasOne, FK is in target entity, so we can't check nullability here
+                    // But we can check if the relation is explicitly marked as nullable
+                    let is_optional = if matches!(relation.kind, RelationKind::HasOne) {
+                        // For has_one relations, check if the target entity's foreign key is optional
+                        // Use the target_fk_is_optional flag if available, otherwise fall back to is_nullable
+                        relation.target_fk_is_optional.unwrap_or(relation.is_nullable)
+                    } else if let Some(fk_field_name) = &relation.foreign_key_field {
                         if let Some(field) = fields
                             .iter()
                             .find(|f| f.ident.as_ref().expect("Field has no identifier").to_string() == *fk_field_name)
@@ -3192,6 +3309,12 @@ pub fn generate_entity(
                         }
                     }
                 }
+                RelationKind::HasOne => {
+                    // HasOne relations don't support take/skip - they return a single object
+                    quote! {
+                        // No-op for HasOne relations - they don't support pagination
+                    }
+                }
                 _ => quote! {},
             }
         })
@@ -3256,9 +3379,13 @@ pub fn generate_entity(
                     RelationKind::HasMany => {
                         quote! { pub #name: Option<Vec<#target::ModelWithRelations>> }
                     }
-                    RelationKind::BelongsTo => {
-                        // Check if this is an optional relation by looking at the foreign key field
-                        let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                    RelationKind::BelongsTo | RelationKind::HasOne => {
+                        // Check if this is an optional relation
+                        let is_optional = if matches!(relation.kind, RelationKind::HasOne) {
+                            // For has_one relations, use the target_fk_is_optional flag if available, otherwise fall back to is_nullable
+                            relation.target_fk_is_optional.unwrap_or(relation.is_nullable)
+                        } else if let Some(fk_field_name) = &relation.foreign_key_field {
+                            // For belongs_to relations, check if the foreign key field is optional
                             if let Some(field) = fields.iter().find(|f| {
                                 f.ident
                                     .as_ref()
@@ -3274,16 +3401,16 @@ pub fn generate_entity(
                             false
                         };
 
-                        if is_optional {
-                            // For optional relations: Option<Option<ModelWithRelations>>
-                            // First Option: whether relation was fetched
-                            // Second Option: whether relation exists in DB
-                            quote! { pub #name: Option<Option<#target::ModelWithRelations>> }
-                        } else {
-                            // For required relations: Option<ModelWithRelations>
-                            // Option: whether relation was fetched
-                            quote! { pub #name: Option<#target::ModelWithRelations> }
-                        }
+                    if is_optional {
+                        // For optional relations: Option<Option<Box<ModelWithRelations>>>
+                        // First Option: whether relation was fetched
+                        // Second Option: whether relation exists in DB
+                        quote! { pub #name: Option<Option<Box<#target::ModelWithRelations>>> }
+                    } else {
+                        // For required relations: Option<Box<ModelWithRelations>>
+                        // Option: whether relation was fetched
+                        quote! { pub #name: Option<Box<#target::ModelWithRelations>> }
+                    }
                     }
                 }
             })
@@ -3303,9 +3430,13 @@ pub fn generate_entity(
                 RelationKind::HasMany => {
                     quote! { #name: Option<Vec<#target::ModelWithRelations>> }
                 }
-                RelationKind::BelongsTo => {
-                    // Check if this is an optional relation by looking at the foreign key field
-                    let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                RelationKind::BelongsTo | RelationKind::HasOne => {
+                    // Check if this is an optional relation
+                    let is_optional = if matches!(relation.kind, RelationKind::HasOne) {
+                        // For has_one relations, use the target_fk_is_optional flag if available, otherwise fall back to is_nullable
+                        relation.target_fk_is_optional.unwrap_or(relation.is_nullable)
+                    } else if let Some(fk_field_name) = &relation.foreign_key_field {
+                        // For belongs_to relations, check if the foreign key field is optional
                         if let Some(field) = fields.iter().find(|f| {
                             f.ident
                                 .as_ref()
@@ -3322,11 +3453,11 @@ pub fn generate_entity(
                     };
 
                     if is_optional {
-                        // For optional relations: Option<Option<ModelWithRelations>>
-                        quote! { #name: Option<Option<#target::ModelWithRelations>> }
+                        // For optional relations: Option<Option<Box<ModelWithRelations>>>
+                        quote! { #name: Option<Option<Box<#target::ModelWithRelations>>> }
                     } else {
-                        // For required relations: Option<ModelWithRelations>
-                        quote! { #name: Option<#target::ModelWithRelations> }
+                        // For required relations: Option<Box<ModelWithRelations>>
+                        quote! { #name: Option<Box<#target::ModelWithRelations>> }
                     }
                 }
             }
@@ -3488,6 +3619,9 @@ pub fn generate_entity(
                 RelationKind::HasMany => {
                     quote! { pub #name: Option<Vec<#target::Selected>> }
                 }
+                RelationKind::HasOne => {
+                    quote! { pub #name: Option<Box<#target::Selected>> }
+                }
                 RelationKind::BelongsTo => {
                     // Check if this is an optional relation by looking at the foreign key field
                     let is_optional = if !relation.foreign_key_fields.is_empty() {
@@ -3523,9 +3657,9 @@ pub fn generate_entity(
                     
 
                     if is_optional {
-                        quote! { pub #name: Option<Option<#target::Selected>> }
+                        quote! { pub #name: Option<Option<Box<#target::Selected>>> }
                     } else {
-                        quote! { pub #name: Option<#target::Selected> }
+                        quote! { pub #name: Option<Box<#target::Selected>> }
                     }
                 }
             }
@@ -3963,8 +4097,8 @@ pub fn generate_entity(
                                 format_ident!("Id") // fallback
                             }
                         }
-                        RelationKind::HasMany => {
-                            // For has_many, use the current entity's primary key column
+                        RelationKind::HasMany | RelationKind::HasOne => {
+                            // For has_many and has_one, use the current entity's primary key column
                             format_ident!("{}", foreign_key_column.to_pascal_case())
                         }
                     };
@@ -4059,8 +4193,8 @@ pub fn generate_entity(
                                 format_ident!("Id") // fallback
                             }
                         }
-                        RelationKind::HasMany => {
-                            // For has_many, use the current entity's primary key column
+                        RelationKind::HasMany | RelationKind::HasOne => {
+                            // For has_many and has_one, use the current entity's primary key column
                             format_ident!("{}", foreign_key_column.to_pascal_case())
                         }
                     };
@@ -4190,7 +4324,11 @@ pub fn generate_entity(
                     // Skip regular relation fetching if this is a count-only operation
                     let mut fetched_result = if filter.include_count && filter.nested_includes.is_empty() {
                         // Count-only operation: create empty result to skip set_field
-                        Box::new(None::<Vec<Selected>>) as Box<dyn std::any::Any + Send>
+                        if descriptor.is_has_many {
+                            Box::new(None::<Vec<Selected>>) as Box<dyn std::any::Any + Send>
+                        } else {
+                            Box::new(None::<Selected>) as Box<dyn std::any::Any + Send>
+                        }
                     } else {
                         // Regular relation fetching
                         let result = fetcher
@@ -4334,15 +4472,15 @@ pub fn generate_entity(
             }
 
 
-            pub fn to_model_with_relations(self) -> ModelWithRelations {
+            pub fn to_model_with_relations(&self) -> ModelWithRelations {
                 // Convert Selected to ModelWithRelations by copying all available fields
                 // This creates a complete ModelWithRelations with all fields populated
                 let mut model_with_relations = ModelWithRelations::default();
 
-                // Copy scalar fields
+                // Copy scalar fields (clone only what's needed)
                 #(
-                    if let Some(value) = self.#field_names {
-                        model_with_relations.#field_names = value;
+                    if let Some(value) = &self.#field_names {
+                        model_with_relations.#field_names = value.clone();
                     }
                 )*
 
@@ -4351,7 +4489,7 @@ pub fn generate_entity(
                 // This is safe since ModelWithRelations uses Option types for all relations
 
                 // Copy count fields
-                model_with_relations._count = self._count;
+                model_with_relations._count = self._count.clone();
 
                 model_with_relations
             }
@@ -4518,7 +4656,7 @@ pub fn generate_entity(
         // Check if this is an optional relation by looking at the foreign key field
         let is_optional = match relation.kind {
             RelationKind::HasMany => false,
-            RelationKind::BelongsTo => {
+            RelationKind::BelongsTo | RelationKind::HasOne => {
                 if let Some(fk_field_name) = &relation.foreign_key_field {
                     if let Some(field) = fields
                         .iter()
@@ -4536,7 +4674,7 @@ pub fn generate_entity(
 
         let rel_type = match relation.kind {
             RelationKind::HasMany => quote! { Option<Vec<#target::ModelWithRelations>> },
-            RelationKind::BelongsTo => {
+            RelationKind::BelongsTo | RelationKind::HasOne => {
                 if is_optional {
                     // For optional relations: Option<ModelWithRelations> (fetcher returns this)
                     quote! { Option<#target::ModelWithRelations> }
@@ -4548,7 +4686,7 @@ pub fn generate_entity(
         };
         // Determine foreign key field and column based on relation type
         let (foreign_key_field, foreign_key_column, get_foreign_key_closure) = match relation.kind {
-            RelationKind::HasMany => {
+            RelationKind::HasMany | RelationKind::HasOne => {
                 let id_field = current_primary_key_ident.clone();
                 // For HasMany relations, the foreign key column is in the target entity
                 // Use the extracted foreign_key_column if available, otherwise use mapping
@@ -4658,7 +4796,7 @@ pub fn generate_entity(
             syn::LitBool::new(relation.is_nullable, proc_macro2::Span::call_site());
 
         let fk_field_name_lit = match relation.kind {
-            RelationKind::HasMany => syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site()),
+            RelationKind::HasMany | RelationKind::HasOne => syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site()),
             RelationKind::BelongsTo => syn::LitStr::new(
                 &relation.get_first_fk_column_name(),
                 proc_macro2::Span::call_site(),
@@ -4668,7 +4806,11 @@ pub fn generate_entity(
             syn::LitStr::new(&current_primary_key_column, proc_macro2::Span::call_site());
         let is_has_many_lit = match relation.kind {
             RelationKind::HasMany => syn::LitBool::new(true, proc_macro2::Span::call_site()),
-            RelationKind::BelongsTo => syn::LitBool::new(false, proc_macro2::Span::call_site()),
+            RelationKind::BelongsTo | RelationKind::HasOne => syn::LitBool::new(false, proc_macro2::Span::call_site()),
+        };
+        let is_has_one_lit = match relation.kind {
+            RelationKind::HasOne => syn::LitBool::new(true, proc_macro2::Span::call_site()),
+            RelationKind::HasMany | RelationKind::BelongsTo => syn::LitBool::new(false, proc_macro2::Span::call_site()),
         };
 
         // Generate the correct set_field implementation based on relation type
@@ -4695,6 +4837,71 @@ pub fn generate_entity(
                     model.#rel_field = converted_value;
                 }
             }
+            RelationKind::HasOne => {
+                // HasOne relations should be treated like BelongsTo - single object, not vector
+                // Check if this is an optional has_one relation
+                let is_optional = relation.target_fk_is_optional.unwrap_or(relation.is_nullable);
+                
+                if is_optional {
+                    quote! {
+                        let actual_type = std::any::type_name_of_val(&*value);
+
+                        // For optional has_one, try to downcast as Option<Option<Selected>> first, then fall back to Option<Option<ModelWithRelations>>
+                        let converted_value = if let Some(selected_opt_opt) = value.downcast_ref::<Option<Option<#target::Selected>>>() {
+                            // We got Option<Option<Selected>> - convert to Option<Option<Box<ModelWithRelations>>>
+                            if let Some(selected_opt) = selected_opt_opt.as_ref() {
+                                if let Some(selected) = selected_opt.as_ref() {
+                                    Some(Some(Box::new(selected.to_model_with_relations())))
+                                } else {
+                                    Some(None)
+                                }
+                            } else {
+                                None
+                            }
+                        } else if let Some(model_opt_opt) = value.downcast_ref::<Option<Option<#target::ModelWithRelations>>>() {
+                            // We got Option<Option<ModelWithRelations>> directly
+                            if let Some(model_opt) = model_opt_opt.as_ref() {
+                                if let Some(model) = model_opt.as_ref() {
+                                    Some(Some(Box::new(model.clone())))
+                                } else {
+                                    Some(None)
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            panic!("Type mismatch in set_field for optional HasOne: expected Option<Option<{}>> or Option<Option<{}>>, got {}",
+                                stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
+                        };
+                        model.#rel_field = converted_value;
+                    }
+                } else {
+                    quote! {
+                        let actual_type = std::any::type_name_of_val(&*value);
+
+                        // For required has_one, try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
+                        let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
+                            // We got Selected object - convert to ModelWithRelations and box it (no clone needed!)
+                            if let Some(selected) = selected_opt.as_ref() {
+                                Some(Box::new(selected.to_model_with_relations()))
+                            } else {
+                                None
+                            }
+                        } else if let Some(model_opt) = value.downcast_ref::<Option<#target::ModelWithRelations>>() {
+                            // We got ModelWithRelations object directly - box it (still need to clone here)
+                            if let Some(model) = model_opt.as_ref() {
+                                Some(Box::new(model.clone()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            panic!("Type mismatch in set_field for HasOne: expected Option<{}> or Option<{}>, got {}",
+                                stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
+                        };
+                        model.#rel_field = converted_value;
+                    }
+                }
+            }
             RelationKind::BelongsTo => {
                 if is_optional {
                     quote! {
@@ -4702,15 +4909,19 @@ pub fn generate_entity(
 
                         // Try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
                         let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
-                            // We got Selected object - convert to ModelWithRelations
+                            // We got Selected object - convert to ModelWithRelations and box it (no clone needed!)
                             if let Some(selected) = selected_opt.as_ref() {
-                                Some(Some(selected.clone().to_model_with_relations()))
+                                Some(Some(Box::new(selected.to_model_with_relations())))
                             } else {
                                 Some(None)
                             }
                         } else if let Some(model_opt) = value.downcast_ref::<Option<#target::ModelWithRelations>>() {
-                            // We got ModelWithRelations object directly
-                            Some(model_opt.clone())
+                            // We got ModelWithRelations object directly - box it (still need to clone here)
+                            if let Some(model) = model_opt.as_ref() {
+                                Some(Some(Box::new(model.clone())))
+                            } else {
+                                Some(None)
+                            }
                         } else {
                             panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}",
                                 stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
@@ -4723,15 +4934,19 @@ pub fn generate_entity(
 
                         // Try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
                         let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
-                            // We got Selected object - convert to ModelWithRelations
+                            // We got Selected object - convert to ModelWithRelations and box it (no clone needed!)
                             if let Some(selected) = selected_opt.as_ref() {
-                                Some(selected.clone().to_model_with_relations())
+                                Some(Box::new(selected.to_model_with_relations()))
                             } else {
                                 None
                             }
                         } else if let Some(model_opt) = value.downcast_ref::<Option<#target::ModelWithRelations>>() {
-                            // We got ModelWithRelations object directly
-                            model_opt.clone()
+                            // We got ModelWithRelations object directly - box it (still need to clone here)
+                            if let Some(model) = model_opt.as_ref() {
+                                Some(Box::new(model.clone()))
+                            } else {
+                                None
+                            }
                         } else {
                             panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}",
                                 stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
@@ -4765,6 +4980,7 @@ pub fn generate_entity(
                 target_entity_name: #target_entity_name_lit,
                 is_foreign_key_nullable: #is_foreign_key_nullable_lit,
                 is_has_many: #is_has_many_lit,
+                is_has_one: #is_has_one_lit,
             }
         }
     })
@@ -4784,12 +5000,12 @@ pub fn generate_entity(
         // Check if this is an optional relation
         let is_optional = match relation.kind {
             RelationKind::HasMany => false,
-            RelationKind::BelongsTo => relation.is_nullable,
+            RelationKind::BelongsTo | RelationKind::HasOne => relation.is_nullable,
         };
 
         let rel_type = match relation.kind {
             RelationKind::HasMany => quote! { Option<Vec<#target::Selected>> },
-            RelationKind::BelongsTo => quote! { Option<#target::Selected> },
+            RelationKind::BelongsTo | RelationKind::HasOne => quote! { Option<#target::Selected> },
         };
         let foreign_key_column = relation.foreign_key_column.as_ref().map(|s| s.to_snake_case()).unwrap_or_else(|| current_pk_column_name.clone());
         let target_entity_module_name_lower = relation
@@ -4803,7 +5019,7 @@ pub fn generate_entity(
         let target_entity = syn::LitStr::new(&target_entity_module_name_lower, proc_macro2::Span::call_site());
         let foreign_key_column = syn::LitStr::new(&foreign_key_column, proc_macro2::Span::call_site());
         let fk_field_name_lit = match relation.kind {
-            RelationKind::HasMany => syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site()),
+            RelationKind::HasMany | RelationKind::HasOne => syn::LitStr::new(&current_primary_key_field_name, proc_macro2::Span::call_site()),
             RelationKind::BelongsTo => syn::LitStr::new(
                 if !relation.foreign_key_fields.is_empty() {
                     &relation.foreign_key_fields[0]
@@ -4823,7 +5039,11 @@ pub fn generate_entity(
             .unwrap_or_else(|| current_primary_key_field_name.clone()), proc_macro2::Span::call_site());
         let is_has_many_lit = match relation.kind {
             RelationKind::HasMany => syn::LitBool::new(true, proc_macro2::Span::call_site()),
-            RelationKind::BelongsTo => syn::LitBool::new(false, proc_macro2::Span::call_site()),
+            RelationKind::BelongsTo | RelationKind::HasOne => syn::LitBool::new(false, proc_macro2::Span::call_site()),
+        };
+        let is_has_one_lit = match relation.kind {
+            RelationKind::HasOne => syn::LitBool::new(true, proc_macro2::Span::call_site()),
+            RelationKind::HasMany | RelationKind::BelongsTo => syn::LitBool::new(false, proc_macro2::Span::call_site()),
         };
         let is_foreign_key_nullable_lit =
             syn::LitBool::new(relation.is_nullable, proc_macro2::Span::call_site());
@@ -4838,19 +5058,28 @@ pub fn generate_entity(
                     model.#rel_field = *typed_value;
                 }
             }
+            RelationKind::HasOne => {
+                // HasOne relations should be treated like BelongsTo - single object, not vector
+                quote! {
+                    let actual_type = std::any::type_name_of_val(&*value);
+                    let typed_value = value.downcast::<Option<Box<#target::Selected>>>()
+                        .unwrap_or_else(|_| panic!("Type mismatch in set_field for HasOne: expected Option<Box<{}>>, got {}", stringify!(#target::Selected), actual_type));
+                    model.#rel_field = *typed_value;
+                }
+            }
             RelationKind::BelongsTo => {
                 if is_optional {
                     quote! {
                         let actual_type = std::any::type_name_of_val(&*value);
-                        let typed_value = value.downcast::<Option<#target::Selected>>()
-                            .unwrap_or_else(|_| panic!("Type mismatch in set_field: expected Option<{}>, got {}", stringify!(#target::Selected), actual_type));
+                        let typed_value = value.downcast::<Option<Box<#target::Selected>>>()
+                            .unwrap_or_else(|_| panic!("Type mismatch in set_field: expected Option<Box<{}>>, got {}", stringify!(#target::Selected), actual_type));
                         model.#rel_field = Some(*typed_value);
                     }
                 } else {
                     quote! {
                         let actual_type = std::any::type_name_of_val(&*value);
-                        let typed_value = value.downcast::<Option<#target::Selected>>()
-                            .unwrap_or_else(|_| panic!("Type mismatch in set_field: expected Option<{}>, got {}", stringify!(#target::Selected), actual_type));
+                        let typed_value = value.downcast::<Option<Box<#target::Selected>>>()
+                            .unwrap_or_else(|_| panic!("Type mismatch in set_field: expected Option<Box<{}>>, got {}", stringify!(#target::Selected), actual_type));
                         model.#rel_field = *typed_value;
                     }
                 }
@@ -4884,6 +5113,7 @@ pub fn generate_entity(
                 target_entity_name: #target_entity_name_lit,
                 is_foreign_key_nullable: #is_foreign_key_nullable_lit,
                 is_has_many: #is_has_many_lit,
+                is_has_one: #is_has_one_lit,
             }
         }
     })
@@ -5537,7 +5767,7 @@ pub fn generate_entity(
         .map(|relation| {
             let name = format_ident!("{}", relation.get_field_name());
             match relation.kind {
-                RelationKind::HasMany => {
+                RelationKind::HasMany | RelationKind::HasOne => {
                     // Model doesn't have relation fields, so start as None
                     quote! { #name: None }
                 }
@@ -5574,7 +5804,7 @@ pub fn generate_entity(
         .map(|relation| {
             let name = format_ident!("{}", relation.get_field_name());
             match relation.kind {
-                RelationKind::HasMany => {
+                RelationKind::HasMany | RelationKind::HasOne => {
                     // Model doesn't have relation fields, so start as None
                     quote! { #name: None }
                 }

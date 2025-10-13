@@ -573,8 +573,8 @@ fn generate_where_params_to_condition_function(
                     panic!("No primary key column specified for relation '{}'.\n\nPlease add 'to' attribute with target column.\n\nExample:\n    #[sea_orm(\n        belongs_to = \"super::post::Entity\",\n        from = \"Column::UserId\",\n        to = \"super::post::Column::AuthorId\"\n    )]\n    posts: Vec<Post>,", relation.name)
                 }
             }
-            crate::entity::RelationKind::HasMany => {
-                // For has_many, use the foreign key column from the target entity
+            crate::entity::RelationKind::HasMany | crate::entity::RelationKind::HasOne => {
+                // For has_many and has_one, use the foreign key column from the target entity
                 if !relation.foreign_key_columns.is_empty() {
                     format_ident!("{}", relation.foreign_key_columns[0].to_pascal_case())
                 } else if let Some(fk_col) = &relation.foreign_key_column {
