@@ -38,7 +38,7 @@ pub fn generate_where_param_logic(
         where_field_variants.push(quote! { #pascal_name(caustics::FieldOp) });
 
         // Field operator module
-        let set_fn = if !is_unique {
+        let set_fn = if !is_unique || is_primary_key {
             quote! {
                 pub fn set<T: Into<#ty>>(value: T) -> super::SetParam {
                     super::SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))

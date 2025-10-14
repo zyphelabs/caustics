@@ -1523,7 +1523,7 @@ pub fn generate_entity(
         })
         .collect();
 
-    // Generate struct fields for required fields (with pub)
+    // Generate struct fields for required fields (with pub) - keep original types
     let required_struct_fields = required_fields
         .iter()
         .map(|field| {
@@ -1533,22 +1533,22 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
-    // Generate function arguments for required fields (no pub)
+    // Generate function arguments for required fields (no pub) - using impl Into<T>
     let required_fn_args = required_fields
         .iter()
         .map(|field| {
             let ty = &field.ty;
             let name = field.ident.as_ref().expect("Field has no identifier");
-            quote! { #name: #ty }
+            quote! { #name: impl Into<#ty> }
         })
         .collect::<Vec<_>>();
 
-    // Generate initializers for required fields (no pub)
+    // Generate initializers for required fields (no pub) - convert using .into()
     let required_inits = required_fields
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().expect("Field has no identifier");
-            quote! { #name }
+            quote! { #name: #name.into() }
         })
         .collect::<Vec<_>>();
 
@@ -2021,10 +2021,9 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
-    // Generate field variants for SetParam enum (excluding primary keys)
+    // Generate field variants for SetParam enum (including primary keys)
     let field_variants = fields
         .iter()
-        .filter(|field| !primary_key_fields.contains(field))
         .map(|field| {
             let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
@@ -5377,10 +5376,9 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
-    // Generate match arms for SetParam (excluding primary keys)
+    // Generate match arms for SetParam (including primary keys)
     let match_arms = fields
         .iter()
-        .filter(|field| !primary_key_fields.contains(field))
         .map(|field| {
             let name = field.ident.as_ref().expect("Field has no identifier");
             let pascal_name = format_ident!("{}", name.to_string().to_pascal_case());
