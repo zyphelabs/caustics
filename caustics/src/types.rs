@@ -1273,10 +1273,17 @@ where
         self.aliases
     }
     fn to_single_column_expr(self) -> sea_orm::sea_query::SimpleExpr {
-        use sea_orm::IntoSimpleExpr;
-        // For now, use a generic column expression
-        // This will be properly implemented by the generated code for each entity
-        sea_query::Expr::col("id").into_simple_expr()
+        // Resolve the single selected alias into a concrete column using D's metadata
+        let aliases = self.aliases;
+        if aliases.len() != 1 {
+            panic!(
+                "Aggregate functions require exactly one field, got: {:?}",
+                aliases
+            );
+        }
+        let field_name = &aliases[0];
+        <D as EntitySelection>::column_for_alias(field_name.as_str())
+            .unwrap_or_else(|| panic!("Unknown field: {}", field_name))
     }
 }
 

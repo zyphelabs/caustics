@@ -115,6 +115,77 @@ where
         Ok(result)
     }
 
+    /// Execute the has_many set operations and scalar update inside an existing transaction
+    pub async fn exec_in_txn(
+        mut self,
+        txn: &DatabaseTransaction,
+    ) -> Result<ModelWithRelations, sea_orm::DbErr> {
+        // Separate has_many set operations from regular changes
+        let mut has_many_set_changes = Vec::new();
+        let mut has_many_create_changes = Vec::new();
+        let mut regular_changes = Vec::new();
+
+        for change in std::mem::take(&mut self.changes) {
+            if self.is_has_many_set_operation(&change) {
+                has_many_set_changes.push(change);
+            } else if change.is_has_many_create_operation() {
+                has_many_create_changes.push(change);
+            } else {
+                regular_changes.push(change);
+            }
+        }
+
+        // Resolve entity ID using typed resolver
+        let entity_id = match &self.entity_id_resolver {
+            Some(resolver) => (resolver)(self.conn).await?,
+            None => {
+                return Err(crate::types::CausticsError::QueryValidation {
+                    message: "Missing entity id resolver for has_many set".to_string(),
+                }
+                .into())
+            }
+        };
+
+        // Convert entity_id to CausticsKey dynamically (for create path)
+        let parent_id_key = match &entity_id {
+            sea_orm::Value::Int(Some(id)) => crate::CausticsKey::I32(*id),
+            sea_orm::Value::String(Some(s)) => crate::CausticsKey::String(s.to_string()),
+            sea_orm::Value::Uuid(Some(uuid)) => crate::CausticsKey::Uuid(**uuid),
+            _ => {
+                return Err(crate::types::CausticsError::QueryValidation {
+                    message: format!("Unsupported id type for has_many create: {:?}", entity_id),
+                }
+                .into())
+            }
+        };
+
+        // Perform nested creates inside provided transaction
+        if !has_many_create_changes.is_empty() {
+            for change in has_many_create_changes {
+                change
+                    .exec_has_many_create_on_txn(txn, parent_id_key.clone())
+                    .await?;
+            }
+        }
+
+        // Perform set operations inside provided transaction
+        if !has_many_set_changes.is_empty() {
+            self
+                .process_has_many_set_operations_in_txn(has_many_set_changes, entity_id, txn)
+                .await?;
+        }
+
+        // Execute regular update within the same transaction
+        let update_builder = super::update::UpdateQueryBuilder {
+            condition: self.condition,
+            changes: regular_changes,
+            conn: self.conn,
+            _phantom: std::marker::PhantomData,
+        };
+
+        update_builder.exec_in_txn(txn).await
+    }
+
     /// Check if a change is a has_many set operation
     fn is_has_many_set_operation(&self, change: &T) -> bool {
         change.is_has_many_set_operation()

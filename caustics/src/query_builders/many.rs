@@ -19,7 +19,7 @@ pub struct ManyQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, ModelWi
     pub reverse_order: bool,
     pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
     pub pending_nulls: Option<NullsOrder>,
-    pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
+    pub cursor: Option<Vec<(SimpleExpr, sea_orm::Value)>>,
     pub is_distinct: bool,
     pub distinct_on_fields: Option<Vec<SimpleExpr>>,
     pub distinct_on_columns: Option<Vec<<Entity as EntityTrait>::Column>>,
@@ -137,7 +137,10 @@ where
 
     /// Internal helper used by generated code to provide a cursor column/value
     pub fn with_cursor(mut self, expr: SimpleExpr, value: sea_orm::Value) -> Self {
-        self.cursor = Some((expr, value));
+        match &mut self.cursor {
+            Some(parts) => parts.push((expr, value)),
+            None => self.cursor = Some(vec![(expr, value)]),
+        }
         self
     }
 
@@ -154,7 +157,7 @@ where
         }
         let mut query = self.query.clone();
         // Apply cursor filtering if provided
-        if let Some((cursor_expr, cursor_value)) = &self.cursor {
+        if let Some(cursor_parts) = &self.cursor {
             // Determine effective order to derive comparison operator
             let first_order = self
                 .pending_order_bys
@@ -172,22 +175,37 @@ where
             };
 
             // Exclusive comparator for proper cursor pagination (cursor row excluded)
-            let cmp_expr = match effective_order {
-                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
-                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lt(cursor_value.clone()),
-                _ => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
-            };
-
-            query = query.filter(Condition::all().add(cmp_expr));
+            // For composite cursors, apply lexicographic comparison over all parts
+            // WHERE (a > ca) OR (a = ca AND b > cb) OR (a = ca AND b = cb AND c > cc) ...
+            if !cursor_parts.is_empty() {
+                let mut disjunction = Condition::any();
+                for i in 0..cursor_parts.len() {
+                    let mut conjunction = Condition::all();
+                    // Prefix equals on earlier parts
+                    for j in 0..i {
+                        let (expr_eq, val_eq) = &cursor_parts[j];
+                        conjunction = conjunction.add(Expr::expr(expr_eq.clone()).eq(val_eq.clone()));
+                    }
+                    // Strict comparator on current part
+                    let (expr_cmp, val_cmp) = &cursor_parts[i];
+                    let cmp = match effective_order {
+                        sea_orm::Order::Asc => Expr::expr(expr_cmp.clone()).gt(val_cmp.clone()),
+                        sea_orm::Order::Desc => Expr::expr(expr_cmp.clone()).lt(val_cmp.clone()),
+                        _ => Expr::expr(expr_cmp.clone()).gt(val_cmp.clone()),
+                    };
+                    conjunction = conjunction.add(cmp);
+                    disjunction = disjunction.add(conjunction);
+                }
+                query = query.filter(disjunction);
+            }
 
             // If no explicit order_by was provided, order by the cursor column for stability
             if self.pending_order_bys.is_empty() {
-                let ord = if self.reverse_order {
-                    sea_orm::Order::Desc
-                } else {
-                    sea_orm::Order::Asc
-                };
-                query = query.order_by(cursor_expr.clone(), ord);
+                let ord = if self.reverse_order { sea_orm::Order::Desc } else { sea_orm::Order::Asc };
+                // Order by all cursor parts to preserve lexicographic ordering
+                for (expr, _) in cursor_parts.iter() {
+                    query = query.order_by(expr.clone(), ord.clone());
+                }
             }
         }
         // Apply any pending orderings here, so reversal is respected regardless of call order

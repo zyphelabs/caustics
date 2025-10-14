@@ -870,6 +870,79 @@ mod caustics_school_advanced_tests {
 
     #[tokio::test]
     #[cfg(feature = "select")]
+    async fn test_relation_conversion_selected_to_model_with_relations() {
+        let db = setup_test_db().await;
+        let client = CausticsClient::new(db.clone());
+
+        // Create minimal graph: department -> teacher -> course
+        let dept = client
+            .department()
+            .create(
+                "SCI".to_string(),
+                "Science".to_string(),
+                fixed_now(),
+                fixed_now(),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let teacher = client
+            .teacher()
+            .create(
+                "T200".to_string(),
+                "Alice".to_string(),
+                "Teach".to_string(),
+                "alice@school.edu".to_string(),
+                fixed_now(),
+                ActivityStatus::Active,
+                fixed_now(),
+                fixed_now(),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+        let course = client
+            .course()
+            .create(
+                "SCI300".to_string(),
+                "Science III".to_string(),
+                5,
+                30,
+                ActivityStatus::Active,
+                fixed_now(),
+                fixed_now(),
+                teacher::id::equals(teacher.id),
+                department::id::equals(dept.id),
+                vec![],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Define a select_struct! for course fields
+        select_struct! {
+            CourseIdAndName from course::Selected { id: i32, name: String }
+        }
+
+        // Fetch with selection using the struct; rely on variable type for inference
+        let selected: CourseIdAndName = client
+            .course()
+            .find_unique(course::id::equals(course.id))
+            .select(course::select!(id, name))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert scalar fields preserved via typed selection
+        assert_eq!(selected.id, course.id);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "select")]
     async fn test_select_nested_include_student_enrollments_course_teacher() {
         let db = setup_test_db().await;
         let client = CausticsClient::new(db.clone());

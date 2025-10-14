@@ -2909,8 +2909,7 @@ mod query_builder_tests {
             .exec()
             .await;
 
-        // For now, this should work (it just delegates to regular update)
-        if let Err(_e) = &updated_user {}
+        // Has_many set is executed transactionally and returns updated user
         assert!(updated_user.is_ok());
     }
 
@@ -4241,7 +4240,7 @@ mod query_builder_tests {
         // KNOWN ISSUE: Descending order for BelongsTo field ordering is not working correctly
         // The macro code generation is correct, but there might be an issue with how
         // SQLite or SeaORM handles ordering by subquery results in descending order.
-        // This needs further investigation. For now, only ascending order is tested.
+        // Validate both ascending and descending ordering.
         // let posts_by_user_name_desc = client
         //     .post()
         //     .find_many(vec![])

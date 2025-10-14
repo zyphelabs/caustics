@@ -331,6 +331,13 @@ fn generate_from_impl_for_struct(
                 }
             }
         }
+
+        impl From<Box<#source_type_ident>> for #struct_name {
+            fn from(selected: Box<#source_type_ident>) -> Self {
+                // Delegate to the owned implementation by unboxing
+                Self::from(*selected)
+            }
+        }
     })
 }
 

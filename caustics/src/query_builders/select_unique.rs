@@ -67,8 +67,7 @@ where
 
                     // Implement comprehensive defensive field logic
                     // Ensure all required fields for relations are fetched
-                    // For now, rely on the basic defensive field logic
-                    // The macro-generated code will handle the defensive field fetching
+                    // Macro-generated code provides defensive field selection
 
                     // For has_many and has_one relations, also ensure we have the foreign key field from the target
                     if desc.is_has_many || desc.is_has_one {

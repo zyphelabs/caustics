@@ -22,7 +22,7 @@ where
     pub reverse_order: bool,
     pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
     pub pending_nulls: Option<NullsOrder>,
-    pub cursor: Option<(SimpleExpr, sea_orm::Value)>,
+    pub cursor: Option<Vec<(SimpleExpr, sea_orm::Value)>>,
     pub is_distinct: bool,
     pub distinct_on_fields: Option<Vec<SimpleExpr>>,
     pub distinct_on_columns: Option<Vec<<Entity as EntityTrait>::Column>>,
@@ -76,7 +76,7 @@ where
         let mut query = self.query.clone();
 
         // Apply cursor filtering if provided (copied from ManyQueryBuilder)
-        if let Some((cursor_expr, cursor_value)) = &self.cursor {
+        if let Some(cursor_parts) = &self.cursor {
             let first_order = self
                 .pending_order_bys
                 .first()
@@ -91,19 +91,30 @@ where
             } else {
                 first_order
             };
-            let cmp_expr = match effective_order {
-                sea_orm::Order::Asc => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
-                sea_orm::Order::Desc => Expr::expr(cursor_expr.clone()).lt(cursor_value.clone()),
-                _ => Expr::expr(cursor_expr.clone()).gt(cursor_value.clone()),
-            };
-            query = query.filter(Condition::all().add(cmp_expr));
+            if !cursor_parts.is_empty() {
+                let mut disjunction = Condition::any();
+                for i in 0..cursor_parts.len() {
+                    let mut conjunction = Condition::all();
+                    for j in 0..i {
+                        let (expr_eq, val_eq) = &cursor_parts[j];
+                        conjunction = conjunction.add(Expr::expr(expr_eq.clone()).eq(val_eq.clone()));
+                    }
+                    let (expr_cmp, val_cmp) = &cursor_parts[i];
+                    let cmp = match effective_order {
+                        sea_orm::Order::Asc => Expr::expr(expr_cmp.clone()).gt(val_cmp.clone()),
+                        sea_orm::Order::Desc => Expr::expr(expr_cmp.clone()).lt(val_cmp.clone()),
+                        _ => Expr::expr(expr_cmp.clone()).gt(val_cmp.clone()),
+                    };
+                    conjunction = conjunction.add(cmp);
+                    disjunction = disjunction.add(conjunction);
+                }
+                query = query.filter(disjunction);
+            }
             if self.pending_order_bys.is_empty() {
-                let ord = if self.reverse_order {
-                    sea_orm::Order::Desc
-                } else {
-                    sea_orm::Order::Asc
-                };
-                query = query.order_by(cursor_expr.clone(), ord);
+                let ord = if self.reverse_order { sea_orm::Order::Desc } else { sea_orm::Order::Asc };
+                for (expr, _) in cursor_parts.iter() {
+                    query = query.order_by(expr.clone(), ord.clone());
+                }
             }
         }
 
@@ -185,8 +196,7 @@ where
 
                     // Implement comprehensive defensive field logic
                     // Ensure all required fields for relations are fetched
-                    // For now, rely on the basic defensive field logic
-                    // The macro-generated code will handle the defensive field fetching
+                    // Macro-generated code provides defensive field selection
 
                     // For has_many and has_one relations, also ensure we have the foreign key field from the target
                     if desc.is_has_many || desc.is_has_one {

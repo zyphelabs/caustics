@@ -1072,8 +1072,9 @@ pub fn generate_entity(
 
                     // No field selection - return Selected objects with all fields
                     let opt_model = query.one(conn).await?;
-                    let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
-                    // For optional has_one, return Option<Option<Selected>> where:
+                    let with_rel: Option<Box<#target::Selected>> = opt_model
+                        .map(|model| Box::new(#target::Selected::from_model(model, &[])));
+                    // For optional has_one, return Option<Option<Box<Selected>>> where:
                     // - None = relation not fetched
                     // - Some(None) = relation fetched but no record exists
                     // - Some(Some(record)) = relation fetched and record exists
@@ -1096,7 +1097,8 @@ pub fn generate_entity(
 
                     // No field selection - return Selected objects with all fields
                     let opt_model = query.one(conn).await?;
-                    let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                    let with_rel: Option<Box<#target::Selected>> = opt_model
+                        .map(|model| Box::new(#target::Selected::from_model(model, &[])));
                     Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>)
                     }
                 }
@@ -1267,16 +1269,18 @@ pub fn generate_entity(
                                     })
                                     };
 
-                                    // Return Selected object directly (no conversion needed)
-                                    return Ok(Box::new(opt_selected) as Box<dyn std::any::Any + Send>);
+                                    // Return Selected object directly (boxed to match field type)
+                                    let opt_boxed: Option<Box<#target::Selected>> = opt_selected.map(|s| Box::new(s));
+                                    return Ok(Box::new(opt_boxed) as Box<dyn std::any::Any + Send>);
                                 } else {
                                     // No field selection - return Selected objects with all fields
                                     let opt_model = query.one(conn).await?;
-                                    let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                                    let with_rel: Option<Box<#target::Selected>> = opt_model
+                                        .map(|model| Box::new(#target::Selected::from_model(model, &[])));
                                     return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
                                 }
                             } else {
-                                return Ok(Box::new(None::<Option<#target::Selected>>) as Box<dyn std::any::Any + Send>);
+                                return Ok(Box::new(None::<Option<Box<#target::Selected>>>) as Box<dyn std::any::Any + Send>);
                         }
                     }
                 } else {
@@ -1387,16 +1391,18 @@ pub fn generate_entity(
                                         })
                                         };
 
-                                        // Return Selected object directly (no conversion needed)
-                                        return Ok(Box::new(opt_selected) as Box<dyn std::any::Any + Send>);
+                                        // Return Selected object directly (boxed to match field type)
+                                        let opt_boxed: Option<Box<#target::Selected>> = opt_selected.map(|s| Box::new(s));
+                                        return Ok(Box::new(opt_boxed) as Box<dyn std::any::Any + Send>);
                                 } else {
                                     // No field selection - return Selected objects with all fields
                                     let opt_model = query.one(conn).await?;
-                                    let with_rel = opt_model.map(|model| #target::Selected::from_model(model, &[]));
+                                    let with_rel: Option<Box<#target::Selected>> = opt_model
+                                        .map(|model| Box::new(#target::Selected::from_model(model, &[])));
                                     return Ok(Box::new(with_rel) as Box<dyn std::any::Any + Send>);
                                 }
                                 } else {
-                            Ok(Box::new(None::<Option<#target::Selected>>) as Box<dyn std::any::Any + Send>)
+                            Ok(Box::new(None::<Option<Box<#target::Selected>>>) as Box<dyn std::any::Any + Send>)
                             }
                         }
                 }
@@ -1727,7 +1733,6 @@ pub fn generate_entity(
             }
         })
         .collect::<Vec<_>>();
-
     // Generate foreign key relation function arguments
     let foreign_key_relation_args = relations
         .iter()
@@ -2316,7 +2321,6 @@ pub fn generate_entity(
             }
         })
         .collect();
-
     // Match arms for nested createMany
     let has_many_create_many_match_arms: Vec<proc_macro2::TokenStream> = has_many_create_variants
         .iter()
@@ -2695,37 +2699,10 @@ pub fn generate_entity(
                     cursor_parts.push((#cursor_expressions, value));
                 )*
                 
-                // For composite keys, we need to create a compound cursor
-                // that represents all primary key fields
-                if cursor_parts.len() >= 2 {
-                    // Create a compound cursor using all fields
-                    // This creates a sophisticated cursor that can represent composite keys
-                    let mut compound_condition = sea_query::Condition::all();
-                    for (expr, value) in &cursor_parts {
-                        compound_condition = compound_condition.add(expr.clone().eq(value.clone()));
-                    }
-                    // For composite keys, use all fields for proper pagination
-                    // This ensures correct cursor pagination with composite keys
-                    if cursor_parts.len() >= 2 {
-                        // Create a compound cursor using all fields
-                        // For now, use the first field as the primary cursor
-                        
-                        // Use the first field as the primary cursor for now
-                        if let Some((expr, value)) = cursor_parts.first() {
-                            self.with_cursor(expr.clone(), value.clone())
-                        } else {
-                            self
-                        }
-                    } else if let Some((expr, value)) = cursor_parts.first() {
-                        self.with_cursor(expr.clone(), value.clone())
-                    } else {
-                        self
-                    }
-                } else if let Some((expr, value)) = cursor_parts.first() {
-                    self.with_cursor(expr.clone(), value.clone())
-                } else {
-                    self
-                }
+                // Provide all cursor parts for lexicographic pagination on composite keys
+                cursor_parts
+                    .into_iter()
+                    .fold(self, |acc, (expr, value)| acc.with_cursor(expr, value))
             },
         };
         
@@ -2957,7 +2934,6 @@ pub fn generate_entity(
     let avg_select_variants = sum_select_variants.clone();
     let min_select_variants = sum_select_variants.clone();
     let max_select_variants = sum_select_variants.clone();
-
     // Generate typed WhereParam -> Filter conversion match arms (no string parsing)
     let filter_conversion_match_arms = fields
         .iter()
@@ -3159,12 +3135,25 @@ pub fn generate_entity(
                                 for nested in &filter.nested_includes {
                                     #target::ModelWithRelations::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                 }
+                            } else if let Some(mref) = fetched_result.downcast_mut::<Option<Box<#target::Selected>>>() {
+                                // Boxed Selected
+                                if let Some(model_box) = mref.as_mut() {
+                                    let model: &mut #target::Selected = model_box.as_mut();
+                                    for nested in &filter.nested_includes {
+                                        #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
+                                    }
+                                }
                             } else if let Some(mref) = fetched_result.downcast_mut::<Option<#target::Selected>>() {
                                 // Try to downcast as Selected (field selection is being used)
                                 if let Some(model) = mref.as_mut() {
                                     for nested in &filter.nested_includes {
                                         #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                     }
+                                }
+                            } else if let Some(model_box) = fetched_result.downcast_mut::<Box<#target::Selected>>() {
+                                let model: &mut #target::Selected = model_box.as_mut();
+                                for nested in &filter.nested_includes {
+                                    #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                 }
                             } else if let Some(model) = fetched_result.downcast_mut::<#target::Selected>() {
                                 for nested in &filter.nested_includes {
@@ -3232,8 +3221,15 @@ pub fn generate_entity(
                     } else { false };
                     if is_optional {
                         quote! {
-                            // Try to downcast as Option<Option<Selected>> first (field selection is being used, nullable FK)
-                            if let Some(mmref) = fetched_result.downcast_mut::<Option<Option<#target::Selected>>>() {
+                            // Try to downcast as Option<Option<Box<Selected>>> first (boxed, nullable FK)
+                            if let Some(mmref) = fetched_result.downcast_mut::<Option<Option<Box<#target::Selected>>>>() {
+                                if let Some(Some(model_box)) = mmref.as_mut() {
+                                    let model: &mut #target::Selected = model_box.as_mut();
+                                    for nested in &filter.nested_includes {
+                                        #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
+                                    }
+                                }
+                            } else if let Some(mmref) = fetched_result.downcast_mut::<Option<Option<#target::Selected>>>() {
                                 if let Some(Some(model)) = mmref.as_mut() {
                                     for nested in &filter.nested_includes {
                                         #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
@@ -3254,11 +3250,23 @@ pub fn generate_entity(
                     } else {
                         quote! {
                             // Try to downcast as Selected first (field selection is being used)
-                            if let Some(mref) = fetched_result.downcast_mut::<Option<#target::Selected>>() {
+                            if let Some(mref) = fetched_result.downcast_mut::<Option<Box<#target::Selected>>>() {
+                                if let Some(model_box) = mref.as_mut() {
+                                    let model: &mut #target::Selected = model_box.as_mut();
+                                    for nested in &filter.nested_includes {
+                                        #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
+                                    }
+                                }
+                            } else if let Some(mref) = fetched_result.downcast_mut::<Option<#target::Selected>>() {
                                 if let Some(model) = mref.as_mut() {
                                     for nested in &filter.nested_includes {
                                         #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                     }
+                                }
+                            } else if let Some(model_box) = fetched_result.downcast_mut::<Box<#target::Selected>>() {
+                                let model: &mut #target::Selected = model_box.as_mut();
+                                for nested in &filter.nested_includes {
+                                    #target::Selected::__caustics_apply_relation_filter(model, conn, nested, registry).await?;
                                 }
                             } else if let Some(model) = fetched_result.downcast_mut::<#target::Selected>() {
                                 for nested in &filter.nested_includes {
@@ -3477,6 +3485,39 @@ pub fn generate_entity(
             .collect::<Vec<_>>()
     };
 
+    // Generate per-relation kind codes for Selected::to_model_with_relations conversion
+    // Codes: 0=HasMany, 1=HasOne(non-optional), 2=HasOne(optional), 3=BelongsTo(non-optional), 4=BelongsTo(optional)
+    let relation_kinds_for_conversion = if relations.is_empty() {
+        Vec::new()
+    } else {
+        relations
+            .iter()
+            .map(|relation| {
+                match relation.kind {
+                    RelationKind::HasMany => quote! { 0u8 },
+                    RelationKind::HasOne => {
+                        let is_optional = relation.target_fk_is_optional.unwrap_or(relation.is_nullable);
+                        if is_optional { quote! { 2u8 } } else { quote! { 1u8 } }
+                    }
+                    RelationKind::BelongsTo => {
+                        // Optional if foreign key field on current entity is optional
+                        let is_optional = if let Some(fk_field_name) = &relation.foreign_key_field {
+                            if let Some(field) = fields.iter().find(|f| {
+                                f.ident
+                                    .as_ref()
+                                    .expect("Field has no identifier")
+                                    .to_string() == *fk_field_name
+                            }) {
+                                is_option(&field.ty)
+                            } else { false }
+                        } else { false };
+                        if is_optional { quote! { 4u8 } } else { quote! { 3u8 } }
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
     // Generate default values for relation fields
     let relation_defaults = if relations.is_empty() {
         Vec::new()
@@ -3535,7 +3576,6 @@ pub fn generate_entity(
             }
         }
     };
-
     // Prepare Selected scalar field definitions (Option<T> for non-nullable, Option<Option<T>> for nullable)
     let selected_scalar_fields = fields
         .iter()
@@ -3573,7 +3613,6 @@ pub fn generate_entity(
         .iter()
         .map(|field| crate::common::is_option(&field.ty))
         .collect::<Vec<_>>();
-
     // Generate relation field names for to_model_with_relations function
     let relation_names = relations
         .iter()
@@ -4163,7 +4202,6 @@ pub fn generate_entity(
             }
         })
         .collect::<Vec<_>>();
-
     // Precompute per-relation count arms for Selected that use generic Value equality
     let relation_count_match_arms_selected = relations
         .iter()
@@ -4484,8 +4522,7 @@ pub fn generate_entity(
                 )*
 
                 // Copy relation fields, converting Selected types to ModelWithRelations types
-                // For now, relations are not converted - they remain as None in ModelWithRelations
-                // This is safe since ModelWithRelations uses Option types for all relations
+                // Relations are not converted here; they remain as None in ModelWithRelations
 
                 // Copy count fields
                 model_with_relations._count = self._count.clone();
@@ -4641,7 +4678,6 @@ pub fn generate_entity(
             }
         }
     };
-
     // --- Begin relation metadata generation ---
     let relation_descriptors: Vec<proc_macro2::TokenStream> = if relations.is_empty() {
         Vec::new()
@@ -4846,7 +4882,18 @@ pub fn generate_entity(
                         let actual_type = std::any::type_name_of_val(&*value);
 
                         // For optional has_one, try to downcast as Option<Option<Selected>> first, then fall back to Option<Option<ModelWithRelations>>
-                        let converted_value = if let Some(selected_opt_opt) = value.downcast_ref::<Option<Option<#target::Selected>>>() {
+                        let converted_value = if let Some(selected_opt_opt_box) = value.downcast_ref::<Option<Option<Box<#target::Selected>>>>() {
+                            // We got Option<Option<Box<Selected>>> - convert to Option<Option<Box<ModelWithRelations>>>>
+                            if let Some(selected_opt_box) = selected_opt_opt_box.as_ref() {
+                                if let Some(selected_box) = selected_opt_box.as_ref() {
+                                    Some(Some(Box::new(selected_box.as_ref().to_model_with_relations())))
+                                } else {
+                                    Some(None)
+                                }
+                            } else {
+                                None
+                            }
+                        } else if let Some(selected_opt_opt) = value.downcast_ref::<Option<Option<#target::Selected>>>() {
                             // We got Option<Option<Selected>> - convert to Option<Option<Box<ModelWithRelations>>>
                             if let Some(selected_opt) = selected_opt_opt.as_ref() {
                                 if let Some(selected) = selected_opt.as_ref() {
@@ -4879,7 +4926,12 @@ pub fn generate_entity(
                         let actual_type = std::any::type_name_of_val(&*value);
 
                         // For required has_one, try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
-                        let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
+                        let converted_value = if let Some(selected_opt_box) = value.downcast_ref::<Option<Box<#target::Selected>>>() {
+                            // We got Box<Selected> - convert
+                            if let Some(selected_box) = selected_opt_box.as_ref() {
+                                Some(Box::new(selected_box.as_ref().to_model_with_relations()))
+                            } else { None }
+                        } else if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
                             // We got Selected object - convert to ModelWithRelations and box it (no clone needed!)
                             if let Some(selected) = selected_opt.as_ref() {
                                 Some(Box::new(selected.to_model_with_relations()))
@@ -4906,23 +4958,27 @@ pub fn generate_entity(
                     quote! {
                         let actual_type = std::any::type_name_of_val(&*value);
 
-                        // Try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
-                        let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
-                            // We got Selected object - convert to ModelWithRelations and box it (no clone needed!)
-                            if let Some(selected) = selected_opt.as_ref() {
-                                Some(Some(Box::new(selected.to_model_with_relations())))
+                        // Try to downcast as Option<Box<Selected>> first, then fall back to Option<Option<ModelWithRelations>>
+                        let converted_value = if let Some(selected_opt_box) = value.downcast_ref::<Option<Box<#target::Selected>>>() {
+                            // We got Option<Box<Selected>> - convert to Option<Option<Box<ModelWithRelations>>>>
+                            if let Some(selected_box) = selected_opt_box.as_ref() {
+                                Some(Some(Box::new(selected_box.as_ref().to_model_with_relations())))
                             } else {
                                 Some(None)
                             }
-                        } else if let Some(model_opt) = value.downcast_ref::<Option<#target::ModelWithRelations>>() {
-                            // We got ModelWithRelations object directly - box it (still need to clone here)
-                            if let Some(model) = model_opt.as_ref() {
-                                Some(Some(Box::new(model.clone())))
+                        } else if let Some(model_opt_opt) = value.downcast_ref::<Option<Option<#target::ModelWithRelations>>>() {
+                            // We got Option<Option<ModelWithRelations>> directly
+                            if let Some(model_opt) = model_opt_opt.as_ref() {
+                                if let Some(model) = model_opt.as_ref() {
+                                    Some(Some(Box::new(model.clone())))
+                                } else {
+                                    Some(None)
+                                }
                             } else {
-                                Some(None)
+                                None
                             }
                         } else {
-                            panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}",
+                            panic!("Type mismatch in set_field: expected Option<Box<{}>> or Option<Option<{}>>, got {}",
                                 stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
                         };
                         model.#rel_field = converted_value;
@@ -4931,11 +4987,10 @@ pub fn generate_entity(
                     quote! {
                         let actual_type = std::any::type_name_of_val(&*value);
 
-                        // Try to downcast as Option<Selected> first, then fall back to Option<ModelWithRelations>
-                        let converted_value = if let Some(selected_opt) = value.downcast_ref::<Option<#target::Selected>>() {
-                            // We got Selected object - convert to ModelWithRelations and box it (no clone needed!)
-                            if let Some(selected) = selected_opt.as_ref() {
-                                Some(Box::new(selected.to_model_with_relations()))
+                        // Try to downcast as Option<Box<Selected>> first, then fall back to Option<ModelWithRelations>
+                        let converted_value = if let Some(selected_opt_box) = value.downcast_ref::<Option<Box<#target::Selected>>>() {
+                            if let Some(selected_box) = selected_opt_box.as_ref() {
+                                Some(Box::new(selected_box.as_ref().to_model_with_relations()))
                             } else {
                                 None
                             }
@@ -4947,7 +5002,7 @@ pub fn generate_entity(
                                 None
                             }
                         } else {
-                            panic!("Type mismatch in set_field: expected Option<{}> or Option<{}>, got {}",
+                            panic!("Type mismatch in set_field: expected Option<Box<{}>> or Option<{}>, got {}",
                                 stringify!(#target::Selected), stringify!(#target::ModelWithRelations), actual_type);
                         };
                         model.#rel_field = converted_value;
@@ -5141,7 +5196,6 @@ pub fn generate_entity(
         // Defensive field fetching is handled by the existing logic in the query builders
         // The macro-generated from_model method already includes defensive fields
     };
-
     // Generate relation connection match arms for SetParam (for deferred lookups)
     let relation_connect_deferred_match_arms = relations
         .iter()
@@ -5776,7 +5830,6 @@ pub fn generate_entity(
             }
         })
         .collect::<Vec<_>>();
-
     // Generate field conversions for from_model method
     let from_model_field_conversions = fields
         .iter()
@@ -6416,7 +6469,6 @@ pub fn generate_entity(
             use caustics::ToSeaOrmValue;
             #composite_key_extraction
         }
-
         impl Create {
             pub(crate) fn into_active_model<C: sea_orm::ConnectionTrait>(mut self) -> (ActiveModel, Vec<caustics::DeferredLookup>, Vec<caustics::PostInsertOp<'static>>) {
                 let mut model = ActiveModel::new();

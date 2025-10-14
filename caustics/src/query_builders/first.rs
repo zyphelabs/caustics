@@ -84,7 +84,6 @@ where
         let main_result = query.one(conn).await?;
 
         if let Some(main_model) = main_result {
-            // For now, use the old approach until we can properly access the Selected type
             let mut model_with_relations = ModelWithRelations::from_model(main_model);
 
             // Fetch relations for the main model (nested-aware)

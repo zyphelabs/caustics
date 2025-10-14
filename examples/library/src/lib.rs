@@ -1,3 +1,4 @@
+#![feature(decl_macro)]
 pub mod entities;
 
 // Include the generated client directly in the root module

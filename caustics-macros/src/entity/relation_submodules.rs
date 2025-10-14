@@ -191,8 +191,18 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
                                 }
                             }).collect::<String>();
 
-                            // Use metadata system when available
-                            // For now, skip automatic foreign key inclusion
+                            // Use metadata system when available to auto-include FKs required for nested traversal
+                            if let Some(meta) = caustics::get_entity_metadata(&entity_name) {
+                                for fk in meta.foreign_key_fields {
+                                    if !select_aliases.iter().any(|a| a == fk) {
+                                        select_aliases.push(::std::string::ToString::to_string(fk));
+                                    }
+                                }
+                                // Always ensure primary key is present for stable traversal
+                                if !select_aliases.iter().any(|a| a == meta.primary_key_field) {
+                                    select_aliases.push(::std::string::ToString::to_string(meta.primary_key_field));
+                                }
+                            }
                         }
                     }
 

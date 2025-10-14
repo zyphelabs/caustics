@@ -509,6 +509,120 @@ async fn test_composite_key_error_handling() -> Result<(), DbErr> {
 }
 
 #[tokio::test]
+async fn test_composite_cursor_pagination() -> Result<(), DbErr> {
+    let db = setup_db().await?;
+    let client = CausticsClient::new(db.clone());
+    use library::entities::book::ManyCursorExt;
+
+    let now = chrono::Utc::now();
+    let author = client
+        .author()
+        .create(
+            "Cursor".to_string(),
+            "Author".to_string(),
+            "cursor.author@example.com".to_string(),
+            now,
+            now,
+            vec![],
+        )
+        .exec()
+        .await?;
+
+    // Create 5 books for the same author
+    for (title, year) in [
+        ("A", 2020),
+        ("B", 2021),
+        ("C", 2022),
+        ("D", 2023),
+        ("E", 2024),
+    ] {
+        client
+            .book()
+            .create(title.to_string(), author.id, year, serde_json::json!(["x"]), vec![])
+            .exec()
+            .await?;
+    }
+
+    // First page ordered by title asc
+    let first_page = client
+        .book()
+        .find_many(vec![book::author_id::equals(author.id)])
+        .order_by(book::title::order(SortOrder::Asc))
+        .take(2)
+        .exec()
+        .await?;
+
+    assert_eq!(first_page.len(), 2);
+    assert_eq!(first_page[0].title, "A");
+    assert_eq!(first_page[1].title, "B");
+
+    // Next page using composite cursor: (title=B, author_id)
+    let cursor = book::UniqueWhereParam::TitleAndAuthorId(first_page[1].title.clone(), author.id);
+    let second_page = client
+        .book()
+        .find_many(vec![book::author_id::equals(author.id)])
+        .order_by(book::title::order(SortOrder::Asc))
+        .cursor(cursor)
+        .take(2)
+        .exec()
+        .await?;
+
+    assert_eq!(second_page.len(), 2);
+    assert_eq!(second_page[0].title, "C");
+    assert_eq!(second_page[1].title, "D");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_typed_selection_single_column_expr() -> Result<(), DbErr> {
+    use caustics::typed_selection;
+    let db = setup_db().await?;
+    let client = CausticsClient::new(db.clone());
+
+    let now = chrono::Utc::now();
+    let author = client
+        .author()
+        .create(
+            "Sel".to_string(),
+            "Tester".to_string(),
+            "sel.tester@example.com".to_string(),
+            now,
+            now,
+            vec![],
+        )
+        .exec()
+        .await?;
+
+    let _book = client
+        .book()
+        .create(
+            "SelBook".to_string(),
+            author.id,
+            2030,
+            serde_json::json!(["sel"]),
+            vec![],
+        )
+        .exec()
+        .await?;
+
+    // Select only publication_year using typed selection (ensures no fallback to "id")
+    let selected = client
+        .book()
+        .find_many(vec![book::author_id::equals(author.id)])
+        .select(typed_selection::<book::Entity, book::Selected>(
+            vec!["publication_year".to_string()],
+        ))
+        .exec::<book::Selected>()
+        .await?;
+
+    assert!(!selected.is_empty());
+    assert_eq!(selected[0].publication_year, Some(2030));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_automatic_pluralization() -> Result<(), DbErr> {
     let db = setup_db().await?;
     let client = CausticsClient::new(db.clone());
