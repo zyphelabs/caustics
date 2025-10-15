@@ -95,6 +95,283 @@ mod query_builder_tests {
     }
 
     #[tokio::test]
+    async fn test_null_foreign_key_relationship_issue() {
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create a user
+        let user_id = Uuid::new_v4();
+        let _user = client
+            .user()
+            .create(
+                "test@example.com".to_string(),
+                "Test User".to_string(),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                vec![user::id::set(user_id), user::age::set(Some(25))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a post with null reviewer_user_id (this should be None in the relationship)
+        let post_id = Uuid::new_v4();
+        let post = client
+            .post()
+            .create(
+                "Test Post".to_string(),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                user::id::equals(user_id), // Author is set
+                vec![
+                    post::id::set(post_id),
+                    post::content::set(Some("Test content".to_string())),
+                    post::reviewer_user_id::set(None), // Reviewer is explicitly null
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify the post was created with null reviewer_user_id
+        assert_eq!(post.reviewer_user_id, None);
+
+        // Now fetch the post with the reviewer relationship
+        // This should reproduce the issue where reviewer is Some with default values
+        // even though reviewer_user_id is null in the database
+        let fetched_post = client
+            .post()
+            .find_first(vec![post::id::equals(post_id)])
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The test should verify:
+        // - reviewer_user_id should be None (null in DB)
+        // - reviewer relationship should also be None
+        assert_eq!(fetched_post.reviewer_user_id, None, "reviewer_user_id should be None when null in database");
+        assert_eq!(fetched_post.reviewer, None, "reviewer relationship should be None when foreign key is null");
+    }
+
+    #[tokio::test]
+    async fn test_null_foreign_key_relationship_issue_direct_db() {
+        use sea_orm::{ConnectionTrait, Statement};
+        
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Disable foreign key constraints for this test
+        db.execute(Statement::from_string(sea_orm::DatabaseBackend::Sqlite, "PRAGMA foreign_keys = OFF")).await.unwrap();
+
+        // Create a user
+        let user_id = Uuid::new_v4();
+        let _user = client
+            .user()
+            .create(
+                "test@example.com".to_string(),
+                "Test User".to_string(),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                vec![user::id::set(user_id), user::age::set(Some(25))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a post with null reviewer_user_id directly in the database
+        // This simulates the exact scenario you described where the foreign key is null in DB
+        let post_id = Uuid::new_v4();
+        
+        // Insert post directly with NULL reviewer_user_id
+        let insert_post = Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Sqlite,
+            r#"INSERT INTO posts (id, title, content, user_id, reviewer_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?)"#,
+            vec![
+                post_id.into(),
+                "Test Post".into(),
+                "Test content".into(),
+                user_id.into(),
+                "2023-01-01T00:00:00Z".into(),
+                "2023-01-01T00:00:00Z".into(),
+            ],
+        );
+        
+        db.execute(insert_post).await.unwrap();
+
+        // Now fetch the post with the reviewer relationship
+        // This should reproduce the issue where reviewer is Some with default values
+        // even though reviewer_user_id is null in the database
+        let fetched_post = client
+            .post()
+            .find_first(vec![post::id::equals(post_id)])
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .expect("Post should exist in database");
+
+        // The test should verify:
+        // - reviewer_user_id should be None (null in DB)
+        // - reviewer relationship should also be None
+        assert_eq!(fetched_post.reviewer_user_id, None, "reviewer_user_id should be None when null in database");
+        assert_eq!(fetched_post.reviewer, None, "reviewer relationship should be None when foreign key is null");
+    }
+
+    #[tokio::test]
+    async fn test_null_foreign_key_edge_cases() {
+        use sea_orm::{ConnectionTrait, Statement};
+        
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Disable foreign key constraints for this test
+        db.execute(Statement::from_string(sea_orm::DatabaseBackend::Sqlite, "PRAGMA foreign_keys = OFF")).await.unwrap();
+
+        // Create multiple users
+        let user1_id = Uuid::new_v4();
+        let user2_id = Uuid::new_v4();
+        
+        let _user1 = client
+            .user()
+            .create(
+                "user1@example.com".to_string(),
+                "User 1".to_string(),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                vec![user::id::set(user1_id), user::age::set(Some(25))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let _user2 = client
+            .user()
+            .create(
+                "user2@example.com".to_string(),
+                "User 2".to_string(),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                vec![user::id::set(user2_id), user::age::set(Some(30))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create posts with various null foreign key scenarios
+        let post1_id = Uuid::new_v4();
+        let post2_id = Uuid::new_v4();
+        let post3_id = Uuid::new_v4();
+
+        // Post 1: Normal post with reviewer
+        let _post1 = client
+            .post()
+            .create(
+                "Post 1".to_string(),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                user::id::equals(user1_id),
+                vec![
+                    post::id::set(post1_id),
+                    post::content::set(Some("Content 1".to_string())),
+                    post::reviewer_user_id::set(Some(user2_id)), // Has reviewer
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Post 2: Post with null reviewer_user_id (using API)
+        let _post2 = client
+            .post()
+            .create(
+                "Post 2".to_string(),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z").unwrap().with_timezone(&FixedOffset::east_opt(0).unwrap()),
+                user::id::equals(user1_id),
+                vec![
+                    post::id::set(post2_id),
+                    post::content::set(Some("Content 2".to_string())),
+                    post::reviewer_user_id::set(None), // No reviewer
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Post 3: Post with null reviewer_user_id (direct SQL)
+        let insert_post3 = Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Sqlite,
+            r#"INSERT INTO posts (id, title, content, user_id, reviewer_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?)"#,
+            vec![
+                post3_id.into(),
+                "Post 3".into(),
+                "Content 3".into(),
+                user1_id.into(),
+                "2023-01-01T00:00:00Z".into(),
+                "2023-01-01T00:00:00Z".into(),
+            ],
+        );
+        db.execute(insert_post3).await.unwrap();
+
+        // Test fetching all posts with relationships
+        let posts_with_reviewer = client
+            .post()
+            .find_many(vec![])
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(posts_with_reviewer.len(), 3, "Should have 3 posts");
+        
+        // Verify each post has correct relationship behavior
+        for post in &posts_with_reviewer {
+            // Check if the relationship matches the foreign key
+            match (&post.reviewer_user_id, &post.reviewer) {
+                (None, None) => {
+                    // Correct: No foreign key, no relationship
+                },
+                (Some(_), Some(_)) => {
+                    // Correct: Has foreign key, has relationship
+                },
+                (None, Some(_)) => {
+                    panic!("BUG: No foreign key but has relationship! Post ID: {:?}", post.id);
+                },
+                (Some(_), None) => {
+                    panic!("BUG: Has foreign key but no relationship! Post ID: {:?}", post.id);
+                }
+            }
+        }
+
+        // Test specific post fetching
+        let post2_fetched = client
+            .post()
+            .find_first(vec![post::id::equals(post2_id)])
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        let post3_fetched = client
+            .post()
+            .find_first(vec![post::id::equals(post3_id)])
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Both should have None for reviewer relationship
+        assert_eq!(post2_fetched.reviewer_user_id, None, "Post 2 (API null) should have None reviewer_user_id");
+        assert_eq!(post2_fetched.reviewer, None, "Post 2 (API null) should have None reviewer relationship");
+        assert_eq!(post3_fetched.reviewer_user_id, None, "Post 3 (SQL null) should have None reviewer_user_id");
+        assert_eq!(post3_fetched.reviewer, None, "Post 3 (SQL null) should have None reviewer relationship");
+    }
+
+    #[tokio::test]
     async fn test_create_operations() {
         let db = setup_test_db().await;
         let client = blog::CausticsClient::new(db.clone());
@@ -949,6 +1226,317 @@ mod query_builder_tests {
             .unwrap();
         assert_eq!(u2_after.name, "U2-upd");
         assert_eq!(u2_after.age, Some(20));
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_with_vec() {
+        use chrono::DateTime;
+        use std::str::FromStr;
+
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create test users
+        let u1 = client
+            .user()
+            .create(
+                "batch_u1@example.com".to_string(),
+                "BatchU1".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(25))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let u2 = client
+            .user()
+            .create(
+                "batch_u2@example.com".to_string(),
+                "BatchU2".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(35))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let u3 = client
+            .user()
+            .create(
+                "batch_u3@example.com".to_string(),
+                "BatchU3".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(45))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a vector of update operations (similar to the user's use case)
+        let mut update_operations = Vec::new();
+        
+        update_operations.push(
+            client
+                .user()
+                .update(
+                    user::id::equals(u1.id),
+                    vec![user::name::set("UpdatedU1"), user::age::increment(5)],
+                )
+        );
+        
+        update_operations.push(
+            client
+                .user()
+                .update(
+                    user::id::equals(u2.id),
+                    vec![user::name::set("UpdatedU2"), user::age::decrement(10)],
+                )
+        );
+        
+        update_operations.push(
+            client
+                .user()
+                .update(
+                    user::id::equals(u3.id),
+                    vec![user::name::set("UpdatedU3"), user::age::set(50)],
+                )
+        );
+
+        // Execute batch update using Vec<UpdateQueryBuilder>
+        let results = client
+            ._batch(update_operations)
+            .await
+            .expect("Batch update operation failed");
+
+        // Verify we got the expected number of results
+        assert_eq!(results.len(), 3);
+
+        // Verify the updates were applied correctly
+        let updated_u1 = client
+            .user()
+            .find_unique(user::id::equals(u1.id))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated_u1.name, "UpdatedU1");
+        assert_eq!(updated_u1.age, Some(30)); // 25 + 5
+
+        let updated_u2 = client
+            .user()
+            .find_unique(user::id::equals(u2.id))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated_u2.name, "UpdatedU2");
+        assert_eq!(updated_u2.age, Some(25)); // 35 - 10
+
+        let updated_u3 = client
+            .user()
+            .find_unique(user::id::equals(u3.id))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated_u3.name, "UpdatedU3");
+        assert_eq!(updated_u3.age, Some(50)); // Set to 50
+    }
+
+    #[tokio::test]
+    async fn test_batch_create_with_vec() {
+        use chrono::DateTime;
+        use std::str::FromStr;
+
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create a vector of create operations
+        let mut create_operations = Vec::new();
+        
+        create_operations.push(
+            client
+                .user()
+                .create(
+                    "batch_create_1@example.com".to_string(),
+                    "BatchCreate1".to_string(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    vec![user::age::set(Some(25))],
+                )
+        );
+        
+        create_operations.push(
+            client
+                .user()
+                .create(
+                    "batch_create_2@example.com".to_string(),
+                    "BatchCreate2".to_string(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    vec![user::age::set(Some(35))],
+                )
+        );
+        
+        create_operations.push(
+            client
+                .user()
+                .create(
+                    "batch_create_3@example.com".to_string(),
+                    "BatchCreate3".to_string(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    vec![user::age::set(Some(45))],
+                )
+        );
+
+        // Execute batch create using Vec<CreateQueryBuilder>
+        let results = client
+            ._batch(create_operations)
+            .await
+            .expect("Batch create operation failed");
+
+        // Verify we got the expected number of results
+        assert_eq!(results.len(), 3);
+
+        // Verify the creates were applied correctly
+        let created_user1 = client
+            .user()
+            .find_unique(user::email::equals("batch_create_1@example.com"))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(created_user1.name, "BatchCreate1");
+        assert_eq!(created_user1.age, Some(25));
+
+        let created_user2 = client
+            .user()
+            .find_unique(user::email::equals("batch_create_2@example.com"))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(created_user2.name, "BatchCreate2");
+        assert_eq!(created_user2.age, Some(35));
+
+        let created_user3 = client
+            .user()
+            .find_unique(user::email::equals("batch_create_3@example.com"))
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(created_user3.name, "BatchCreate3");
+        assert_eq!(created_user3.age, Some(45));
+    }
+
+    #[tokio::test]
+    async fn test_batch_delete_with_vec() {
+        use chrono::DateTime;
+        use std::str::FromStr;
+
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create test users first
+        let u1 = client
+            .user()
+            .create(
+                "batch_delete_1@example.com".to_string(),
+                "BatchDelete1".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(25))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let u2 = client
+            .user()
+            .create(
+                "batch_delete_2@example.com".to_string(),
+                "BatchDelete2".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(35))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let u3 = client
+            .user()
+            .create(
+                "batch_delete_3@example.com".to_string(),
+                "BatchDelete3".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(45))],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a vector of delete operations
+        let mut delete_operations = Vec::new();
+        
+        delete_operations.push(
+            client
+                .user()
+                .delete(user::id::equals(u1.id))
+        );
+        
+        delete_operations.push(
+            client
+                .user()
+                .delete(user::id::equals(u2.id))
+        );
+        
+        delete_operations.push(
+            client
+                .user()
+                .delete(user::id::equals(u3.id))
+        );
+
+        // Execute batch delete using Vec<DeleteQueryBuilder>
+        let results = client
+            ._batch(delete_operations)
+            .await
+            .expect("Batch delete operation failed");
+
+        // Verify we got the expected number of results
+        assert_eq!(results.len(), 3);
+
+        // Verify the deletes were applied correctly
+        let deleted_user1 = client
+            .user()
+            .find_unique(user::id::equals(u1.id))
+            .exec()
+            .await
+            .unwrap();
+        assert!(deleted_user1.is_none());
+
+        let deleted_user2 = client
+            .user()
+            .find_unique(user::id::equals(u2.id))
+            .exec()
+            .await
+            .unwrap();
+        assert!(deleted_user2.is_none());
+
+        let deleted_user3 = client
+            .user()
+            .find_unique(user::id::equals(u3.id))
+            .exec()
+            .await
+            .unwrap();
+        assert!(deleted_user3.is_none());
     }
 
     #[tokio::test]

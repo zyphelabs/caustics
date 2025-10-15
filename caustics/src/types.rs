@@ -1585,6 +1585,84 @@ where
     }
 }
 
+// Implementation for Vec<UnifiedUpdateQueryBuilder>
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
+    BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    for Vec<crate::query_builders::UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>>
+where
+    C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
+    <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+    P: crate::EntityMetadataProvider,
+{
+    type ReturnType = Vec<ModelWithRelations>;
+
+    fn into_queries(self) -> Vec<BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T>> {
+        self.into_iter().map(|query| query.into_query()).collect()
+    }
+
+    fn from_results(results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        results.into_iter().map(|result| match result {
+            BatchResult::Update(m) => m,
+            _ => panic!("Expected Update result"),
+        }).collect()
+    }
+}
+
+// Implementation for Vec<CreateQueryBuilder>
+impl<'a, C, Entity, ActiveModel, ModelWithRelations>
+    BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, ()>
+    for Vec<crate::query_builders::CreateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations>>
+where
+    C: sea_orm::ConnectionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+{
+    type ReturnType = Vec<ModelWithRelations>;
+
+    fn into_queries(self) -> Vec<BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, ()>> {
+        self.into_iter().map(|query| query.into_query()).collect()
+    }
+
+    fn from_results(results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        results.into_iter().map(|result| match result {
+            BatchResult::Insert(m) => m,
+            _ => panic!("Expected Insert result"),
+        }).collect()
+    }
+}
+
+// Implementation for Vec<DeleteQueryBuilder>
+impl<'a, C, Entity, ActiveModel, ModelWithRelations>
+    BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, ()>
+    for Vec<crate::query_builders::DeleteQueryBuilder<'a, C, Entity, ModelWithRelations>>
+where
+    C: sea_orm::ConnectionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+{
+    type ReturnType = Vec<ModelWithRelations>;
+
+    fn into_queries(self) -> Vec<BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, ()>> {
+        self.into_iter().map(|query| query.into_query()).collect()
+    }
+
+    fn from_results(results: Vec<BatchResult<ModelWithRelations>>) -> Self::ReturnType {
+        results.into_iter().map(|result| match result {
+            BatchResult::Delete(m) => m,
+            _ => panic!("Expected Delete result"),
+        }).collect()
+    }
+}
+
 // Generic element trait to unify tuple impls up to arity 16
 pub trait BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
 where
@@ -1700,6 +1778,64 @@ where
         match result {
             BatchResult::Delete(m) => m,
             _ => panic!("Expected Delete"),
+        }
+    }
+}
+
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    for crate::query_builders::UpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+where
+    C: sea_orm::ConnectionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    T: MergeInto<ActiveModel>,
+    <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+{
+    type Output = ModelWithRelations;
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {
+        BatchQuery::Update(self)
+    }
+    fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
+        match result {
+            BatchResult::Update(m) => m,
+            _ => panic!("Expected Update"),
+        }
+    }
+}
+
+impl<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
+    BatchElement<'a, C, Entity, ActiveModel, ModelWithRelations, T>
+    for crate::query_builders::UnifiedUpdateQueryBuilder<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
+where
+    C: sea_orm::ConnectionTrait + sea_orm::TransactionTrait,
+    Entity: sea_orm::EntityTrait,
+    ActiveModel:
+        sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
+    ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+    T: MergeInto<ActiveModel> + std::fmt::Debug + crate::types::SetParamInfo,
+    <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
+    P: crate::EntityMetadataProvider,
+{
+    type Output = ModelWithRelations;
+    fn into_query(self) -> BatchQuery<'a, C, Entity, ActiveModel, ModelWithRelations, T> {
+        match self {
+            crate::query_builders::UnifiedUpdateQueryBuilder::Scalar(update_builder) => {
+                BatchQuery::Update(update_builder)
+            }
+            crate::query_builders::UnifiedUpdateQueryBuilder::Relations(has_many_builder) => {
+                // Convert HasManySetUpdateQueryBuilder to BatchQuery
+                // This should work since HasManySetUpdateQueryBuilder already has BatchElement impl
+                has_many_builder.into_query()
+            }
+        }
+    }
+    fn extract_output(result: BatchResult<ModelWithRelations>) -> Self::Output {
+        match result {
+            BatchResult::Update(m) => m,
+            _ => panic!("Expected Update"),
         }
     }
 }
