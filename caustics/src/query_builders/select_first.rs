@@ -1,7 +1,8 @@
 use crate::types::{EntityRegistry, SelectionSpec};
+use crate::types::{IntoOrderSpec, NullsOrder};
 use crate::{EntitySelection, HasRelationMetadata, RelationFilter};
-use sea_orm::sea_query::SimpleExpr;
-use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QuerySelect, QueryTrait, Select};
+use sea_orm::sea_query::{Expr, SimpleExpr};
+use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryOrder, QuerySelect, QueryTrait, Select};
 
 /// Query builder for selected scalar fields on first
 pub struct SelectFirstQueryBuilder<'a, C: ConnectionTrait, Entity: EntityTrait, Selected>
@@ -15,6 +16,8 @@ where
     pub relations_to_fetch: Vec<RelationFilter>,
     pub registry: &'a dyn EntityRegistry<C>,
     pub database_backend: DatabaseBackend,
+    pub pending_order_bys: Vec<(SimpleExpr, sea_orm::Order)>,
+    pub pending_nulls: Option<NullsOrder>,
     pub _phantom: std::marker::PhantomData<Selected>,
 }
 
@@ -26,6 +29,19 @@ where
 {
     pub fn push_field(mut self, expr: SimpleExpr, alias: &str) -> Self {
         self.selected_fields.push((expr, alias.to_string()));
+        self
+    }
+
+    /// Order the result deterministically when multiple rows match
+    pub fn order_by<T>(mut self, order_spec: T) -> Self
+    where
+        T: IntoOrderSpec,
+    {
+        let (expr, order, nulls) = order_spec.into_order_spec();
+        self.pending_order_bys.push((expr, order));
+        if nulls.is_some() {
+            self.pending_nulls = nulls;
+        }
         self
     }
 
@@ -43,7 +59,24 @@ where
     /// Internal implementation for exec
     async fn exec_internal(self) -> Result<Option<Selected>, sea_orm::DbErr> {
         // Ensure required key columns for any requested relations are added implicitly via Selected::column_for_alias
-        let query = self.query.clone();
+        let mut query = self.query.clone();
+        // Apply ordering if provided
+        if let Some(n) = self.pending_nulls {
+            if let Some((first_expr, _)) = self.pending_order_bys.first() {
+                let nulls_expr = Expr::expr(first_expr.clone()).is_null();
+                match n {
+                    NullsOrder::First => {
+                        query = query.order_by(nulls_expr, sea_orm::Order::Desc);
+                    }
+                    NullsOrder::Last => {
+                        query = query.order_by(nulls_expr, sea_orm::Order::Asc);
+                    }
+                }
+            }
+        }
+        for (expr, order) in &self.pending_order_bys {
+            query = query.order_by(expr.clone(), order.clone());
+        }
         let mut selected = self.selected_fields.clone();
         let mut defensive_fields = Vec::new();
 
@@ -198,6 +231,8 @@ where
             relations_to_fetch: src.relations_to_fetch,
             registry: src.registry,
             database_backend: src.database_backend,
+            pending_order_bys: src.pending_order_bys,
+            pending_nulls: src.pending_nulls,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -230,6 +265,8 @@ where
             relations_to_fetch: self.relations_to_fetch,
             registry: self.registry,
             database_backend: self.database_backend,
+            pending_order_bys: self.pending_order_bys,
+            pending_nulls: self.pending_nulls,
             _phantom: std::marker::PhantomData::<S::Data>,
         }
     }

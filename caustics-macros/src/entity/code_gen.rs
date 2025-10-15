@@ -6081,6 +6081,8 @@ pub fn generate_entity(
                     relations_to_fetch: self.relations_to_fetch,
                     registry: self.registry,
                     database_backend: self.database_backend,
+                    pending_order_bys: self.pending_order_bys,
+                    pending_nulls: self.pending_nulls,
                     _phantom: std::marker::PhantomData,
                 };
                 let aliases = spec.collect_aliases();
@@ -6586,6 +6588,8 @@ pub fn generate_entity(
                     relations_to_fetch: vec![],
                     registry,
                     database_backend: self.database_backend,
+                    pending_order_bys: Vec::new(),
+                    pending_nulls: None,
                     _phantom: std::marker::PhantomData,
                 }
             }
