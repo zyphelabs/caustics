@@ -1,5 +1,5 @@
 use crate::types::SetParamInfo;
-use crate::{EntityMetadataProvider, FromModel, HasRelationMetadata, MergeInto};
+use crate::{EntityMetadataProvider, FromModel, HasRelationMetadata, MergeInto, RelationFilter, EntityRegistry};
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, TransactionTrait};
 
 /// Query builder for updates that include has_many set operations
@@ -16,6 +16,8 @@ where
     pub changes: Vec<T>,
     pub conn: &'a C,
     pub metadata_provider: &'a P,
+    pub relations_to_fetch: Vec<RelationFilter>,
+    pub registry: &'a (dyn EntityRegistry<C> + Sync),
     #[allow(clippy::type_complexity)]
     pub entity_id_resolver: Option<
         Box<
@@ -107,6 +109,8 @@ where
             condition: self.condition,
             changes: regular_changes,
             conn: self.conn,
+            relations_to_fetch: self.relations_to_fetch,
+            registry: self.registry,
             _phantom: std::marker::PhantomData,
         };
 
@@ -180,6 +184,8 @@ where
             condition: self.condition,
             changes: regular_changes,
             conn: self.conn,
+            relations_to_fetch: self.relations_to_fetch,
+            registry: self.registry,
             _phantom: std::marker::PhantomData,
         };
 

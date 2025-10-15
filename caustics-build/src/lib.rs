@@ -1502,7 +1502,9 @@ fn generate_client_code(
             where
                 Entity: caustics::sea_orm::EntityTrait,
                 ActiveModel: caustics::sea_orm::ActiveModelTrait<Entity = Entity> + caustics::sea_orm::ActiveModelBehavior + Send + 'static,
-                ModelWithRelations: #from_model<<Entity as caustics::sea_orm::EntityTrait>::Model>,
+                ModelWithRelations: #from_model<<Entity as caustics::sea_orm::EntityTrait>::Model>
+                    + caustics::HasRelationMetadata<ModelWithRelations>
+                    + caustics::ApplyNestedIncludes<caustics::sea_orm::DatabaseTransaction>,
                 T: #merge_into<ActiveModel>,
                 <Entity as caustics::sea_orm::EntityTrait>::Model: caustics::sea_orm::IntoActiveModel<ActiveModel>,
                 Container: #batch_container<'a, caustics::sea_orm::DatabaseConnection, Entity, ActiveModel, ModelWithRelations, T>,

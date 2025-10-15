@@ -167,7 +167,7 @@ mod caustics_school_tests {
             .find_many(vec![])
             .take(1)
             .select(student::select!(first_name, last_name))
-            .with(student::enrollments::fetch())
+            .with(student::enrollments::fetch(vec![]))
             .exec()
             .await
             .unwrap();
@@ -858,7 +858,7 @@ mod caustics_school_advanced_tests {
             .find_unique(course::id::equals(course.id))
             .with(course::teacher::fetch())
             .with(course::department::fetch())
-            .with(course::enrollments::fetch())
+            .with(course::enrollments::fetch(vec![]))
             .exec()
             .await
             .unwrap()

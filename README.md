@@ -633,16 +633,20 @@ let users = client
 
 ### Logical Operators
 
+Caustics provides both global and entity-specific logical operators for maximum flexibility:
+
 ```rust
-// AND/OR/NOT
+// Global operators (recommended)
+use caustics::operator;
+
 let users = client
     .user()
     .find_many(vec![
-        user::and(vec![
+        operator::and(vec![
             user::age::gte(Some(18)),
             user::name::starts_with("J"),
         ]),
-        user::or(vec![
+        operator::or(vec![
             user::age::lt(Some(25)),
             user::age::gt(Some(55))
         ]),

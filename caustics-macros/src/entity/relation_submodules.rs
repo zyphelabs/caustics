@@ -131,20 +131,29 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
             quote! {}
         };
 
-        let submodule = quote! {
-            pub mod #relation_name_ident {
-                use super::*;
-
-                // Typed conversion function for relation filters (no string parsing)
-                fn convert_where_param_to_filter_generic(filter: super::#target::WhereParam) -> caustics::Filter {
-                    // Delegate to the target module's typed converter
-                    super::#target::where_params_to_filters(vec![filter])
-                        .into_iter()
-                        .next()
-                        .unwrap_or(caustics::Filter { field: String::new(), operation: caustics::FieldOp::IsNull })
+        // Generate fetch() function conditionally based on relation type
+        let fetch_fn = if matches!(relation.kind, RelationKind::HasMany) {
+            // For has_many relations, fetch() accepts filters
+            quote! {
+                pub fn fetch(filters: Vec<super::#target::WhereParam>) -> super::RelationFilter {
+                    let converted_filters = super::#target::where_params_to_filters(filters);
+                    super::RelationFilter {
+                        relation: #relation_name_lit,
+                        filters: converted_filters,
+                        nested_select_aliases: None,
+                        nested_includes: vec![],
+                        take: None,
+                        skip: None,
+                        order_by: vec![],
+                        cursor_id: None,
+                        include_count: false,
+                        distinct: false,
+                    }
                 }
-
-                // Basic relation functions
+            }
+        } else {
+            // For belongs_to and has_one relations, fetch() doesn't accept filters
+            quote! {
                 pub fn fetch() -> super::RelationFilter {
                     super::RelationFilter {
                         relation: #relation_name_lit,
@@ -159,6 +168,24 @@ pub fn generate_relation_submodules(relations: &[Relation], fields: &[&syn::Fiel
                         distinct: false,
                     }
                 }
+            }
+        };
+
+        let submodule = quote! {
+            pub mod #relation_name_ident {
+                use super::*;
+
+                // Typed conversion function for relation filters (no string parsing)
+                fn convert_where_param_to_filter_generic(filter: super::#target::WhereParam) -> caustics::Filter {
+                    // Delegate to the target module's typed converter
+                    super::#target::where_params_to_filters(vec![filter])
+                        .into_iter()
+                        .next()
+                        .unwrap_or(caustics::Filter { field: String::new(), operation: caustics::FieldOp::IsNull })
+                }
+
+                // Basic relation functions
+                #fetch_fn
 
 
                 // Helper to convert typed WhereParams into generic Filters

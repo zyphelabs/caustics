@@ -6732,12 +6732,15 @@ pub fn generate_entity(
                     _params,
                 };
                 let (model, deferred_lookups, post_ops) = create.into_active_model::<C>();
+                let registry = get_registry();
                 caustics::CreateQueryBuilder {
                     model,
                     conn: self.conn,
                     deferred_lookups,
                     post_insert_ops: post_ops,
                     id_extractor: (__extract_id as fn(&<Entity as sea_orm::EntityTrait>::Model) -> caustics::CausticsKey),
+                    relations_to_fetch: vec![],
+                    registry,
                     _phantom: std::marker::PhantomData,
                 }
             }
@@ -6811,19 +6814,25 @@ pub fn generate_entity(
                     <SetParam as caustics::SetParamInfo>::is_has_many_create_operation(c)
                 });
                 if has_many_any {
+                    let registry = get_registry();
                     caustics::UnifiedUpdateQueryBuilder::Relations(caustics::HasManySetUpdateQueryBuilder {
                         condition: cond,
                         changes,
                         conn: self.conn,
                         metadata_provider: &*metadata_provider,
+                        relations_to_fetch: vec![],
+                        registry,
                         entity_id_resolver: Some(resolver),
                         _phantom: std::marker::PhantomData,
                     })
                 } else {
+                    let registry = get_registry();
                     caustics::UnifiedUpdateQueryBuilder::Scalar(caustics::UpdateQueryBuilder {
                         condition: cond,
                         changes,
                         conn: self.conn,
+                        relations_to_fetch: vec![],
+                        registry,
                         _phantom: std::marker::PhantomData,
                     })
                 }
@@ -6882,7 +6891,9 @@ pub fn generate_entity(
         where
             Entity: sea_orm::EntityTrait,
             ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
-            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model>,
+            ModelWithRelations: caustics::FromModel<<Entity as sea_orm::EntityTrait>::Model>
+                + caustics::HasRelationMetadata<ModelWithRelations>
+                + caustics::ApplyNestedIncludes<sea_orm::DatabaseTransaction>,
             SetParam: caustics::MergeInto<ActiveModel>,
             <Entity as sea_orm::EntityTrait>::Model: sea_orm::IntoActiveModel<ActiveModel>,
             Container: caustics::BatchContainer<'a, C, Entity, ActiveModel, ModelWithRelations, SetParam>,

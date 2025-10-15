@@ -38,14 +38,10 @@ pub fn generate_where_param_logic(
         where_field_variants.push(quote! { #pascal_name(caustics::FieldOp) });
 
         // Field operator module
-        let set_fn = if !is_unique || is_primary_key {
-            quote! {
-                pub fn set<T: Into<#ty>>(value: T) -> super::SetParam {
-                    super::SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
-                }
+        let set_fn = quote! {
+            pub fn set<T: Into<#ty>>(value: T) -> super::SetParam {
+                super::SetParam::#pascal_name(sea_orm::ActiveValue::Set(value.into()))
             }
-        } else {
-            quote! {}
         };
 
         // Unique where function
@@ -382,6 +378,29 @@ pub fn generate_where_param_logic(
     where_field_variants.push(quote! { And(Vec<WhereParam>) });
     where_field_variants.push(quote! { Or(Vec<WhereParam>) });
     where_field_variants.push(quote! { Not(Vec<WhereParam>) });
+
+    // Add trait implementations for global operator functions
+    field_ops.push(quote! {
+        impl caustics::operator::IntoOrParam for WhereParam {
+            fn from_or_params(params: Vec<WhereParam>) -> WhereParam {
+                WhereParam::Or(params)
+            }
+        }
+    });
+    field_ops.push(quote! {
+        impl caustics::operator::IntoAndParam for WhereParam {
+            fn from_and_params(params: Vec<WhereParam>) -> WhereParam {
+                WhereParam::And(params)
+            }
+        }
+    });
+    field_ops.push(quote! {
+        impl caustics::operator::IntoNotParam for WhereParam {
+            fn from_not_params(params: Vec<WhereParam>) -> WhereParam {
+                WhereParam::Not(params)
+            }
+        }
+    });
 
     // Add relation condition variant for advanced relation operations (only if there are relations)
     if !relations.is_empty() {

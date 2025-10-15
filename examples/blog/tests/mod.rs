@@ -48,6 +48,7 @@ mod query_builder_tests {
     use std::str::FromStr;
 
     use blog::entities::user::DistinctFieldsExt;
+    use caustics::operator;
     use uuid::Uuid;
 
     use blog::entities::user::ManyCursorExt;
@@ -804,7 +805,7 @@ mod query_builder_tests {
         let user_with_posts = client
             .user()
             .find_unique(user::id::equals(author.id))
-            .with(user::posts::fetch())
+            .with(user::posts::fetch(vec![]))
             .exec()
             .await
             .unwrap()
@@ -1357,7 +1358,7 @@ mod query_builder_tests {
         // Test AND operator - users who are adults AND have "example.com" email
         let adult_example_users = client
             .user()
-            .find_many(vec![user::and(vec![
+            .find_many(vec![operator::and(vec![
                 user::age::gte(Some(18)),
                 user::email::contains("example.com"),
             ])])
@@ -1372,7 +1373,7 @@ mod query_builder_tests {
         // Test OR operator - users who are either very young OR very old
         let young_or_old_users = client
             .user()
-            .find_many(vec![user::or(vec![
+            .find_many(vec![operator::or(vec![
                 user::age::lt(Some(18)),
                 user::age::gt(Some(65)),
             ])])
@@ -1388,7 +1389,7 @@ mod query_builder_tests {
         // Test NOT operator - users who are NOT minors
         let not_minors = client
             .user()
-            .find_many(vec![user::not(vec![user::age::lt(Some(18))])])
+            .find_many(vec![operator::not(vec![user::age::lt(Some(18))])])
             .exec()
             .await
             .unwrap();
@@ -1399,8 +1400,8 @@ mod query_builder_tests {
         // (adults with example.com email) OR (seniors regardless of email)
         let complex_query_users = client
             .user()
-            .find_many(vec![user::or(vec![
-                user::and(vec![
+            .find_many(vec![operator::or(vec![
+                operator::and(vec![
                     user::age::gte(Some(18)),
                     user::age::lt(Some(65)),
                     user::email::contains("example.com"),
@@ -1415,7 +1416,7 @@ mod query_builder_tests {
         // Test NOT with AND - users who are NOT (young AND have example.com email)
         let not_young_example = client
             .user()
-            .find_many(vec![user::not(vec![user::and(vec![
+            .find_many(vec![operator::not(vec![operator::and(vec![
                 user::age::lt(Some(25)),
                 user::email::contains("example.com"),
             ])])])
@@ -1780,7 +1781,7 @@ mod query_builder_tests {
         // Test combining null operators with logical operators
         let users_with_age_not_deleted = client
             .user()
-            .find_many(vec![user::and(vec![
+            .find_many(vec![operator::and(vec![
                 user::age::is_not_null(),
                 user::deleted_at::is_null(),
             ])])
@@ -1795,7 +1796,7 @@ mod query_builder_tests {
         // Test combining null operators with OR
         let users_missing_data = client
             .user()
-            .find_many(vec![user::or(vec![
+            .find_many(vec![operator::or(vec![
                 user::age::is_null(),
                 user::deleted_at::is_not_null(),
             ])])
@@ -2069,7 +2070,7 @@ mod query_builder_tests {
         // Test JSON operations with logical operators (AND)
         let posts_with_category_and_metadata = client
             .post()
-            .find_many(vec![post::and(vec![
+            .find_many(vec![operator::and(vec![
                 post::custom_data::json_object_contains("category".to_string()),
                 post::custom_data::json_object_contains("metadata".to_string()),
             ])])
@@ -2085,7 +2086,7 @@ mod query_builder_tests {
         // Test JSON operations with logical operators (OR)
         let posts_with_description_or_settings = client
             .post()
-            .find_many(vec![post::or(vec![
+            .find_many(vec![operator::or(vec![
                 post::custom_data::json_object_contains("description".to_string()),
                 post::custom_data::json_object_contains("settings".to_string()),
             ])])
@@ -2571,7 +2572,7 @@ mod query_builder_tests {
         // Test 5: Combined with logical operators
         let combined_filtered_users = client
             .user()
-            .find_many(vec![user::and(vec![
+            .find_many(vec![operator::and(vec![
                 user::posts::some(vec![post::title::contains("Hello".to_string())]),
                 user::posts::none(vec![post::title::contains("Spam".to_string())]),
             ])])
@@ -3110,7 +3111,7 @@ mod query_builder_tests {
         let user_with_posts = client
             .user()
             .find_unique(user::id::equals(user.id))
-            .with(user::posts::fetch())
+            .with(user::posts::fetch(vec![]))
             .exec()
             .await
             .unwrap()
@@ -3408,7 +3409,7 @@ mod query_builder_tests {
         let final_user = client
             .user()
             .find_unique(user::id::equals(user.id))
-            .with(user::posts::fetch())
+            .with(user::posts::fetch(vec![]))
             .exec()
             .await
             .unwrap()
@@ -4192,7 +4193,7 @@ mod query_builder_tests {
         let users_by_post_count_asc = client
             .user()
             .find_many(vec![])
-            .with(user::posts::fetch())
+            .with(user::posts::fetch(vec![]))
             .order_by(user::posts::count(SortOrder::Asc))
             .exec()
             .await
@@ -4208,7 +4209,7 @@ mod query_builder_tests {
         let users_by_post_count_desc = client
             .user()
             .find_many(vec![])
-            .with(user::posts::fetch())
+            .with(user::posts::fetch(vec![]))
             .order_by(user::posts::count(SortOrder::Desc))
             .exec()
             .await
@@ -4276,7 +4277,7 @@ mod query_builder_tests {
         let users_complex_order = client
             .user()
             .find_many(vec![])
-            .with(user::posts::fetch())
+            .with(user::posts::fetch(vec![]))
             .order_by(user::posts::count(SortOrder::Asc))
             .order_by(user::name::order(SortOrder::Asc))
             .exec()
@@ -4288,5 +4289,252 @@ mod query_builder_tests {
         assert_eq!(users_complex_order[0].name, "Charlie"); // 0 posts
         assert_eq!(users_complex_order[1].name, "Bob"); // 1 post
         assert_eq!(users_complex_order[2].name, "Alice"); // 2 posts
+    }
+}
+
+mod create_with_tests {
+    use super::helpers::setup_test_db;
+    use blog::entities::{post, user};
+    use chrono::{DateTime, FixedOffset};
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn test_create_post_with_user_relation() {
+        // Setup
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create a user first
+        let email = format!("john_{}@example.com", chrono::Utc::now().timestamp());
+        let user = client
+            .user()
+            .create(
+                email.clone(),
+                "John Doe".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a post with the user relation fetched
+        // Note: This test will work once the compilation issues are resolved
+        let post_with_user = client
+            .post()
+            .create(
+                "Test Post with User".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![
+                    post::content::set(Some("This post should have the user relation loaded".to_string())),
+                    post::reviewer_user_id::set(None),
+                ],
+            )
+            .with(post::user::fetch())
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify the post was created
+        assert_eq!(post_with_user.title, "Test Post with User");
+        assert_eq!(post_with_user.content, Some("This post should have the user relation loaded".to_string()));
+        assert_eq!(post_with_user.user_id, user.id);
+
+        assert!(post_with_user.user.is_some());
+        assert_eq!(post_with_user.user.unwrap().name, user.name);
+    }
+
+    #[tokio::test]
+    async fn test_create_user_with_posts_relation() {
+        // Setup
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create a user with posts relation fetched
+        // Note: This test will work once the compilation issues are resolved
+        let email = format!("jane_{}@example.com", chrono::Utc::now().timestamp());
+        let user_with_posts = client
+            .user()
+            .create(
+                email.clone(),
+                "Jane Smith".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(28)), user::deleted_at::set(None)],
+            )
+            .with(user::posts::fetch(vec![]))
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify the user was created
+        assert_eq!(user_with_posts.name, "Jane Smith");
+        assert_eq!(user_with_posts.email, email);
+        assert_eq!(user_with_posts.age, Some(28));
+
+        assert!(user_with_posts.posts.is_some());
+        assert_eq!(user_with_posts.posts.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_without_relations() {
+        // This test should work even with the current compilation issues
+        // as it doesn't use the .with() method
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create a user first
+        let email = format!("test_{}@example.com", chrono::Utc::now().timestamp());
+        let user = client
+            .user()
+            .create(
+                email.clone(),
+                "Test User".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a post without relations
+        let post = client
+            .post()
+            .create(
+                "Test Post".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user.id),
+                vec![
+                    post::content::set(Some("This is a test post".to_string())),
+                    post::reviewer_user_id::set(None),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify the post was created
+        assert_eq!(post.title, "Test Post");
+        assert_eq!(post.content, Some("This is a test post".to_string()));
+        assert_eq!(post.user_id, user.id);
+    }
+}
+
+mod update_with_tests {
+    use super::helpers::setup_test_db;
+    use blog::entities::{post, user};
+    use chrono::{DateTime, FixedOffset};
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn test_update_post_with_user_relation() {
+        // Setup
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create a user
+        let email = format!("update_post_user_{}@example.com", chrono::Utc::now().timestamp());
+        let user_model = client
+            .user()
+            .create(
+                email.clone(),
+                "John Doe".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a post
+        let post_model = client
+            .post()
+            .create(
+                "Original Title".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(user_model.id),
+                vec![post::content::set(Some("Original content".to_string())), post::reviewer_user_id::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Update the post and fetch the user relation
+        let updated_post = client
+            .post()
+            .update(
+                post::id::equals(post_model.id),
+                vec![post::content::set(Some("Updated content".to_string()))],
+            )
+            .with(post::user::fetch())
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(updated_post.content, Some("Updated content".to_string()));
+        assert!(updated_post.user.is_some());
+        assert_eq!(updated_post.user.unwrap().name, user_model.name);
+    }
+
+    #[tokio::test]
+    async fn test_update_user_with_posts_relation() {
+        // Setup
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create a user
+        let email = format!("update_user_posts_{}@example.com", chrono::Utc::now().timestamp());
+        let user_model = client
+            .user()
+            .create(
+                email.clone(),
+                "Jane Smith".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(28)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create two posts for the user
+        for i in 0..2 {
+            let title = format!("Post {}", i + 1);
+            let _ = client
+                .post()
+                .create(
+                    title,
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                    user::id::equals(user_model.id),
+                    vec![post::content::set(Some("Body".to_string())), post::reviewer_user_id::set(None)],
+                )
+                .exec()
+                .await
+                .unwrap();
+        }
+
+        // Update user and fetch posts relation
+        let updated_user = client
+            .user()
+            .update(
+                user::id::equals(user_model.id),
+                vec![user::name::set("Jane Updated".to_string())],
+            )
+            .with(user::posts::fetch(vec![]))
+            .exec()
+            .await
+            .unwrap();
+
+        assert_eq!(updated_user.name, "Jane Updated");
+        assert!(updated_user.posts.is_some());
+        assert_eq!(updated_user.posts.unwrap().len(), 2);
     }
 }

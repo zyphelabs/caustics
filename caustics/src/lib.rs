@@ -1,5 +1,6 @@
 pub mod entity_metadata;
 pub mod key_types;
+pub mod operator;
 pub mod query_builders;
 pub mod types;
 
