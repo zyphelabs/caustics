@@ -40,7 +40,7 @@ impl<'a, C, Entity, ActiveModel, ModelWithRelations, T, P>
 where
     C: ConnectionTrait + TransactionTrait,
     Entity: sea_orm::EntityTrait,
-    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send,
+    ActiveModel: sea_orm::ActiveModelTrait<Entity = Entity> + sea_orm::ActiveModelBehavior + Send + 'static,
     ModelWithRelations: FromModel<<Entity as sea_orm::EntityTrait>::Model>
         + HasRelationMetadata<ModelWithRelations>
         + 'static,
@@ -109,6 +109,7 @@ where
             condition: self.condition,
             changes: regular_changes,
             conn: self.conn,
+            deferred_lookups: Vec::new(),
             relations_to_fetch: self.relations_to_fetch,
             registry: self.registry,
             _phantom: std::marker::PhantomData,
@@ -184,6 +185,7 @@ where
             condition: self.condition,
             changes: regular_changes,
             conn: self.conn,
+            deferred_lookups: Vec::new(),
             relations_to_fetch: self.relations_to_fetch,
             registry: self.registry,
             _phantom: std::marker::PhantomData,

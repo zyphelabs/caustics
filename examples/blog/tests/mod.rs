@@ -5125,4 +5125,92 @@ mod update_with_tests {
         assert!(updated_user.posts.is_some());
         assert_eq!(updated_user.posts.unwrap().len(), 2);
     }
+
+    #[tokio::test]
+    async fn test_update_with_connect_operation() {
+        let db = setup_test_db().await;
+        let client = blog::CausticsClient::new(db.clone());
+
+        // Create two users
+        let author = client
+            .user()
+            .create(
+                "author@example.com".to_string(),
+                "Author".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(25)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        let reviewer = client
+            .user()
+            .create(
+                "reviewer@example.com".to_string(),
+                "Reviewer".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                vec![user::age::set(Some(30)), user::deleted_at::set(None)],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Create a post without a reviewer
+        let post = client
+            .post()
+            .create(
+                "Test Post".to_string(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                DateTime::<FixedOffset>::from_str("2021-01-01T00:00:00Z").unwrap(),
+                user::id::equals(author.id),
+                vec![post::content::set("Initial content".to_string())],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify the post has no reviewer initially
+        let post_without_reviewer = client
+            .post()
+            .find_unique(post::id::equals(post.id))
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(post_without_reviewer.reviewer.is_none() || post_without_reviewer.reviewer.as_ref().unwrap().is_none());
+
+        // Update the post to connect a reviewer using the connect operation
+        let updated_post = client
+            .post()
+            .update(
+                post::id::equals(post.id),
+                vec![
+                    post::content::set("Updated content".to_string()),
+                    post::reviewer::connect(user::id::equals(reviewer.id)),
+                ],
+            )
+            .exec()
+            .await
+            .unwrap();
+
+        // Verify the post now has the reviewer connected
+        let post_with_reviewer = client
+            .post()
+            .find_unique(post::id::equals(updated_post.id))
+            .with(post::reviewer::fetch())
+            .exec()
+            .await
+            .unwrap()
+            .unwrap();
+        
+        assert!(post_with_reviewer.reviewer.is_some());
+        let connected_reviewer = post_with_reviewer.reviewer.unwrap().unwrap();
+        assert_eq!(connected_reviewer.id, reviewer.id);
+        assert_eq!(connected_reviewer.name, "Reviewer");
+        assert_eq!(connected_reviewer.email, "reviewer@example.com");
+    }
 }

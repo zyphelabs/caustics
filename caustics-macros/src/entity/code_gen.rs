@@ -5387,6 +5387,248 @@ pub fn generate_entity(
         })
         .collect::<Vec<_>>();
 
+    // Generate match arms to rewrite connect(params) with PK-equals into direct FK field SetParam
+    let relation_connect_pk_convert_match_arms = relations
+        .iter()
+        .filter(|relation| {
+            matches!(relation.kind, RelationKind::BelongsTo)
+                && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
+        })
+        .map(|relation| {
+            let connect_variant = format_ident!("Connect{}", relation.name.to_pascal_case());
+            let foreign_key_field_ident = format_ident!("{}",
+                if !relation.foreign_key_fields.is_empty() { &relation.foreign_key_fields[0] } else { relation.foreign_key_field.as_ref().unwrap() }
+            );
+            let fk_field_variant = format_ident!("{}", foreign_key_field_ident.to_string().to_pascal_case());
+            let target_module = &relation.target;
+            let fk_field_name = relation.get_first_fk_column_name();
+            let entity_name = entity_context.registry_name();
+            let foreign_key_field_name_snake = fk_field_name.to_snake_case();
+
+            let primary_key_variant = if relation.is_composite && !relation.target_primary_key_fields.is_empty() {
+                let composite_name = relation
+                    .target_primary_key_fields
+                    .iter()
+                    .map(|field| field.to_pascal_case())
+                    .collect::<Vec<_>>()
+                    .join("And");
+                format_ident!("{}Equals", composite_name)
+            } else if !relation.target_primary_key_fields.is_empty() {
+                let pk_field = &relation.target_primary_key_fields[0];
+                let pk_pascal = pk_field.to_pascal_case();
+                format_ident!("{}Equals", pk_pascal)
+            } else if let Some(pk) = &relation.primary_key_field {
+                let pk_pascal = pk.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>() + &pk[1..];
+                format_ident!("{}Equals", pk_pascal)
+            } else {
+                format_ident!("{}Equals", current_primary_key.to_pascal_case())
+            };
+
+            let (is_optional, _fk_field_type, fk_field_type_inner) =
+                find_field_and_extract_type_info(&fields, &fk_field_name)
+                    .unwrap_or_else(|| (false, &fields[0].ty, &fields[0].ty));
+
+            if is_optional {
+                quote! {
+                    SetParam::#connect_variant(where_param) => {
+                        match where_param {
+                            #target_module::UniqueWhereParam::#primary_key_variant(key) => {
+                                let active_value_boxed = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name_snake, key);
+                                normal_changes.push(SetParam::#fk_field_variant(*active_value_boxed.downcast::<sea_orm::ActiveValue<Option<#fk_field_type_inner>>>().expect("Failed to downcast to ActiveValue")));
+                            }
+                            other => {
+                                normal_changes.push(SetParam::#connect_variant(other));
+                            }
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    SetParam::#connect_variant(where_param) => {
+                        match where_param {
+                            #target_module::UniqueWhereParam::#primary_key_variant(key) => {
+                                let active_value_boxed = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name_snake, key);
+                                normal_changes.push(SetParam::#fk_field_variant(*active_value_boxed.downcast::<sea_orm::ActiveValue<#fk_field_type_inner>>().expect("Failed to downcast to ActiveValue")));
+                            }
+                            other => {
+                                normal_changes.push(SetParam::#connect_variant(other));
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Generate arms to split update SetParam into normal changes and deferred lookups
+    let update_connect_split_arms = relations
+        .iter()
+        .filter(|relation| {
+            matches!(relation.kind, RelationKind::BelongsTo)
+                && (!relation.foreign_key_fields.is_empty() || relation.foreign_key_field.is_some())
+        })
+        .map(|relation| {
+            let relation_name = format_ident!("Connect{}", relation.name.to_pascal_case());
+            let foreign_key_field_ident = format_ident!("{}",
+                if !relation.foreign_key_fields.is_empty() { &relation.foreign_key_fields[0] } else { relation.foreign_key_field.as_ref().unwrap() }
+            );
+            // Variant name for scalar field SetParam
+            let fk_field_variant = format_ident!("{}", foreign_key_field_ident.to_string().to_pascal_case());
+            let target_module = &relation.target;
+            let fk_field_name = relation.get_first_fk_column_name();
+            let entity_name = entity_context.registry_name();
+            let foreign_key_field_name_snake = fk_field_name.to_snake_case();
+
+            let primary_key_variant = if relation.is_composite && !relation.target_primary_key_fields.is_empty() {
+                let composite_name = relation
+                    .target_primary_key_fields
+                    .iter()
+                    .map(|field| field.to_pascal_case())
+                    .collect::<Vec<_>>()
+                    .join("And");
+                format_ident!("{}Equals", composite_name)
+            } else if !relation.target_primary_key_fields.is_empty() {
+                let pk_field = &relation.target_primary_key_fields[0];
+                let pk_pascal = pk_field.to_pascal_case();
+                format_ident!("{}Equals", pk_pascal)
+            } else if let Some(pk) = &relation.primary_key_field {
+                let pk_pascal = pk.chars().next().expect("Primary key field name is empty").to_uppercase().collect::<String>() + &pk[1..];
+                format_ident!("{}Equals", pk_pascal)
+            } else {
+                format_ident!("{}Equals", current_primary_key.to_pascal_case())
+            };
+            let primary_key_field_name = relation
+                .primary_key_field
+                .clone()
+                .unwrap_or_else(|| "id".to_string());
+            let primary_key_field_ident = format_ident!("{}", primary_key_field_name.to_snake_case());
+
+            let (is_optional, _fk_field_type, fk_field_type_inner) =
+                find_field_and_extract_type_info(&fields, &fk_field_name)
+                    .unwrap_or_else(|| (false, &fields[0].ty, &fields[0].ty));
+
+            if is_optional {
+                quote! {
+                    SetParam::#relation_name(where_param) => {
+                        match where_param {
+                            #target_module::UniqueWhereParam::#primary_key_variant(key) => {
+                                let active_value_boxed = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name_snake, key);
+                                normal_changes.push(SetParam::#fk_field_variant(*active_value_boxed.downcast::<sea_orm::ActiveValue<Option<#fk_field_type_inner>>>().expect("Failed to downcast to ActiveValue")));
+                            }
+                            other => {
+                                deferred_lookups.push(caustics::DeferredLookup::new(
+                                    Box::new(other.clone()),
+                                    |model, value| {
+                                        let model = model.downcast_mut::<ActiveModel>().unwrap();
+                                        let active_value_boxed = crate::__caustics_convert_key_to_active_value_optional(#entity_name, #foreign_key_field_name_snake, value);
+                                        model.#foreign_key_field_ident = *active_value_boxed.downcast::<sea_orm::ActiveValue<Option<#fk_field_type_inner>>>().expect("Failed to downcast to ActiveValue");
+                                    },
+                                    |conn: & sea_orm::DatabaseConnection, param| {
+                                        let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                        Box::pin(async move {
+                                            let condition: sea_query::Condition = param.clone().into();
+                                            let result = #target_module::Entity::find()
+                                                .filter::<sea_query::Condition>(condition)
+                                                .one(conn)
+                                                .await?;
+                                            result.map(|entity| {
+                                                use caustics::ToSeaOrmValue;
+                                                let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                                caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                            }).ok_or_else(|| {
+                                                caustics::CausticsError::NotFoundForCondition { entity: stringify!(#target_module).to_string(), condition: format!("{:?}", param), }.into()
+                                            })
+                                        })
+                                    },
+                                    |txn: & sea_orm::DatabaseTransaction, param| {
+                                        let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                        Box::pin(async move {
+                                            let condition: sea_query::Condition = param.clone().into();
+                                            let result = #target_module::Entity::find()
+                                                .filter::<sea_query::Condition>(condition)
+                                                .one(txn)
+                                                .await?;
+                                            result.map(|entity| {
+                                                use caustics::ToSeaOrmValue;
+                                                let val = entity.#primary_key_field_ident.to_sea_orm_value();
+                                                caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                            }).ok_or_else(|| {
+                                                caustics::CausticsError::NotFoundForCondition { entity: stringify!(#target_module).to_string(), condition: format!("{:?}", param), }.into()
+                                            })
+                                        })
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    SetParam::#relation_name(where_param) => {
+                        match where_param {
+                            #target_module::UniqueWhereParam::#primary_key_variant(key) => {
+                                let active_value_boxed = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name_snake, key);
+                                normal_changes.push(SetParam::#fk_field_variant(*active_value_boxed.downcast::<sea_orm::ActiveValue<#fk_field_type_inner>>().expect("Failed to downcast to ActiveValue")));
+                            }
+                            other => {
+                                deferred_lookups.push(caustics::DeferredLookup::new(
+                                    Box::new(other.clone()),
+                                    |model, value| {
+                                        let model = model.downcast_mut::<ActiveModel>().unwrap();
+                                        let active_value_boxed = crate::__caustics_convert_key_to_active_value(#entity_name, #foreign_key_field_name_snake, value);
+                                        model.#foreign_key_field_ident = *active_value_boxed.downcast::<sea_orm::ActiveValue<#fk_field_type_inner>>().expect("Failed to downcast to ActiveValue");
+                                    },
+                                    |conn: & sea_orm::DatabaseConnection, param| {
+                                        let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                        Box::pin(async move {
+                                            let condition: sea_query::Condition = param.clone().into();
+                                            let result = #target_module::Entity::find()
+                                                .filter::<sea_query::Condition>(condition)
+                                                .one(conn)
+                                                .await?;
+                                            result.map(|entity| {
+                                                use caustics::ToSeaOrmValue;
+                                                let val = (&entity.#primary_key_field_ident).to_sea_orm_value();
+                                                caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                            }).ok_or_else(|| {
+                                                sea_orm::DbErr::Custom(format!(
+                                                    "No {} found for condition: {:?}",
+                                                    stringify!(#target_module),
+                                                    param
+                                                ))
+                                            })
+                                        })
+                                    },
+                                    |txn: & sea_orm::DatabaseTransaction, param| {
+                                        let param = param.downcast_ref::<#target_module::UniqueWhereParam>().unwrap().clone();
+                                        Box::pin(async move {
+                                            let condition: sea_query::Condition = param.clone().into();
+                                            let result = #target_module::Entity::find()
+                                                .filter::<sea_query::Condition>(condition)
+                                                .one(txn)
+                                                .await?;
+                                            result.map(|entity| {
+                                                use caustics::ToSeaOrmValue;
+                                                let val = (&entity.#primary_key_field_ident).to_sea_orm_value();
+                                                caustics::CausticsKey::from_db_value(&val).unwrap_or_else(|| caustics::CausticsKey::I32(0))
+                                            }).ok_or_else(|| {
+                                                sea_orm::DbErr::Custom(format!(
+                                                    "No {} found for condition: {:?}",
+                                                    stringify!(#target_module),
+                                                    param
+                                                ))
+                                            })
+                                        })
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Generate relation disconnect match arms for SetParam
     let relation_disconnect_match_arms = relations
         .iter()
@@ -6826,11 +7068,20 @@ pub fn generate_entity(
                         _phantom: std::marker::PhantomData,
                     })
                 } else {
+                    // Rewrite PK-equals connects into direct field sets to ensure DB updates include FK column
+                    let mut normal_changes: Vec<SetParam> = Vec::new();
+                    for param in changes {
+                        match param {
+                            #(#relation_connect_pk_convert_match_arms,)*
+                            other => normal_changes.push(other),
+                        }
+                    }
                     let registry = get_registry();
                     caustics::UnifiedUpdateQueryBuilder::Scalar(caustics::UpdateQueryBuilder {
                         condition: cond,
-                        changes,
+                        changes: normal_changes,
                         conn: self.conn,
+                        deferred_lookups: Vec::new(),
                         relations_to_fetch: vec![],
                         registry,
                         _phantom: std::marker::PhantomData,
